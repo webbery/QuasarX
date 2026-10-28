@@ -10,6 +10,8 @@ struct MarginConfig {
     double _maintenanceMarginRatio = 0.3;  // 维持保证金比例（30%）
     double _financingRate = 0.08;          // 融资利率（年化 8%）
     double _securitiesLendingRate = 0.10;  // 融券费率（年化 10%）
+    double _warningRatio = 1.5;            // 警戒线（维持担保比例 150%）
+    double _liquidationRatio = 1.3;        // 平仓线（维持担保比例 130%）
     bool _allowShort = false;              // 是否允许做空
 };
 
@@ -168,7 +170,11 @@ public:
     // 资金查询
     virtual double getAllocated() const = 0;   // 分配总额（永不变化）
     virtual double getAvailable() const = 0;   // 可用余额（成交后变化）
-    virtual double getEquity() const = 0;      // 权益 = available + 持仓市值
+    virtual double getEquity() const = 0;      // 权益 = 可用 + 持仓市值
+    
+    // 两融配置
+    virtual void setMarginConfig(const MarginConfig& config) = 0;
+    virtual const MarginConfig& getMarginConfig() const = 0;
     
     // 两融相关
     virtual double getMarginEquity() const = 0;        // 保证金权益
@@ -207,6 +213,15 @@ public:
         double cash = _available;
         double positionValue = _positions.getTotalLongValue() - _positions.getTotalShortValue();
         return cash + positionValue - _borrowedCash;
+    }
+    
+    // 两融配置
+    void setMarginConfig(const MarginConfig& config) override {
+        _margin.setConfig(config);
+    }
+    
+    const MarginConfig& getMarginConfig() const override {
+        return _margin.getConfig();
     }
     
     // 两融相关

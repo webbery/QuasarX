@@ -51,6 +51,10 @@ private:
     void recordPositionSnapshot(symbol_t symbol, TradeAction action, int64_t quantity,
                                 const DataContext& context);
 
+    // 渲染两融信用区块 HTML（保证金总量/占用、维持担保比例、融券明细、当日两融成本）
+    // 触发条件：set._hasMargin == false 时返回空字符串（整块不显示）
+    String renderMarginSection(const DecisionSet& set) const;
+
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;  // 风控触发事件（日终策略用）
     // 重放期间的运行中持仓 + 逐 bar 快照（只在本轮重放内有意义）

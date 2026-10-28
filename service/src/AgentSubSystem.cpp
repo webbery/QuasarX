@@ -147,6 +147,20 @@ void FlowSubsystem::SetStrategyCapital(const String& strategy, double capital) {
     INFO("[FlowSubsystem] Strategy '{}' capital set to {:.0f}", strategy, capital);
 }
 
+void FlowSubsystem::SetStrategyMarginConfig(const String& strategy, const MarginConfig& config) {
+    _flows[strategy]._marginConfig = config;
+    INFO("[FlowSubsystem] Strategy '{}' margin config set: allowShort={}, marginRatio={}, financingRate={}, lendingRate={}",
+         strategy, config._allowShort, config._initialMarginRatio, config._financingRate, config._securitiesLendingRate);
+}
+
+MarginConfig FlowSubsystem::GetStrategyMarginConfig(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it != _flows.end()) {
+        return it->second._marginConfig;
+    }
+    return MarginConfig{};
+}
+
 void FlowSubsystem::SetStrategyCostProfile(const String& strategy, const CostProfile& profile) {
     _flows[strategy]._costProfile = profile;
     INFO("[FlowSubsystem] Strategy '{}' cost profile set: commission={:.6f}, trade_fees={}",
@@ -1650,11 +1664,18 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         // 预算快照：回测路径走 BacktestContext，没有 StrategyCapital 账本。
                         // 标记 _budgetKnown=false，邮件据此降级而不是显示 ¥0。
                         // 费率档案来自策略配置，邮件的摩擦成本按它算。
+                        // 两融配置来自策略 margin 段，但回测路径没有信用账本，所以信用状态为空。
+                        MarginConfig marginCfg = GetStrategyMarginConfig(strategy);
                         DecisionSetBuilder::BuildForBacktest(
                             strategy, asOf, manualTiming->getDecisions(),
                             std::move(riskEvents), set,
                             manualTiming->getPositionSnapshots(),
-                            GetStrategyCostProfile(strategy));
+                            GetStrategyCostProfile(strategy),
+                            StrategyCreditState{},  // 回测路径没有信用账本
+                            marginCfg._initialMarginRatio,
+                            marginCfg._maintenanceMarginRatio,
+                            marginCfg._warningRatio,
+                            marginCfg._liquidationRatio);
 
                         // 构建调试报告 + 发送邮件/SSE
                         EodDebugSpec debugSpec;
@@ -1914,6 +1935,8 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         // （SyncDailyPositionsFromBroker 已把 Broker 的分批持仓
                         //   摊成 Position._avgPrice）。
                         Map<symbol_t, double> costPrices;
+                        // 两融敞口：从 CapitalPool 读取（成交回写后持久化，跨进程存活）
+                        StrategyCreditState creditState;
                         if (auto* broker = _handle->GetBrokerSubSystem()) {
                             if (auto* capital = broker->GetStrategyCapital(strategy)) {
                                 allocated = capital->getAllocated();
@@ -1926,6 +1949,10 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                                     }
                                 }
                             }
+                            // 从 CapitalPool 读取两融敞口
+                            if (auto* pool = broker->GetCapitalPool()) {
+                                creditState = pool->getCreditState(strategy);
+                            }
                         }
 
                         // 收盘价：从 allBars 取最后一根 bar 的 close
@@ -1937,13 +1964,20 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             }
                         }
 
+                        // 两融配置：从策略 margin 段读取
+                        MarginConfig marginCfg = GetStrategyMarginConfig(strategy);
                         set = BuildDecisionSet(
                             strategy, asOf, fmt::format("live-{}", asOf),
                             manualTiming->getDecisions(), std::move(riskEvents),
                             allocated, available, equity, budgetKnown,
                             portfolioValue, closePrices, costPrices,
                             GetStrategyCostProfile(strategy),
-                            DecisionStatus::Completed, "");
+                            DecisionStatus::Completed, "",
+                            creditState,
+                            marginCfg._initialMarginRatio,
+                            marginCfg._maintenanceMarginRatio,
+                            marginCfg._warningRatio,
+                            marginCfg._liquidationRatio);
 
                         // 构建调试报告 + 发送邮件/SSE
                         EodDebugSpec debugSpec;

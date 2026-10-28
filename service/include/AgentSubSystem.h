@@ -4,14 +4,12 @@
 #include "StrategyNode.h"
 #include "Nodes/ProtectionNode.h"
 #include "Nodes/ExecuteNode.h"
-#include "std_header.h"
 #include "Strategy.h"
 #include "Util/datetime.h"
 #include "Util/TradingCost.h"
-#include "json.hpp"
+#include "Bridge/StrategyCapital.h"
 #include <atomic>
 #include <functional>
-#include <future>
 #include <memory>
 #include <mutex>
 
@@ -59,6 +57,19 @@ public:
     void SetShadowMode(const String& strategy);
 
     void SetStrategyCapital(const String& strategy, double capital);
+
+    /**
+     * @brief 设置策略的两融配置（保证金比例、融资利率、融券费率等）
+     *
+     * 来源：策略 JSON 的 "margin" 段。日终邮件的"两融信用"区块按这份配置算。
+     */
+    void SetStrategyMarginConfig(const String& strategy, const MarginConfig& config);
+
+    /**
+     * @brief 读取策略的两融配置
+     * @return 配置；策略不存在或未配置时返回默认配置
+     */
+    MarginConfig GetStrategyMarginConfig(const String& strategy) const;
 
     /**
      * @brief 设置策略的费率档案（佣金/印花税/滑点…）
@@ -345,6 +356,8 @@ private:
         List<QNode*> _graph;
         // 策略配置资金（从策略 JSON "capital" 字段读取，供 StartDaily 实盘路径使用）
         double _capital = 0;
+        // 策略两融配置（从策略 JSON "margin" 段读取，供 BuildDecisionSet 使用）
+        MarginConfig _marginConfig;
         // 策略费率档案（从 execution 节点的 commission/stampDuty/minFee/slippage 读取）。
         // 佣金率由档案派生（commissionRate()），不再单独存一份，避免两处数值漂移。
         CostProfile _costProfile;

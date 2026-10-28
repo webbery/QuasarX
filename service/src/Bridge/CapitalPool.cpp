@@ -146,6 +146,68 @@ double CapitalPool::getUsed(const String& strategy) const {
     return 0.0;
 }
 
+void CapitalPool::applyCreditFill(const String& strategy, const String& symbol,
+                                  CreditAction action, int64_t quantity,
+                                  double price, double marginRatio) {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    auto it = _strategies.find(strategy);
+    if (it == _strategies.end()) {
+        WARN("[CapitalPool] applyCreditFill: strategy '{}' not registered, skip", strategy);
+        return;
+    }
+    if (action == CreditAction::None || quantity <= 0 || price <= 0.0) {
+        return;
+    }
+
+    auto& credit = it->second.credit;
+    switch (action) {
+        case CreditAction::MarginBuy: {
+            // 融资买入：成交额按保证金比例拆成自有资金与借入现金。
+            // 借入现金计入融资余额，逐日按融资利率计提利息。
+            double gross = static_cast<double>(quantity) * price;
+            double borrowed = gross * (1.0 - std::clamp(marginRatio, 0.0, 1.0));
+            credit.borrowedCash += borrowed;
+            credit.financedAmount[symbol] += borrowed;
+            break;
+        }
+        case CreditAction::ShortSell: {
+            // 融券卖出：在借股数增加，开空均价按加权更新。
+            auto& shares = credit.borrowedShares[symbol];
+            auto& avg = credit.shortAvgPrice[symbol];
+            double oldValue = static_cast<double>(shares) * avg;
+            shares += quantity;
+            avg = (oldValue + static_cast<double>(quantity) * price) / static_cast<double>(shares);
+            break;
+        }
+        case CreditAction::ShortCover: {
+            // 买入平空：归还借券，在借股数减少。
+            auto itShares = credit.borrowedShares.find(symbol);
+            if (itShares == credit.borrowedShares.end()) {
+                break;
+            }
+            itShares->second -= quantity;
+            if (itShares->second <= 0) {
+                credit.borrowedShares.erase(itShares);
+                credit.shortAvgPrice.erase(symbol);
+            }
+            break;
+        }
+        case CreditAction::None:
+            break;
+    }
+}
+
+StrategyCreditState CapitalPool::getCreditState(const String& strategy) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    auto it = _strategies.find(strategy);
+    if (it != _strategies.end()) {
+        return it->second.credit;
+    }
+    return StrategyCreditState{};
+}
+
 double CapitalPool::getTotalAllocated() const {
     std::lock_guard<std::mutex> lock(_mutex);
     double total = 0;
@@ -180,10 +242,29 @@ bool CapitalPool::persist(const String& filePath) const {
         
         nlohmann::json strategiesJson;
         for (const auto& [name, info] : _strategies) {
+            nlohmann::json creditJson;
+            creditJson["borrowedCash"] = info.credit.borrowedCash;
+            nlohmann::json sharesJson = nlohmann::json::object();
+            for (const auto& [sym, qty] : info.credit.borrowedShares) {
+                sharesJson[sym] = qty;
+            }
+            creditJson["borrowedShares"] = std::move(sharesJson);
+            nlohmann::json avgJson = nlohmann::json::object();
+            for (const auto& [sym, price] : info.credit.shortAvgPrice) {
+                avgJson[sym] = price;
+            }
+            creditJson["shortAvgPrice"] = std::move(avgJson);
+            nlohmann::json financedJson = nlohmann::json::object();
+            for (const auto& [sym, amount] : info.credit.financedAmount) {
+                financedJson[sym] = amount;
+            }
+            creditJson["financedAmount"] = std::move(financedJson);
+
             strategiesJson[name] = {
                 {"allocated", info.allocated},
                 {"available", info.available},
-                {"active", info.active}
+                {"active", info.active},
+                {"credit", std::move(creditJson)}
             };
         }
         json["strategies"] = strategiesJson;
@@ -234,6 +315,26 @@ bool CapitalPool::load(const String& filePath) {
                 info.allocated = val.value("allocated", 0.0);
                 info.available = val.value("available", 0.0);
                 info.active = val.value("active", false);
+                // 信用敞口：旧版本 capital_pool.json 没有 credit 段，全部走默认（无两融）
+                if (val.contains("credit") && val["credit"].is_object()) {
+                    const auto& credit = val["credit"];
+                    info.credit.borrowedCash = credit.value("borrowedCash", 0.0);
+                    auto readMap = [&credit](const char* key, auto& out) {
+                        if (!credit.contains(key) || !credit[key].is_object()) return;
+                        for (const auto& [sym, v] : credit[key].items()) {
+                            if (v.is_number()) out[sym] = v.get<double>();
+                        }
+                    };
+                    if (credit.contains("borrowedShares") && credit["borrowedShares"].is_object()) {
+                        for (const auto& [sym, v] : credit["borrowedShares"].items()) {
+                            if (v.is_number_integer() || v.is_number()) {
+                                info.credit.borrowedShares[sym] = v.get<int64_t>();
+                            }
+                        }
+                    }
+                    readMap("shortAvgPrice", info.credit.shortAvgPrice);
+                    readMap("financedAmount", info.credit.financedAmount);
+                }
                 _strategies[name] = info;
             }
         }

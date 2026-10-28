@@ -98,6 +98,48 @@ void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price) {
     }
 }
 
+void BacktestContext::applyCreditFill(const String& symbol, CreditAction action,
+                                      int64_t quantity, double price, double marginRatio) {
+    if (action == CreditAction::None || quantity <= 0 || price <= 0.0) {
+        return;
+    }
+
+    switch (action) {
+        case CreditAction::MarginBuy: {
+            // 融资买入：成交额按保证金比例拆成自有资金与借入现金
+            double gross = static_cast<double>(quantity) * price;
+            double borrowed = gross * (1.0 - std::clamp(marginRatio, 0.0, 1.0));
+            _creditState.borrowedCash += borrowed;
+            _creditState.financedAmount[symbol] += borrowed;
+            break;
+        }
+        case CreditAction::ShortSell: {
+            // 融券卖出：在借股数增加，开空均价按加权更新
+            auto& shares = _creditState.borrowedShares[symbol];
+            auto& avg = _creditState.shortAvgPrice[symbol];
+            double oldValue = static_cast<double>(shares) * avg;
+            shares += quantity;
+            avg = (oldValue + static_cast<double>(quantity) * price) / static_cast<double>(shares);
+            break;
+        }
+        case CreditAction::ShortCover: {
+            // 买入平空：归还借券，在借股数减少
+            auto itShares = _creditState.borrowedShares.find(symbol);
+            if (itShares == _creditState.borrowedShares.end()) {
+                break;
+            }
+            itShares->second -= quantity;
+            if (itShares->second <= 0) {
+                _creditState.borrowedShares.erase(itShares);
+                _creditState.shortAvgPrice.erase(symbol);
+            }
+            break;
+        }
+        case CreditAction::None:
+            break;
+    }
+}
+
 double BacktestContext::getCapital() const {
     return _initialCapital;
 }

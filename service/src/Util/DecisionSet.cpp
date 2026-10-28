@@ -1,6 +1,7 @@
 #include "Util/DecisionSet.h"
 #include "Util/log.h"
 #include "Util/datetime.h"
+#include "Bridge/CapitalPool.h"
 
 namespace {
 // CostQuote ↔ JSON：map 的 key 是枚举，不能直接 dump，按费用种类名序列化
@@ -69,7 +70,13 @@ DecisionSet BuildDecisionSet(
     const Map<symbol_t, double>& costPrices,
     const CostProfile& costProfile,
     DecisionStatus status,
-    const String& error)
+    const String& error,
+    const StrategyCreditState& creditState,
+    double marginRatio,
+    double maintenanceMarginRatio,
+    double warningRatio,
+    double liquidationRatio,
+    double accrualDays)
 {
     DecisionSet set;
     set._strategy = strategy;
@@ -86,6 +93,19 @@ DecisionSet BuildDecisionSet(
     set._portfolioValue = portfolioValue;
     set._riskEvents = riskEvents;
     set._costProfile = costProfile;
+
+    // 两融配置
+    set._marginRatio = marginRatio;
+    set._maintenanceMarginRatio = maintenanceMarginRatio;
+    set._warningRatio = warningRatio;
+    set._liquidationRatio = liquidationRatio;
+    set._accrualDays = accrualDays;
+    set._financingRate = costProfile.financingRate();
+    set._securitiesLendingRate = costProfile.securitiesLendingRate();
+
+    // 检查是否有两融敞口
+    set._hasMargin = (creditState.borrowedCash > 0.0 || !creditState.borrowedShares.empty());
+    set._marginKnown = (marginRatio > 0.0 && marginRatio <= 1.0);
 
     // Map 的 key 就是 symbol，这里直接按 key 取收盘价，
     // 保证 daily_positions 写的是真实收盘价而不是计划目标价。
@@ -116,12 +136,97 @@ DecisionSet BuildDecisionSet(
             }
         }
 
+        // 两融标记
+        item._marginRatio = marginRatio;
+        if (snap._action == TradeAction::SELL && snap._flag == 0) {
+            // 融券卖出
+            item._isShortOpen = true;
+        } else if (snap._action == TradeAction::BUY && snap._flag == 1) {
+            // 买入平空
+            item._isShortCover = true;
+        } else if (snap._action == TradeAction::BUY && snap._flag == 0 && marginRatio < 1.0) {
+            // 融资买入
+            item._isFinanced = true;
+        }
+
         // 摩擦成本：按费率档案对每笔交易求值一次，邮件/日报只读结果
         if (item._action != TradeAction::HOLD) {
             item._cost = EvaluateTradeCost(costProfile, DecisionSet::MakeCostContext(item));
             set._totalTradeFriction += item._cost.tradeTotal();
         }
         set._items.push_back(std::move(item));
+    }
+
+    // 两融明细与日息求值
+    if (set._hasMargin && set._marginKnown) {
+        // 构建两融明细
+        for (const auto& [symStr, shares] : creditState.borrowedShares) {
+            if (shares <= 0) continue;
+
+            DecisionSet::MarginItem margin;
+            margin._symbol = to_symbol(symStr);
+            margin._borrowedShares = shares;
+
+            // 开空均价
+            auto avgIt = creditState.shortAvgPrice.find(symStr);
+            if (avgIt != creditState.shortAvgPrice.end()) {
+                margin._shortCostPrice = avgIt->second;
+            }
+
+            // 融券在借市值（按当期收盘价）
+            auto priceIt = closePrices.find(margin._symbol);
+            double currentPrice = (priceIt != closePrices.end()) ? priceIt->second : margin._shortCostPrice;
+            margin._borrowedValue = static_cast<double>(shares) * currentPrice;
+
+            // 融券费（按日计提）
+            HoldingCostContext holdCtx;
+            holdCtx._borrowedValue = margin._borrowedValue;
+            holdCtx._days = accrualDays;
+            CostQuote quote = EvaluateHoldingCost(costProfile, holdCtx);
+            margin._dailyShortFee = quote.item(CostKind::SecuritiesLending);
+
+            set._marginItems.push_back(std::move(margin));
+            set._totalShortValue += margin._borrowedValue;
+            set._totalShortFee += margin._dailyShortFee;
+        }
+
+        // 融资明细（按标的）
+        for (const auto& [symStr, amount] : creditState.financedAmount) {
+            if (amount <= 0.0) continue;
+
+            // 找到对应的 margin item 或新建
+            DecisionSet::MarginItem* margin = nullptr;
+            for (auto& m : set._marginItems) {
+                if (get_symbol(m._symbol) == symStr) {
+                    margin = &m;
+                    break;
+                }
+            }
+            if (!margin) {
+                set._marginItems.emplace_back();
+                margin = &set._marginItems.back();
+                margin->_symbol = to_symbol(symStr);
+            }
+
+            margin->_financedAmount = amount;
+
+            // 融资利息（按日计提）
+            HoldingCostContext holdCtx;
+            holdCtx._borrowedCash = amount;
+            holdCtx._days = accrualDays;
+            CostQuote quote = EvaluateHoldingCost(costProfile, holdCtx);
+            margin->_dailyFinancingInterest = quote.item(CostKind::Financing);
+
+            set._totalFinancingInterest += margin->_dailyFinancingInterest;
+        }
+
+        set._totalMarginCost = set._totalShortFee + set._totalFinancingInterest;
+        set._totalHoldingCost = set._totalMarginCost;
+
+        // 口径 B：保证金总量 = 自有资金 + 证券市值（多头持仓）
+        // 已占用 = 融资欠款 + 融券市值
+        set._marginEquity = available + portfolioValue;
+        set._usedMargin = creditState.borrowedCash + set._totalShortValue;
     }
 
     return set;
@@ -147,6 +252,41 @@ nlohmann::json DecisionSet::toJson() const {
     j["total_trade_friction"] = _totalTradeFriction;
     j["total_holding_cost"] = _totalHoldingCost;
 
+    // 两融（信用交易）
+    if (_hasMargin) {
+        nlohmann::json marginJson;
+        marginJson["has_margin"] = _hasMargin;
+        marginJson["margin_known"] = _marginKnown;
+        marginJson["margin_ratio"] = _marginRatio;
+        marginJson["maintenance_margin_ratio"] = _maintenanceMarginRatio;
+        marginJson["financing_rate"] = _financingRate;
+        marginJson["securities_lending_rate"] = _securitiesLendingRate;
+        marginJson["warning_ratio"] = _warningRatio;
+        marginJson["liquidation_ratio"] = _liquidationRatio;
+        marginJson["accrual_days"] = _accrualDays;
+        marginJson["margin_equity"] = _marginEquity;
+        marginJson["used_margin"] = _usedMargin;
+        marginJson["total_short_value"] = _totalShortValue;
+        marginJson["total_short_fee"] = _totalShortFee;
+        marginJson["total_financing_interest"] = _totalFinancingInterest;
+        marginJson["total_margin_cost"] = _totalMarginCost;
+
+        nlohmann::json itemsJson = nlohmann::json::array();
+        for (const auto& m : _marginItems) {
+            nlohmann::json mi;
+            mi["symbol"] = get_symbol(m._symbol);
+            mi["borrowed_shares"] = m._borrowedShares;
+            mi["short_cost_price"] = m._shortCostPrice;
+            mi["borrowed_value"] = m._borrowedValue;
+            mi["daily_short_fee"] = m._dailyShortFee;
+            mi["financed_amount"] = m._financedAmount;
+            mi["daily_financing_interest"] = m._dailyFinancingInterest;
+            itemsJson.push_back(std::move(mi));
+        }
+        marginJson["items"] = std::move(itemsJson);
+        j["margin"] = std::move(marginJson);
+    }
+
     nlohmann::json items = nlohmann::json::array();
     for (const auto& it : _items) {
         nlohmann::json o;
@@ -160,6 +300,10 @@ nlohmann::json DecisionSet::toJson() const {
         o["epoch"] = it._epoch;
         o["is_default_hold"] = it._isDefaultHold;
         o["is_emergency_close"] = it._isEmergencyClose;
+        o["is_short_open"] = it._isShortOpen;
+        o["is_short_cover"] = it._isShortCover;
+        o["is_financed"] = it._isFinanced;
+        o["margin_ratio"] = it._marginRatio;
         o["cost"] = CostQuoteToJson(it._cost);
         items.push_back(std::move(o));
     }
@@ -212,6 +356,41 @@ DecisionSet DecisionSet::fromJson(const nlohmann::json& j) {
     set._totalTradeFriction = j.value("total_trade_friction", 0.0);
     set._totalHoldingCost = j.value("total_holding_cost", 0.0);
 
+    // 两融（信用交易）
+    if (j.contains("margin") && j["margin"].is_object()) {
+        const auto& margin = j["margin"];
+        set._hasMargin = margin.value("has_margin", false);
+        set._marginKnown = margin.value("margin_known", false);
+        set._marginRatio = margin.value("margin_ratio", 1.0);
+        set._maintenanceMarginRatio = margin.value("maintenance_margin_ratio", 0.3);
+        set._financingRate = margin.value("financing_rate", 0.0);
+        set._securitiesLendingRate = margin.value("securities_lending_rate", 0.0);
+        set._warningRatio = margin.value("warning_ratio", 1.5);
+        set._liquidationRatio = margin.value("liquidation_ratio", 1.3);
+        set._accrualDays = margin.value("accrual_days", 1.0);
+        set._marginEquity = margin.value("margin_equity", 0.0);
+        set._usedMargin = margin.value("used_margin", 0.0);
+        set._totalShortValue = margin.value("total_short_value", 0.0);
+        set._totalShortFee = margin.value("total_short_fee", 0.0);
+        set._totalFinancingInterest = margin.value("total_financing_interest", 0.0);
+        set._totalMarginCost = margin.value("total_margin_cost", 0.0);
+
+        if (margin.contains("items") && margin["items"].is_array()) {
+            set._marginItems.reserve(margin["items"].size());
+            for (const auto& mi : margin["items"]) {
+                DecisionSet::MarginItem m;
+                m._symbol = to_symbol(mi.value("symbol", String()));
+                m._borrowedShares = mi.value("borrowed_shares", static_cast<int64_t>(0));
+                m._shortCostPrice = mi.value("short_cost_price", 0.0);
+                m._borrowedValue = mi.value("borrowed_value", 0.0);
+                m._dailyShortFee = mi.value("daily_short_fee", 0.0);
+                m._financedAmount = mi.value("financed_amount", 0.0);
+                m._dailyFinancingInterest = mi.value("daily_financing_interest", 0.0);
+                set._marginItems.push_back(std::move(m));
+            }
+        }
+    }
+
     if (j.contains("items") && j["items"].is_array()) {
         set._items.reserve(j["items"].size());
         for (const auto& o : j["items"]) {
@@ -226,6 +405,10 @@ DecisionSet DecisionSet::fromJson(const nlohmann::json& j) {
             it._epoch = o.value("epoch", -1);
             it._isDefaultHold = o.value("is_default_hold", false);
             it._isEmergencyClose = o.value("is_emergency_close", false);
+            it._isShortOpen = o.value("is_short_open", false);
+            it._isShortCover = o.value("is_short_cover", false);
+            it._isFinanced = o.value("is_financed", false);
+            it._marginRatio = o.value("margin_ratio", 1.0);
             if (o.contains("cost")) {
                 CostQuoteFromJson(o["cost"], it._cost);
             }

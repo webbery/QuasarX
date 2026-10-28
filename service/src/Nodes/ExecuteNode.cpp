@@ -207,6 +207,10 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             }
             signal->SetQuantity(item._quantity);
             signal->SetPrice(item._limitPrice);
+            // 两融标记：flag 决定开/平，是区分"融券卖出"与"卖出平多"的唯一来源。
+            // 此前这里没传 flag，ManualTiming 只能硬编码 SELL→flag=1（平多），
+            // 导致"融券卖出"（SELL flag=0）在决策集里无法表达，落盘时 OpenShort 永远产生不出来。
+            signal->SetFlag(item._flag);
             // 紧急平仓标记与成本价随 signal 传给 ManualTiming。
             // 只在有值时覆盖：同一 symbol 的多条 plan 项里，紧急平仓腿排在最后，
             // 若被后面的普通腿清零，标记和成本价就丢了。

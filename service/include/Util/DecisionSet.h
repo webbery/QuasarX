@@ -7,6 +7,9 @@
 #include "Util/datetime.h"
 #include "Util/TradingCost.h"
 
+// 前向声明：两融敞口状态（定义在 Bridge/CapitalPool.h）
+struct StrategyCreditState;
+
 /**
  * @brief 一组决策的唯一权威产物
  *
@@ -137,8 +140,13 @@ struct DecisionSet {
         double         _closePrice = 0.0; // 当期真实收盘价（持仓估值用这个）
         double         _costPrice = 0.0;  // 持仓均价（平仓成本价）；0 = 未知/不适用
         int32_t        _epoch = -1;
-        bool           _isDefaultHold = false;  // true = 非策略评估产生的默认 HOLD
-        bool           _isEmergencyClose = false;  // true = 风控触发的紧急平仓
+        bool           _isDefaultHold : 1 = false;  // true = 非策略评估产生的默认 HOLD
+        bool           _isEmergencyClose : 1 = false;  // true = 风控触发的紧急平仓
+        // 两融标记（用于邮件徽标与两融明细）
+        bool           _isShortOpen : 1 = false;    // true = 融券卖出（SELL flag=0）
+        bool           _isShortCover : 1 = false;   // true = 买入平空（BUY flag=1）
+        bool           _isFinanced : 1 = false;     // true = 融资买入（BUY flag=0 + marginRatio<1）
+        double         _marginRatio = 1.0;          // 该笔成交的保证金比例（1.0 = 非两融）
         // 该笔决策的成本拆解（佣金/印花税/滑点…）。在构建时求值一次，
         // 邮件/日报只读结果，不再各自算一遍费率。
         CostQuote      _cost;
@@ -158,6 +166,37 @@ struct DecisionSet {
     CostProfile _costProfile;
     double _totalTradeFriction = 0.0;   // 当日交易摩擦合计（买入+卖出）
     double _totalHoldingCost   = 0.0;   // 当日持有成本合计（日息口径，与交易摩擦分开）
+
+    // ── 两融（信用交易）──
+    // 与交易摩擦严格分开：两融是"持仓期按日计提"，交易摩擦是"时点一次付"。
+    // 数据来源：CapitalPool 的 StrategyCreditState（成交回写后持久化，跨进程存活）。
+    // 求值：EvaluateHoldingCost(profile, HoldingCostContext) 按日计提融资利息与融券费。
+    struct MarginItem {
+        symbol_t _symbol;
+        int64_t  _borrowedShares = 0;          // 融券在借数量
+        double   _shortCostPrice = 0.0;        // 开空均价（空头的成本价）
+        double   _borrowedValue = 0.0;         // 融券在借市值（按当期价）
+        double   _dailyShortFee = 0.0;         // 当日融券费（按在借市值 × 融券年费率 ÷ 365）
+        double   _financedAmount = 0.0;        // 本标的融资本金余额
+        double   _dailyFinancingInterest = 0.0;// 当日融资利息（按融资余额 × 融资年利率 ÷ 365）
+    };
+    Vector<MarginItem> _marginItems;
+
+    bool   _marginKnown = false;         // 两融数据是否可信（账本缺失时 false，读侧降级）
+    bool   _hasMargin = false;           // 有无两融敞口（邮件据此决定是否显示区块）
+    double _marginRatio = 1.0;           // 初始保证金比例（1.0 = 全额，0.5 = 50%）
+    double _maintenanceMarginRatio = 0.3;// 维持保证金比例
+    double _financingRate = 0.0;         // 融资年利率
+    double _securitiesLendingRate = 0.0; // 融券年费率
+    double _warningRatio = 1.5;          // 警戒线（维持担保比例）
+    double _liquidationRatio = 1.3;      // 平仓线（维持担保比例）
+    double _accrualDays = 1.0;           // 计息天数（日终邮件为 1，跨周末/节假日时按实际天数）
+    double _marginEquity = 0.0;          // 保证金总量（口径 B：自有资金 + 证券市值）
+    double _usedMargin = 0.0;            // 已占用保证金（口径 B：融资欠款 + 融券市值）
+    double _totalShortValue = 0.0;       // 融券在借市值合计
+    double _totalShortFee = 0.0;         // 当日融券费合计
+    double _totalFinancingInterest = 0.0;// 当日融资利息合计
+    double _totalMarginCost = 0.0;       // 当日两融持有成本合计（= _totalShortFee + _totalFinancingInterest）
 
     // ── 随这组决策一并产出的风控事件 ──
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;
@@ -240,7 +279,13 @@ struct DecisionSetBuilder {
         Vector<ProtectionNode::ProtectionEvent> riskEvents,
         DecisionSet& out,
         const Vector<DecisionSet::PositionSnapshot>& positionSnapshots = {},
-        const CostProfile& costProfile = CostProfile{})
+        const CostProfile& costProfile = CostProfile{},
+        const StrategyCreditState& creditState = StrategyCreditState{},
+        double marginRatio = 1.0,
+        double maintenanceMarginRatio = 0.3,
+        double warningRatio = 1.5,
+        double liquidationRatio = 1.3,
+        double accrualDays = 1.0)
     {
         out._strategy = strategy;
         out._asOf = asOf;
@@ -256,6 +301,19 @@ struct DecisionSetBuilder {
 
         // 费率档案：邮件里的摩擦成本按这份档案算
         out._costProfile = costProfile;
+
+        // 两融配置
+        out._marginRatio = marginRatio;
+        out._maintenanceMarginRatio = maintenanceMarginRatio;
+        out._warningRatio = warningRatio;
+        out._liquidationRatio = liquidationRatio;
+        out._accrualDays = accrualDays;
+        out._financingRate = costProfile.financingRate();
+        out._securitiesLendingRate = costProfile.securitiesLendingRate();
+
+        // 检查是否有两融敞口
+        out._hasMargin = (creditState.borrowedCash > 0.0 || !creditState.borrowedShares.empty());
+        out._marginKnown = (marginRatio > 0.0 && marginRatio <= 1.0);
 
         // 决策
         out._items.reserve(decisions.size());
@@ -274,12 +332,82 @@ struct DecisionSetBuilder {
             // 持仓成本：回测路径没有 StrategyCapital 账本，普通 SELL 拿不到成本价（留 0，
             // 邮件显示"—"而不是编一个 0）；紧急平仓的成本价由执行计划携带（快照里带过来）。
             item._costPrice = snap._costPrice;
+
+            // 两融标记
+            item._marginRatio = marginRatio;
+            if (snap._action == TradeAction::SELL && snap._flag == 0) {
+                item._isShortOpen = true;
+            } else if (snap._action == TradeAction::BUY && snap._flag == 1) {
+                item._isShortCover = true;
+            } else if (snap._action == TradeAction::BUY && snap._flag == 0 && marginRatio < 1.0) {
+                item._isFinanced = true;
+            }
+
             // 摩擦成本：按档案对每笔交易求值一次，邮件只读结果
             if (item._action != TradeAction::HOLD) {
                 item._cost = EvaluateTradeCost(costProfile, DecisionSet::MakeCostContext(item));
                 out._totalTradeFriction += item._cost.tradeTotal();
             }
             out._items.push_back(std::move(item));
+        }
+
+        // 两融明细与日息求值（回测路径也支持）
+        if (out._hasMargin && out._marginKnown) {
+            for (const auto& [symStr, shares] : creditState.borrowedShares) {
+                if (shares <= 0) continue;
+
+                DecisionSet::MarginItem margin;
+                margin._symbol = to_symbol(symStr);
+                margin._borrowedShares = shares;
+
+                auto avgIt = creditState.shortAvgPrice.find(symStr);
+                if (avgIt != creditState.shortAvgPrice.end()) {
+                    margin._shortCostPrice = avgIt->second;
+                }
+
+                // 回测路径用决策价代替收盘价
+                margin._borrowedValue = static_cast<double>(shares) * margin._shortCostPrice;
+
+                HoldingCostContext holdCtx;
+                holdCtx._borrowedValue = margin._borrowedValue;
+                holdCtx._days = accrualDays;
+                CostQuote quote = EvaluateHoldingCost(costProfile, holdCtx);
+                margin._dailyShortFee = quote.item(CostKind::SecuritiesLending);
+
+                out._marginItems.push_back(std::move(margin));
+                out._totalShortValue += margin._borrowedValue;
+                out._totalShortFee += margin._dailyShortFee;
+            }
+
+            for (const auto& [symStr, amount] : creditState.financedAmount) {
+                if (amount <= 0.0) continue;
+
+                DecisionSet::MarginItem* margin = nullptr;
+                for (auto& m : out._marginItems) {
+                    if (get_symbol(m._symbol) == symStr) {
+                        margin = &m;
+                        break;
+                    }
+                }
+                if (!margin) {
+                    out._marginItems.emplace_back();
+                    margin = &out._marginItems.back();
+                    margin->_symbol = to_symbol(symStr);
+                }
+
+                margin->_financedAmount = amount;
+
+                HoldingCostContext holdCtx;
+                holdCtx._borrowedCash = amount;
+                holdCtx._days = accrualDays;
+                CostQuote quote = EvaluateHoldingCost(costProfile, holdCtx);
+                margin->_dailyFinancingInterest = quote.item(CostKind::Financing);
+
+                out._totalFinancingInterest += margin->_dailyFinancingInterest;
+            }
+
+            out._totalMarginCost = out._totalShortFee + out._totalFinancingInterest;
+            out._totalHoldingCost = out._totalMarginCost;
         }
 
         out._riskEvents = std::move(riskEvents);
@@ -310,6 +438,12 @@ struct DecisionSetBuilder {
  * @param costProfile     费率档案（佣金/印花税/滑点…）；用于对每笔决策求值摩擦成本
  * @param status          状态
  * @param error           失败原因
+ * @param creditState     两融敞口（来自 CapitalPool，成交回写后持久化）
+ * @param marginRatio     初始保证金比例（1.0 = 全额，0.5 = 50%）
+ * @param maintenanceMarginRatio 维持保证金比例
+ * @param warningRatio    警戒线（维持担保比例）
+ * @param liquidationRatio 平仓线（维持担保比例）
+ * @param accrualDays     计息天数（日终邮件为 1，跨周末/节假日时按实际天数）
  */
 DecisionSet BuildDecisionSet(
     const String& strategy,
@@ -326,4 +460,10 @@ DecisionSet BuildDecisionSet(
     const Map<symbol_t, double>& costPrices,
     const CostProfile& costProfile,
     DecisionStatus status,
-    const String& error);
+    const String& error,
+    const StrategyCreditState& creditState = StrategyCreditState{},
+    double marginRatio = 1.0,
+    double maintenanceMarginRatio = 0.3,
+    double warningRatio = 1.5,
+    double liquidationRatio = 1.3,
+    double accrualDays = 1.0);

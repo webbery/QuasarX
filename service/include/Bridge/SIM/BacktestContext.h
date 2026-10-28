@@ -178,6 +178,15 @@ public:
     void addFrictionCost(double cost) noexcept { _totalFrictionCost += cost; }
     double getTotalFrictionCost() const noexcept { return _totalFrictionCost; }
 
+    // === 两融信用状态 ===
+    /// @brief 获取当前信用状态（融资余额、融券在借数量等）
+    const StrategyCreditState& getCreditState() const noexcept { return _creditState; }
+    /// @brief 设置信用状态（从 CapitalPool 恢复时调用）
+    void setCreditState(const StrategyCreditState& state) noexcept { _creditState = state; }
+    /// @brief 应用信用成交（融资买入/融券卖出/买入平空）
+    void applyCreditFill(const String& symbol, CreditAction action, int64_t quantity,
+                         double price, double marginRatio);
+
     // === CUSUM 变点检测 ===
     /// @brief 推送当日收益率到 CUSUM 检测器
     /// @param daily_return 当日组合收益率
@@ -283,6 +292,9 @@ private:
 
     // 摩擦成本累计（佣金 + 印花税 + 滑点）
     double _totalFrictionCost = 0.0;
+
+    // 两融信用状态（融资余额、融券在借数量等）
+    StrategyCreditState _creditState;
 
     // === CUSUM 变点检测 ===
     CUSUMDetector _cusum_detector;

@@ -129,9 +129,13 @@ struct CostProfile {
      * @param stampDutyRate  印花税率（仅卖出收取）
      * @param minFee         单笔最低佣金（元）
      * @param slippageRate   滑点率（按成交金额）
+     * @param financingRate  融资年利率（按借入现金余额，按日计提）；0 表示不开融资
+     * @param securitiesLendingRate 融券年费率（按借券市值，按日计提）；0 表示不开融券
      */
     static CostProfile ForStock(double commissionRate, double stampDutyRate,
-                                double minFee, double slippageRate) {
+                                double minFee, double slippageRate,
+                                double financingRate = 0.0,
+                                double securitiesLendingRate = 0.0) {
         CostProfile p;
         p._known = true;
 
@@ -155,7 +159,59 @@ struct CostProfile {
         slippage._rate  = slippageRate;
         p._tradeFees.push_back(slippage);
 
+        // 持仓期费用：融资利息与融券费。
+        // 与交易摩擦严格分开（口径不同、量纲不同，混成一个"摩擦"数会误导读者）：
+        //   - 融资利息：base = 借入现金余额，rate = 融资年利率，按日计提
+        //   - 融券费：  base = 借券市值，    rate = 融券年费率，按日计提
+        // 求值由 EvaluateHoldingCost 完成，base × rate × days / 365。
+        if (financingRate > 0.0) {
+            FeeItem financing;
+            financing._kind  = CostKind::Financing;
+            financing._basis = CostBasis::BorrowedCash;
+            financing._timing = CostTiming::PerDay;
+            financing._rate  = financingRate;
+            p._holdingFees.push_back(financing);
+        }
+        if (securitiesLendingRate > 0.0) {
+            FeeItem lending;
+            lending._kind  = CostKind::SecuritiesLending;
+            lending._basis = CostBasis::BorrowedValue;
+            lending._timing = CostTiming::PerDay;
+            lending._rate  = securitiesLendingRate;
+            p._holdingFees.push_back(lending);
+        }
+
         return p;
+    }
+
+    /**
+     * @brief 融资年利率（0 = 未配置 / 不开融资）
+     */
+    double financingRate() const {
+        for (const auto& f : _holdingFees) {
+            if (f._kind == CostKind::Financing) return f._rate;
+        }
+        return 0.0;
+    }
+
+    /**
+     * @brief 融券年费率（0 = 未配置 / 不开融券）
+     */
+    double securitiesLendingRate() const {
+        for (const auto& f : _holdingFees) {
+            if (f._kind == CostKind::SecuritiesLending) return f._rate;
+        }
+        return 0.0;
+    }
+
+    /**
+     * @brief 是否有持仓期费用（融资利息 / 融券费）
+     */
+    bool hasHoldingFees() const {
+        for (const auto& f : _holdingFees) {
+            if (f._rate > 0.0) return true;
+        }
+        return false;
     }
 
     /**

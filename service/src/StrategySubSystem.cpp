@@ -366,6 +366,26 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
     std::map<uint32_t, nlohmann::json> nodeConfigMap;
     auto nodes = parse_strategy_script_v2(script, _handle, &slippageConfig, &nodeConfigMap);
 
+    // 注入 margin 配置到 SignalNode 和 PortfolioNode
+    // 从策略 JSON 根路径的 "margin.allowShort" 读取，覆盖节点 params 中的 allowShort
+    if (script.contains("margin") && script["margin"].is_object()) {
+        const auto& margin = script["margin"];
+        if (margin.contains("allowShort") && margin["allowShort"].is_boolean()) {
+            bool allowShort = margin["allowShort"].get<bool>();
+            for (auto& [nodeId, nodeConfig] : nodeConfigMap) {
+                String nodeType = nodeConfig.value("nodeType", "");
+                if (nodeType == "signal" || nodeType == "portfolio") {
+                    if (!nodeConfig.contains("params")) {
+                        nodeConfig["params"] = nlohmann::json::object();
+                    }
+                    nodeConfig["params"]["allowShort"] = {{"value", allowShort}, {"type", "boolean"}};
+                    INFO("[StrategySubSystem] Injected margin.allowShort={} into {} node {}",
+                         allowShort, nodeType, nodeId);
+                }
+            }
+        }
+    }
+
     auto sorted_nodes = topo_sort(nodes);
 
     // 按拓扑顺序初始化节点（确保数据源节点先于下游节点初始化）
@@ -462,6 +482,33 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
                 marginConfig._allowShort = script["allowShort"].get<bool>();
             }
             broker->CreateStrategyCapital(strategyName, scriptCapital, marginConfig);
+
+            // 两融配置（margin 段）：保证金比例、融资利率、融券费率、警戒线/平仓线
+            // 来源：策略 JSON 根路径的 "margin" 对象。未配置时使用 MarginConfig 默认值。
+            if (script.contains("margin") && script["margin"].is_object()) {
+                const auto& margin = script["margin"];
+                if (margin.contains("allowShort") && margin["allowShort"].is_boolean()) {
+                    marginConfig._allowShort = margin["allowShort"].get<bool>();
+                }
+                if (margin.contains("marginRatio") && margin["marginRatio"].is_number()) {
+                    marginConfig._initialMarginRatio = margin["marginRatio"].get<double>();
+                }
+                if (margin.contains("maintenanceMarginRatio") && margin["maintenanceMarginRatio"].is_number()) {
+                    marginConfig._maintenanceMarginRatio = margin["maintenanceMarginRatio"].get<double>();
+                }
+                if (margin.contains("financingRate") && margin["financingRate"].is_number()) {
+                    marginConfig._financingRate = margin["financingRate"].get<double>();
+                }
+                if (margin.contains("securitiesLendingRate") && margin["securitiesLendingRate"].is_number()) {
+                    marginConfig._securitiesLendingRate = margin["securitiesLendingRate"].get<double>();
+                }
+                // 更新到 StrategyCapital（如果已经创建）
+                if (auto* capital = broker->GetStrategyCapital(strategyName)) {
+                    capital->setMarginConfig(marginConfig);
+                }
+                // 存储到 FlowSubsystem 供 BuildDecisionSet 使用
+                _agentSystem->SetStrategyMarginConfig(strategyName, marginConfig);
+            }
         }
     }
 
@@ -491,11 +538,24 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
                 bool hasSlippage   = readNum("slippage", slippageRate);
 
                 if (hasCommission || hasStampDuty || hasMinFee || hasSlippage) {
+                    // 从 margin 段读取两融费率
+                    double financingRate = 0.0, securitiesLendingRate = 0.0;
+                    if (script.contains("margin") && script["margin"].is_object()) {
+                        const auto& margin = script["margin"];
+                        if (margin.contains("financingRate") && margin["financingRate"].is_number()) {
+                            financingRate = margin["financingRate"].get<double>();
+                        }
+                        if (margin.contains("securitiesLendingRate") && margin["securitiesLendingRate"].is_number()) {
+                            securitiesLendingRate = margin["securitiesLendingRate"].get<double>();
+                        }
+                    }
                     CostProfile profile = CostProfile::ForStock(
                         hasCommission ? commissionRate : trading_cost::kDefaultCommissionRate,
                         hasStampDuty  ? stampDutyRate  : trading_cost::kDefaultStampDutyRate,
                         hasMinFee     ? minFee         : trading_cost::kDefaultMinFee,
-                        hasSlippage   ? slippageRate   : trading_cost::kDefaultSlippageRate);
+                        hasSlippage   ? slippageRate   : trading_cost::kDefaultSlippageRate,
+                        financingRate,
+                        securitiesLendingRate);
                     _agentSystem->SetStrategyCostProfile(strategyName, profile);
                     break;  // 只取第一个 execution 节点的成本配置
                 }

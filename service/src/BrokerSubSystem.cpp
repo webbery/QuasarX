@@ -1480,17 +1480,48 @@ bool BrokerSubSystem::RecordManualFill(const String& strategy,
              strategy);
     }
 
-    // 3) 持仓更新（FIFO，复用共用实现）
+    // 3) 两融敞口回写（融资买入 / 融券卖出 / 买入平空）
+    // 根据 DecisionAction 映射到 CreditAction，从 StrategyCapital 读取保证金比例。
+    if (pool) {
+        CreditAction creditAction = CreditAction::None;
+        switch (action) {
+            case DecisionAction::OpenLong:
+                // 融资买入：需要检查保证金比例 < 1.0 才算是融资
+                // 这里先标记为 OpenLong，applyCreditFill 内部会检查 marginRatio
+                creditAction = CreditAction::MarginBuy;
+                break;
+            case DecisionAction::OpenShort:
+                creditAction = CreditAction::ShortSell;
+                break;
+            case DecisionAction::CloseShort:
+                creditAction = CreditAction::ShortCover;
+                break;
+            case DecisionAction::CloseLong:
+                // 普通卖出平多，不涉及两融
+                break;
+        }
+        if (creditAction != CreditAction::None) {
+            // 从 StrategyCapital 读取保证金比例
+            double marginRatio = 1.0;
+            if (auto* capital = GetStrategyCapital(strategy)) {
+                marginRatio = capital->getMarginConfig()._initialMarginRatio;
+            }
+            pool->applyCreditFill(strategy, get_symbol(symbol), creditAction,
+                                  quantity, price, marginRatio);
+        }
+    }
+
+    // 4) 持仓更新（FIFO，复用共用实现）
     auto& holds = _portfolio->GetHolding(strategy);
     bool isOpen = (action == DecisionAction::OpenLong || action == DecisionAction::OpenShort);
     ApplyFillToHolding(holds, symbol, quantity, price, time(nullptr), isOpen);
 
-    // 4) DecisionDB 关联已执行
+    // 5) DecisionDB 关联已执行
     if (decisionId > 0) {
         MarkDecisionExecuted(decisionId, quantity, price);
     }
 
-    // 5) DailyPosition UPSERT（当日持仓快照）
+    // 6) DailyPosition UPSERT（当日持仓快照）
     // 注意：ApplyFillToHolding 可能在平仓后移除该标的，需重新查找而非复用旧引用
     int64_t netPosition = 0;
     auto holdIt = holds.find(symbol);
@@ -1511,7 +1542,7 @@ bool BrokerSubSystem::RecordManualFill(const String& strategy,
     dp.close_price = price;
     DecisionDB::instance().insertDailyPosition(dp);
 
-    // 6) 持久化 CapitalPool
+    // 7) 持久化 CapitalPool
     PersistCapitalPool();
 
     INFO("[Broker] RecordManualFill: {} {} {} qty={} price={:.2f} netDelta={:.0f} decisionId={}",

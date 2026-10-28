@@ -1,7 +1,7 @@
 #pragma once
+#include "std_header.h"
 #include "Bridge/exchange.h"
 #include "Util/system.h"
-#include "std_header.h"
 
 // K-bar 频率
 enum class BarFreq : char {
