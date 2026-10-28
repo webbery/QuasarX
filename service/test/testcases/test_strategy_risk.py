@@ -20,7 +20,11 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from tool import check_response, BASE_URL
+from tool import (
+    check_response, BASE_URL, get_auth_token,
+    api_load_strategy, api_run_strategy, api_cleanup_strategy,
+    api_simulate_bar, api_get_latest_bar, today_str, reclaim_capital
+)
 
 # ==================== 配置 ====================
 
@@ -41,58 +45,8 @@ RISK_FIELDS = [
 
 
 # ==================== 工具函数 ====================
-
-def api_load_strategy(token: str, name: str, script: dict) -> dict:
-    resp = requests.post(
-        f"{BASE_URL}/strategy",
-        json={"mode": 0, "name": name, "script": json.dumps(script)},
-        headers={"Authorization": token},
-        verify=False,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
-def cleanup_strategy(token: str, name: str):
-    headers = {"Authorization": token}
-    requests.post(
-        f"{BASE_URL}/strategy",
-        json={"action": "stop", "name": name},
-        headers=headers, verify=False, timeout=10,
-    )
-    from tool import reclaim_capital
-    reclaim_capital(token)
-
-
-def simulate_bar(token: str, bar: dict) -> dict:
-    resp = requests.post(
-        f"{BASE_URL}/strategy/simulate/bar",
-        json=bar,
-        headers={"Authorization": token},
-        verify=False,
-        timeout=15,
-    )
-    return resp.json()
-
-
-def get_latest_bar(token: str, symbol: str) -> dict:
-    resp = requests.get(
-        f"{BASE_URL}/stocks/history",
-        params={"id": symbol, "type": "1d", "start": 0, "end": 9999999999},
-        headers={"Authorization": token},
-        verify=False,
-        timeout=10,
-    )
-    data = check_response(resp)
-    if not data:
-        raise ValueError(f"无历史数据: {symbol}")
-    return data[-1]
-
-
-def today_str() -> str:
-    from datetime import datetime
-    return datetime.now().strftime("%Y-%m-%d")
+# 已从 tool.py 导入：api_load_strategy / api_run_strategy / api_cleanup_strategy /
+#                   api_simulate_bar / api_get_latest_bar / today_str / reclaim_capital
 
 
 # ==================== Fixtures ====================
@@ -104,14 +58,10 @@ def loaded_strategy(auth_token):
         pytest.skip(f"测试策略文件不存在: {STRATEGY_PATH}")
     strategy = json.loads(STRATEGY_PATH.read_text())
     api_load_strategy(auth_token, STRATEGY_NAME, strategy)
-    headers = {"Authorization": auth_token}
-    requests.post(
-        f"{BASE_URL}/strategy",
-        json={"mode": 1, "name": STRATEGY_NAME},
-        headers=headers, verify=False, timeout=10,
-    )
+    api_run_strategy(auth_token, STRATEGY_NAME)
     yield strategy
-    cleanup_strategy(auth_token, STRATEGY_NAME)
+    api_cleanup_strategy(auth_token, STRATEGY_NAME)
+    reclaim_capital(auth_token)
 
 
 # ==================== 测试类 ====================
@@ -179,7 +129,7 @@ class TestStrategyRiskEndpoint:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
 
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -191,7 +141,7 @@ class TestStrategyRiskEndpoint:
 
         # Day 1
         bar1 = dict(bar, datetime="2025-01-15 00:00:00")
-        result = simulate_bar(auth_token, bar1)
+        result = api_simulate_bar(auth_token, bar1)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
@@ -209,7 +159,7 @@ class TestStrategyRiskEndpoint:
 
         # Day 2（不同日期 → 不同 daily_positions 记录）
         bar2 = dict(bar, datetime="2025-01-16 00:00:00")
-        simulate_bar(auth_token, bar2)
+        api_simulate_bar(auth_token, bar2)
 
         # 等待 Day 2 执行完成
         time.sleep(2)

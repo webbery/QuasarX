@@ -27,6 +27,7 @@ import csv
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+from tool import to_api_symbol, from_api_symbol
 
 # 黄金标准库
 try:
@@ -141,24 +142,8 @@ def compute_forecast_golden(returns: np.ndarray, prices: List[float],
     }
 
 
-def to_api_symbol(symbol: str) -> str:
-    """sz.900001 → 900001.SZ（API 期望的格式）"""
-    if '.' in symbol:
-        parts = symbol.split('.', 1)
-        exchange_map = {'sz': 'SZ', 'sh': 'SH', 'bj': 'BJ'}
-        exc = exchange_map.get(parts[0].lower(), parts[0].upper())
-        return f"{parts[1]}.{exc}"
-    return symbol
 
 
-def from_api_symbol(symbol: str) -> str:
-    """900001.SZ → sz.900001（测试使用的格式）"""
-    if '.' in symbol:
-        parts = symbol.rsplit('.', 1)
-        exchange_map = {'SZ': 'sz', 'SH': 'sh', 'BJ': 'bj'}
-        exc = exchange_map.get(parts[1], parts[1].lower())
-        return f"{exc}.{parts[0]}"
-    return symbol
 
 
 def call_volatility_api(symbol: str, start_date: str, end_date: str,

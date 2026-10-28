@@ -30,6 +30,8 @@ from typing import Dict, List, Optional
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+from tool import get_auth_token
+
 
 # ============================================================
 # 配置
@@ -252,17 +254,6 @@ STANDARD_CASES = {
 # ============================================================
 # 回测 API 交互
 # ============================================================
-
-def get_auth_token() -> str:
-    """获取认证 token"""
-    resp = requests.post(
-        f"{BASE_URL}/user/login",
-        json={"name": "admin", "pwd": "admin"},
-        verify=VERIFY_SSL
-    )
-    resp.raise_for_status()
-    return resp.json()["tk"]
-
 
 def run_backtest_via_api(strategy_json_path: str, token: str) -> Dict:
     """

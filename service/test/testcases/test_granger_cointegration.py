@@ -25,6 +25,7 @@ import requests
 import numpy as np
 from pathlib import Path
 from typing import Dict
+from tool import to_api_symbol, from_api_symbol
 
 # 黄金标准库
 try:
@@ -63,24 +64,8 @@ SYMBOL_COINT_B = "sz.910004"  # 协整序列 B（与 A 协整，B ≈ 2*A）
 # 辅助函数
 # ============================================================
 
-def to_api_symbol(symbol: str) -> str:
-    """sz.910001 → 910001.SZ"""
-    if '.' in symbol:
-        parts = symbol.split('.', 1)
-        exchange_map = {'sz': 'SZ', 'sh': 'SH', 'bj': 'BJ'}
-        exc = exchange_map.get(parts[0].lower(), parts[0].upper())
-        return f"{parts[1]}.{exc}"
-    return symbol
 
 
-def from_api_symbol(symbol: str) -> str:
-    """910001.SZ → sz.910001"""
-    if '.' in symbol:
-        parts = symbol.rsplit('.', 1)
-        exchange_map = {'SZ': 'sz', 'SH': 'sh', 'BJ': 'bj'}
-        exc = exchange_map.get(parts[1], parts[1].lower())
-        return f"{exc}.{parts[0]}"
-    return symbol
 
 
 def call_volatility_api(symbols_str: str, auth_token: str = None) -> Dict:

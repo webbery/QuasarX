@@ -23,6 +23,7 @@ import pytest
 import requests
 import numpy as np
 from pathlib import Path
+from tool import to_api_symbol, from_api_symbol
 
 try:
     from statsmodels.tsa.stattools import adfuller, kpss, grangercausalitytests
@@ -68,20 +69,8 @@ HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 # 辅助函数
 # ============================================================
 
-def to_api_symbol(symbol: str) -> str:
-    if '.' in symbol:
-        parts = symbol.split('.', 1)
-        exc = {'sz': 'SZ', 'sh': 'SH', 'bj': 'BJ'}.get(parts[0].lower(), parts[0].upper())
-        return f"{parts[1]}.{exc}"
-    return symbol
 
 
-def from_api_symbol(symbol: str) -> str:
-    if '.' in symbol:
-        parts = symbol.rsplit('.', 1)
-        exc = {'SZ': 'sz', 'SH': 'sh', 'BJ': 'bj'}.get(parts[1], parts[1].lower())
-        return f"{exc}.{parts[0]}"
-    return symbol
 
 
 def call_api(symbols: list, max_lag: int = 10) -> dict:

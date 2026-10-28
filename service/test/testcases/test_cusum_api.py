@@ -51,7 +51,7 @@ def _to_api_symbols(symbols: List[str]) -> List[str]:
 # 测试数据目录（与 generate_test_data.py 共享，路径统一从 tool.py 解析）
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
-from tool import _DATA_DIR as SERVICE_DATA_DIR
+from tool import _DATA_DIR as SERVICE_DATA_DIR, get_auth_token
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"      # 后复权数据（指标计算用）
 METRIC_TEST_DIR = Path(__file__).parent / "metric_test_data"
 TEST_CASES_SUMMARY = METRIC_TEST_DIR / "test_cases_summary.json"
@@ -302,17 +302,6 @@ def load_test_cases_summary() -> Dict:
 # ============================================================
 # 回测 API 交互（复用 test_backtest_metrics.py 的模式）
 # ============================================================
-
-def get_auth_token() -> str:
-    """获取认证 token"""
-    resp = requests.post(
-        f"{BASE_URL}/user/login",
-        json={"name": "admin", "pwd": "admin"},
-        verify=VERIFY_SSL
-    )
-    resp.raise_for_status()
-    return resp.json()["tk"]
-
 
 def run_backtest_via_api(strategy_json_path: str, token: str) -> Dict:
     """通过 API 执行回测并获取指标"""

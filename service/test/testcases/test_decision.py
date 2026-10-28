@@ -23,7 +23,12 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from tool import check_response, BASE_URL, _DATA_DIR as SERVER_DATA_DIR
+from tool import (
+    check_response, BASE_URL, _DATA_DIR as SERVER_DATA_DIR, get_auth_token,
+    api_load_strategy, api_run_strategy, api_simulate_bar, api_clear_decisions,
+    api_cleanup_strategy, api_order_with_decision_id, api_get_decisions,
+    api_get_latest_bar, to_api_symbol, today_str, reclaim_capital
+)
 
 # ==================== 配置 ====================
 
@@ -34,213 +39,29 @@ STRATEGY_NAME = "manual_signal_strategy"
 TEST_SYMBOL = "sz.900001"  # metric 测试专用生成数据（已自动导入 DuckDB）
 TEST_QUANTITY = 100
 
-# ==================== 工具函数（从 test_simulate_bar.py 复制） ====================
+# ==================== 工具函数（从 tool.py 导入） ====================
 
-def get_auth_token() -> str:
-    """获取认证 token"""
-    resp = requests.post(
-        f"{BASE_URL}/user/login",
-        json={"name": "admin", "pwd": "admin"},
-        verify=False,
-    )
-    resp.raise_for_status()
-    return resp.json()["tk"]
-
-
-def api_load_strategy(token: str, name: str, script: dict) -> dict:
-    """POST /v0/strategy action=load — 加载策略到 StrategySubSystem"""
-    headers = {"Authorization": token}
-    resp = requests.post(
-        f"{BASE_URL}/strategy",
-        json={"action": "load", "name": name, "script": script},
-        headers=headers,
-        verify=False,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
-def to_api_symbol(symbol: str) -> str:
-    """sz.900001 → 900001.SZ（/stocks/history 端点格式）"""
-    # 内部格式: <exchange>.<code>，如 sz.000001, sh.600000, bj.920108
-    if "." not in symbol:
-        return symbol
-    exchange, code = symbol.split(".", 1)
-    # exchange 前缀: sz→SZ, sh→SH, bj→BJ
-    exchange_upper = exchange.upper()
-    return f"{code}.{exchange_upper}"
-
-
-def get_latest_bar(token: str, symbol: str, date: str = None) -> dict:
-    """从 StockHistoryHandler 获取最新 bar"""
-    headers = {"Authorization": token}
-    api_symbol = to_api_symbol(symbol)
-    try:
-        resp = requests.get(
-            f"{BASE_URL}/stocks/history",
-            params={
-                "id": api_symbol,
-                "type": "1d",
-                "start": "1672531200",  # 2023-01-01 (Unix 秒)
-                "end": "1767225599",    # 2025-12-31 (Unix 秒)
-            },
-            headers=headers,
-            verify=False,
-            timeout=10,
-        )
-    except requests.RequestException as e:
-        raise ValueError(f"Cannot get bar data for {api_symbol}: {e}")
-
-    if not resp.ok:
-        raise ValueError(f"Cannot get bar data for {api_symbol}: HTTP {resp.status_code}")
-
-    try:
-        data = resp.json()
-    except Exception as e:
-        raise ValueError(f"Cannot parse bar data for {api_symbol}: {e}")
-
-    if not isinstance(data, list) or not data:
-        raise ValueError(f"Empty bar data for {api_symbol}")
-
-    last = data[-1]
-    # /stocks/history 的 datetime 是 Unix 时间戳（数字），需转成 "YYYY-MM-DD HH:MM:SS" 字符串
-    raw_dt = last.get("datetime", "")
-    try:
-        dt_int = int(raw_dt)
-        dt_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(dt_int))
-    except (ValueError, TypeError):
-        dt_str = str(raw_dt)
-
-    return {
-        "symbol": symbol,
-        "open": float(last.get("open", 0)),
-        "high": float(last.get("high", 0)),
-        "low": float(last.get("low", 0)),
-        "close": float(last.get("close", 0)),
-        "volume": int(float(last.get("volume", 0))),
-        "datetime": date or dt_str,
-    }
-
-
-def simulate_bar(token: str, bar: dict) -> dict:
-    """POST /v0/strategy/simulate/bar（仅 Debug 构建可用）
-
-    失败时返回 {"status": "error", "error": ...}，调用方应据此 pytest.skip。
-    Release 构建下路由未注册（HTTP 404），同样走 error 分支。
-    """
-    headers = {"Authorization": token}
-    resp = requests.post(
-        f"{BASE_URL}/strategy/simulate/bar",
-        json=bar,
-        headers=headers,
-        verify=False,
-        timeout=30,
-    )
-    if resp.ok:
-        return resp.json()
-    return {
-        "status": "error",
-        "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
-    }
-
-
-def get_decisions(token: str, date: str = None) -> list:
-    """GET /v0/trade/decisions"""
-    headers = {"Authorization": token}
-    params = {}
-    if date:
-        params["date"] = date
-    resp = requests.get(
-        f"{BASE_URL}/trade/decisions",
-        params=params,
-        headers=headers,
-        verify=False,
-        timeout=10,
-    )
-    return check_response(resp) or []
-
-
-def today_str() -> str:
-    return time.strftime("%Y-%m-%d")
-
-
-def order_with_decision_id(
-    token: str, symbol: str, decision_id: int,
-    quantity: int, price: float, direct: int = 0,
-) -> requests.Response:
-    """POST /v0/trade/order 关联 decisionId，返回原始 Response"""
-    headers = {"Authorization": token}
-    body = {
-        "symbol": symbol,
-        "direct": direct,
-        "type": 1,  # 限价单
-        "quantity": quantity,
-        "prices": price,
-        "kind": 0,
-        "timeType": 0,
-        "decisionId": decision_id,
-    }
-    return requests.post(
-        f"{BASE_URL}/trade/order",
-        json=body,
-        headers=headers,
-        verify=False,
-        timeout=10,
-    )
-
-
-def cleanup_strategy(token: str, name: str):
-    """清理测试策略"""
-    headers = {"Authorization": token}
-    try:
-        # 先停止
-        requests.post(
-            f"{BASE_URL}/strategy",
-            json={"mode": 2, "name": name},
-            headers=headers,
-            verify=False,
-            timeout=5,
-        )
-        # 再删除
-        requests.delete(
-            f"{BASE_URL}/strategy",
-            json={"name": name},
-            headers=headers,
-            verify=False,
-            timeout=5,
-        )
-    except Exception:
-        pass
+# 以下函数已从 tool.py 导入：
+# - api_load_strategy
+# - api_run_strategy
+# - api_simulate_bar
+# - api_clear_decisions
+# - api_cleanup_strategy
+# - api_order_with_decision_id
+# - api_get_decisions
+# - api_get_latest_bar
+# - to_api_symbol
+# - today_str
 
 
 # ==================== Fixture ====================
 
-def clear_decisions(token: str, date: str = None) -> int:
-    """DELETE /v0/trade/decisions 清除指定日期决策，返回删除数量"""
-    headers = {"Authorization": token}
-    params = {}
-    if date:
-        params["date"] = date
-    resp = requests.delete(
-        f"{BASE_URL}/trade/decisions",
-        params=params,
-        headers=headers,
-        verify=False,
-        timeout=10,
-    )
-    if resp.ok:
-        return resp.json().get("deleted", 0)
-    return 0
-
-
 @pytest.fixture(scope="module", autouse=True)
 def reclaim_capital_fixture(auth_token):
     """回收先前测试残留的 CapitalPool 资金，确保日终策略有足够资金分配"""
-    from tool import reclaim_capital
     reclaim_capital(auth_token)
     # 清除当日残留决策（上次测试/服务重启前的数据）
-    clear_decisions(auth_token, date=today_str())
+    api_clear_decisions(auth_token, date=today_str())
 
 
 @pytest.fixture
@@ -256,16 +77,9 @@ def loaded_strategy(decision_token):
     api_load_strategy(decision_token, STRATEGY_NAME, strategy)
     # load 只 InitStrategy 不 Run（_running=false），StartDaily 需要 _running=true
     # 手动发 Run 请求（mode=1）让策略进入可运行状态
-    headers = {"Authorization": decision_token}
-    requests.post(
-        f"{BASE_URL}/strategy",
-        json={"mode": 1, "name": STRATEGY_NAME},
-        headers=headers,
-        verify=False,
-        timeout=10,
-    )
+    api_run_strategy(decision_token, STRATEGY_NAME)
     yield strategy
-    cleanup_strategy(decision_token, STRATEGY_NAME)
+    api_cleanup_strategy(decision_token, STRATEGY_NAME)
 
 
 # ==================== 测试类 1：GET /v0/trade/decisions ====================
@@ -303,12 +117,12 @@ class TestDecisionQuery:
 
     def test_query_today(self, auth_token):
         """显式查询当日"""
-        decisions = get_decisions(auth_token, date=today_str())
+        decisions = api_get_decisions(auth_token, date=today_str())
         assert isinstance(decisions, list)
 
     def test_decision_schema(self, auth_token):
         """决策字段完整性：返回的决策必须包含所有必需字段"""
-        decisions = get_decisions(auth_token, date=today_str())
+        decisions = api_get_decisions(auth_token, date=today_str())
         if not decisions:
             pytest.skip("当日无决策，无法验证字段")
 
@@ -335,7 +149,7 @@ class TestOrderWithDecisionId:
     def test_order_invalid_decision_id(self, auth_token):
         """不存在的 decisionId：返回错误（不抛 500）"""
         # decisionId = 999999 几乎肯定不存在
-        resp = order_with_decision_id(
+        resp = api_order_with_decision_id(
             auth_token, TEST_SYMBOL, decision_id=999999,
             quantity=TEST_QUANTITY, price=10.0, direct=0,
         )
@@ -380,7 +194,7 @@ class TestDecisionLifecycle:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
         # 推送一个 bar（close > open 触发买入信号）
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -391,7 +205,7 @@ class TestDecisionLifecycle:
             bar["high"] = max(bar["open"], bar["high"])
             bar["low"] = min(bar["open"], bar["low"])
 
-        result = simulate_bar(auth_token, bar)
+        result = api_simulate_bar(auth_token, bar)
         # 如果 simulate/bar 不可用（Release 构建），跳过
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用（可能是 Release 构建）: {result}")
@@ -400,7 +214,7 @@ class TestDecisionLifecycle:
         deadline = time.time() + 10
         found = False
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
+            decisions = api_get_decisions(auth_token, date=today_str())
             if decisions:
                 found = True
                 break
@@ -427,14 +241,14 @@ class TestDecisionLifecycle:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
         # 先产生一条决策
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError:
             pytest.skip("无测试数据")
 
         if not bar["close"] > bar["open"]:
             bar["open"] = bar["close"] * 0.99
 
-        result = simulate_bar(auth_token, bar)
+        result = api_simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
@@ -442,7 +256,7 @@ class TestDecisionLifecycle:
         deadline = time.time() + 10
         decision = None
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
+            decisions = api_get_decisions(auth_token, date=today_str())
             test_decisions = [
                 d for d in decisions
                 if d.get("strategy") == STRATEGY_NAME and not d["executed"]
@@ -456,7 +270,7 @@ class TestDecisionLifecycle:
             pytest.skip("未产生决策，跳过执行测试")
 
         # 下单关联 decisionId（回测模式 → SimulateFill）
-        resp = order_with_decision_id(
+        resp = api_order_with_decision_id(
             auth_token, TEST_SYMBOL, decision["id"],
             quantity=decision["quantity"], price=decision["price"],
             direct=0 if decision["action"] in ["open_long", "close_short"] else 1,
@@ -466,7 +280,7 @@ class TestDecisionLifecycle:
         # 验证决策状态更新
         time.sleep(1)
         updated = [
-            d for d in get_decisions(auth_token, date=today_str())
+            d for d in api_get_decisions(auth_token, date=today_str())
             if d["id"] == decision["id"]
         ]
         assert updated, "决策消失"
@@ -477,7 +291,7 @@ class TestDecisionLifecycle:
         """已执行决策不能再下单（前端禁用，C++ 端不应崩溃）"""
         if not is_backtest:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
-        decisions = get_decisions(auth_token, date=today_str())
+        decisions = api_get_decisions(auth_token, date=today_str())
         executed = [
             d for d in decisions
             if d.get("strategy") == STRATEGY_NAME and d["executed"]
@@ -487,7 +301,7 @@ class TestDecisionLifecycle:
 
         decision = executed[0]
         # 重复下单不应崩溃（业务上应被前端阻止，但 C++ 端需要健壮）
-        resp = order_with_decision_id(
+        resp = api_order_with_decision_id(
             auth_token, TEST_SYMBOL, decision["id"],
             quantity=decision["executedQuantity"], price=decision["executedPrice"],
             direct=0 if decision["action"] in ["open_long", "close_short"] else 1,
@@ -529,7 +343,7 @@ class TestStrategyPerformance:
         if not is_backtest:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -541,26 +355,26 @@ class TestStrategyPerformance:
         # Day 1
         day1_date = "2025-01-15"
         bar1 = dict(bar, datetime=f"{day1_date} 00:00:00")
-        result = simulate_bar(auth_token, bar1)
+        result = api_simulate_bar(auth_token, bar1)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
         deadline = time.time() + 10
         while time.time() < deadline:
-            if get_decisions(auth_token, date=day1_date):
+            if api_get_decisions(auth_token, date=day1_date):
                 break
             time.sleep(0.5)
 
         # Day 2（不同日期 → 不同 daily_positions 记录）
         day2_date = "2025-01-16"
         bar2 = dict(bar, datetime=f"{day2_date} 00:00:00")
-        simulate_bar(auth_token, bar2)
+        api_simulate_bar(auth_token, bar2)
 
         # 等待 Day 2 执行完成：决策数量增加（Day 2 产生新决策）
-        prev_count = len(get_decisions(auth_token, date=day2_date))
+        prev_count = len(api_get_decisions(auth_token, date=day2_date))
         deadline = time.time() + 15
         while time.time() < deadline:
-            curr_count = len(get_decisions(auth_token, date=day2_date))
+            curr_count = len(api_get_decisions(auth_token, date=day2_date))
             if curr_count > prev_count:
                 break
             time.sleep(0.5)
@@ -959,19 +773,19 @@ class TestDailyExecutionWithDividend:
             # 3. 触发日终管线：simulate_bar 推送一根 bar
             bar_date = "2024-07-02"
             try:
-                bar = get_latest_bar(auth_token, INTEG_SYMBOL,
+                bar = api_get_latest_bar(auth_token, INTEG_SYMBOL,
                                      date=f"{bar_date} 00:00:00")
             except ValueError as e:
                 pytest.skip(f"无测试数据: {e}")
 
-            result = simulate_bar(auth_token, bar)
+            result = api_simulate_bar(auth_token, bar)
             if "status" in result and result.get("status") == "error":
                 pytest.skip(f"simulate/bar 不可用: {result}")
 
             # 4. 等 ManualTiming 决策完成（使用正确的日期）
             deadline = time.time() + 10
             while time.time() < deadline:
-                decisions = get_decisions(auth_token, date=bar_date)
+                decisions = api_get_decisions(auth_token, date=bar_date)
                 # 检查是否有该策略的决策
                 if any(d.get("strategy") == integ_strategy_name for d in decisions):
                     break
@@ -1069,8 +883,8 @@ class TestDailyPositionAccounting:
             requests.post(f"{BASE_URL}/strategy", **kwargs)
 
             # 3. 推第二根 bar 触发日终回放（两根都是决策 bar）
-            bar = get_latest_bar(auth_token, ACC_SYMBOL, date=f"{ACC_BAR2_DATE} 00:00:00")
-            result = simulate_bar(auth_token, bar)
+            bar = api_get_latest_bar(auth_token, ACC_SYMBOL, date=f"{ACC_BAR2_DATE} 00:00:00")
+            result = api_simulate_bar(auth_token, bar)
             if "status" in result and result.get("status") == "error":
                 pytest.skip(f"simulate/bar 不可用: {result}")
 
@@ -1577,7 +1391,7 @@ class TestTickflowDailyStrategy:
                 "volume": 100000,
                 "turnover": 1450000,
             }
-            result = simulate_bar(auth_token, bar_buy)
+            result = api_simulate_bar(auth_token, bar_buy)
             if "status" in result and result.get("status") == "error":
                 pytest.skip(f"simulate_bar 不可用: {result}")
 
@@ -1585,7 +1399,7 @@ class TestTickflowDailyStrategy:
             deadline = time.time() + 10
             buy_decision = None
             while time.time() < deadline:
-                decisions = get_decisions(auth_token, date=today_str())
+                decisions = api_get_decisions(auth_token, date=today_str())
                 for d in decisions:
                     if d.get("strategy") == name and d.get("action") == "open_long":
                         buy_decision = d
@@ -1608,13 +1422,13 @@ class TestTickflowDailyStrategy:
                 "volume": 120000,
                 "turnover": 1704000,
             }
-            simulate_bar(auth_token, bar_sell)
+            api_simulate_bar(auth_token, bar_sell)
 
             # 等待卖出决策
             deadline = time.time() + 10
             sell_decision = None
             while time.time() < deadline:
-                decisions = get_decisions(auth_token, date=today_str())
+                decisions = api_get_decisions(auth_token, date=today_str())
                 for d in decisions:
                     if d.get("strategy") == name and d.get("action") == "close_long":
                         sell_decision = d
@@ -1676,7 +1490,7 @@ def wait_for_pending_decision(token, strategy_name, timeout=10):
     """等待出现指定策略的 pending 决策"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        decisions = get_decisions(token, date=today_str())
+        decisions = api_get_decisions(token, date=today_str())
         for d in decisions:
             if (d.get("strategy") == strategy_name
                     and not d["executed"] and not d.get("closed")):
@@ -1692,7 +1506,7 @@ def produced_decision(auth_token, loaded_strategy, is_backtest):
         pytest.skip("仅在 stock_hist_sim 模式下运行")
 
     try:
-        bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
     except ValueError as e:
         pytest.skip(f"无测试数据: {e}")
 
@@ -1706,7 +1520,7 @@ def produced_decision(auth_token, loaded_strategy, is_backtest):
     bar["high"] = max(bar["high"], bar["open"], bar["close"])
     bar["low"] = min(bar["low"], bar["open"])
 
-    result = simulate_bar(auth_token, bar)
+    result = api_simulate_bar(auth_token, bar)
     if "status" in result and result.get("status") == "error":
         pytest.skip(f"simulate/bar 不可用（Release 构建）: {result}")
 
@@ -1815,7 +1629,7 @@ class TestDecisionCloseAndExecute:
 
         # 验证 GET 返回 closed=true
         time.sleep(0.5)
-        updated = [d for d in get_decisions(auth_token, date=today_str())
+        updated = [d for d in api_get_decisions(auth_token, date=today_str())
                    if d["id"] == decision["id"]]
         assert updated, "决策消失"
         assert updated[0]["closed"] is True, "closed 未更新"
@@ -1853,7 +1667,7 @@ class TestDecisionCloseAndExecute:
         decision = produced_decision
         direct = 0 if decision["action"] in ["open_long", "close_short"] else 1
 
-        resp = order_with_decision_id(
+        resp = api_order_with_decision_id(
             auth_token, TEST_SYMBOL, decision["id"],
             quantity=decision["quantity"],
             price=decision["price"],
@@ -1863,7 +1677,7 @@ class TestDecisionCloseAndExecute:
 
         # 验证 executed 状态
         time.sleep(0.5)
-        updated = [d for d in get_decisions(auth_token, date=today_str())
+        updated = [d for d in api_get_decisions(auth_token, date=today_str())
                    if d["id"] == decision["id"]]
         assert updated, "决策消失"
         assert updated[0]["executed"] is True, "executed 未更新"
@@ -1879,7 +1693,7 @@ class TestDecisionCloseAndExecute:
         direct = 0 if decision["action"] in ["open_long", "close_short"] else 1
 
         # 先执行
-        order_with_decision_id(
+        api_order_with_decision_id(
             auth_token, TEST_SYMBOL, decision["id"],
             quantity=decision["quantity"],
             price=decision["price"],
@@ -1893,7 +1707,7 @@ class TestDecisionCloseAndExecute:
 
         # 验证两者同时为 true
         time.sleep(0.5)
-        updated = [d for d in get_decisions(auth_token, date=today_str())
+        updated = [d for d in api_get_decisions(auth_token, date=today_str())
                    if d["id"] == decision["id"]]
         assert updated
         assert updated[0]["executed"] is True
@@ -1924,8 +1738,8 @@ class TestDecisionCloseAndExecute:
         try:
             # 先推送两个 symbol 的 bar，让策略可以执行
             try:
-                bar1 = get_latest_bar(auth_token, TEST_SYMBOL)
-                bar2_init = get_latest_bar(auth_token, "sz.900002")
+                bar1 = api_get_latest_bar(auth_token, TEST_SYMBOL)
+                bar2_init = api_get_latest_bar(auth_token, "sz.900002")
             except ValueError:
                 pytest.skip("无测试数据")
 
@@ -1937,8 +1751,8 @@ class TestDecisionCloseAndExecute:
 
             # 推送两个 symbol 的 bar（同一天）
             bar2_init["datetime"] = bar1["datetime"]
-            result1 = simulate_bar(auth_token, bar1)
-            result2 = simulate_bar(auth_token, bar2_init)
+            result1 = api_simulate_bar(auth_token, bar1)
+            result2 = api_simulate_bar(auth_token, bar2_init)
 
             if "status" in result1 and result1.get("status") == "error":
                 pytest.skip(f"simulate/bar 不可用: {result1}")
@@ -1957,13 +1771,13 @@ class TestDecisionCloseAndExecute:
             # 产生第二条决策（推送新日期的 bar）
             second_symbol = "sz.900002"
             try:
-                bar2_new = get_latest_bar(auth_token, second_symbol)
+                bar2_new = api_get_latest_bar(auth_token, second_symbol)
             except ValueError:
                 pytest.skip("无第二条测试数据")
             if not bar2_new["close"] > bar2_new["open"]:
                 bar2_new["open"] = bar2_new["close"] * 0.99
             bar2_new["datetime"] = "2025-02-20 00:00:00"
-            simulate_bar(auth_token, bar2_new)
+            api_simulate_bar(auth_token, bar2_new)
 
             d2 = wait_for_pending_decision(
                 auth_token, multi_strategy_name, timeout=15)
@@ -1972,14 +1786,14 @@ class TestDecisionCloseAndExecute:
 
             # 执行第二条
             direct = 0 if d2["action"] in ["open_long", "close_short"] else 1
-            order_with_decision_id(
+            api_order_with_decision_id(
                 auth_token, second_symbol, d2["id"],
                 quantity=d2["quantity"], price=d2["price"], direct=direct,
             )
             time.sleep(0.5)
 
             # 验证两条决策状态
-            all_decisions = get_decisions(auth_token, date=today_str())
+            all_decisions = api_get_decisions(auth_token, date=today_str())
             d1_updated = next((d for d in all_decisions if d["id"] == d1["id"]), None)
             d2_updated = next((d for d in all_decisions if d["id"] == d2["id"]), None)
 
@@ -1992,7 +1806,7 @@ class TestDecisionCloseAndExecute:
 
         finally:
             # 清理策略
-            cleanup_strategy(auth_token, multi_strategy_name)
+            api_cleanup_strategy(auth_token, multi_strategy_name)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2056,7 +1870,7 @@ class TestDecisionSetStatusVocabulary:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
 
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -2064,14 +1878,14 @@ class TestDecisionSetStatusVocabulary:
             bar["open"] = bar["close"] * 0.99
 
         bar_date = extract_bar_date(bar)
-        result = simulate_bar(auth_token, bar)
+        result = api_simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=bar_date)
+            decisions = api_get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
@@ -2109,7 +1923,7 @@ class TestDecisionSetHoldPreservation:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
 
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -2118,14 +1932,14 @@ class TestDecisionSetHoldPreservation:
             bar["close"] = bar["open"] * 0.99
 
         bar_date = extract_bar_date(bar)
-        result = simulate_bar(auth_token, bar)
+        result = api_simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=bar_date)
+            decisions = api_get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
@@ -2167,7 +1981,7 @@ class TestDecisionSetClosePrice:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
 
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -2175,14 +1989,14 @@ class TestDecisionSetClosePrice:
             bar["open"] = bar["close"] * 0.99
 
         bar_date = extract_bar_date(bar)
-        result = simulate_bar(auth_token, bar)
+        result = api_simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=bar_date)
+            decisions = api_get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
@@ -2215,7 +2029,7 @@ class TestDecisionSetAsOfUnification:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
 
         try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+            bar = api_get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
             pytest.skip(f"无测试数据: {e}")
 
@@ -2223,14 +2037,14 @@ class TestDecisionSetAsOfUnification:
             bar["open"] = bar["close"] * 0.99
 
         bar_date = extract_bar_date(bar)
-        result = simulate_bar(auth_token, bar)
+        result = api_simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=bar_date)
+            decisions = api_get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)

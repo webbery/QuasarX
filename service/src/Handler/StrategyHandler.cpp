@@ -259,6 +259,44 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    // 获取策略信用状态（两融）
+    if (params.contains("action") && params["action"] == "credit_state") {
+        String name = params.value("name", "");
+        if (name.empty()) {
+            res.status = 400;
+            res.set_content(R"({"error": "credit_state requires 'name' field"})", "application/json");
+            return;
+        }
+        auto* broker = _server->GetBrokerSubSystem();
+        if (!broker || !broker->GetCapitalPool()) {
+            res.status = 500;
+            res.set_content(R"({"error": "capital pool not available"})", "application/json");
+            return;
+        }
+        auto creditState = broker->GetCapitalPool()->getCreditState(name);
+        nlohmann::json result;
+        result["name"] = name;
+        result["borrowed_cash"] = creditState.borrowedCash;
+        nlohmann::json borrowedSharesJson = nlohmann::json::object();
+        for (const auto& [sym, qty] : creditState.borrowedShares) {
+            borrowedSharesJson[sym] = qty;
+        }
+        result["borrowed_shares"] = std::move(borrowedSharesJson);
+        nlohmann::json shortAvgPriceJson = nlohmann::json::object();
+        for (const auto& [sym, price] : creditState.shortAvgPrice) {
+            shortAvgPriceJson[sym] = price;
+        }
+        result["short_avg_price"] = std::move(shortAvgPriceJson);
+        nlohmann::json financedAmountJson = nlohmann::json::object();
+        for (const auto& [sym, amount] : creditState.financedAmount) {
+            financedAmountJson[sym] = amount;
+        }
+        result["financed_amount"] = std::move(financedAmountJson);
+        res.status = 200;
+        res.set_content(result.dump(), "application/json");
+        return;
+    }
+
     int mode = params.value("mode", 0);
     if (mode == 2) {// 暂停
         String name = params.value("name", "");

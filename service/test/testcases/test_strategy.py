@@ -1,7 +1,10 @@
 import requests
 import sys
 from pathlib import Path
-from tool import check_response, BASE_URL, VERIFY_SSL, DEBUG_DIR
+from tool import (
+    check_response, BASE_URL, VERIFY_SSL, DEBUG_DIR,
+    api_run_strategy, api_stop_strategy, api_cleanup_strategy,
+)
 import pytest
 import json
 import os
@@ -43,19 +46,6 @@ class TestStrategy:
                 return s
         return None
 
-    def cleanup_strategy(self, auth_token, name):
-        """清理策略（停止 + 删除），用于测试后恢复干净状态"""
-        try:
-            kwargs = self._auth_kwargs(auth_token)
-            # 先停止
-            kwargs['json'] = {'mode': 2, 'name': name}
-            requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=5)
-            # 再删除
-            kwargs['json'] = {'name': name}
-            requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=5)
-            time.sleep(0.5)
-        except Exception:
-            pass
 
     def _use_real_symbol(self, script, symbol="sz.000001"):
         """将脚本中 QuoteInputNode 的 code 改为真实标的。
@@ -97,7 +87,7 @@ class TestStrategy:
             pytest.skip("回测模式下不支持策略生命周期操作（stop/run）")
 
         lifecycle_name = 'test_lifecycle'
-        self.cleanup_strategy(auth_token, lifecycle_name)
+        api_cleanup_strategy(auth_token, lifecycle_name)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -157,9 +147,7 @@ class TestStrategy:
         prev_heartbeat = found['lastHeartbeat']
 
         # 2. 停止
-        kwargs['json'] = {'mode': 2, 'name': lifecycle_name}
-        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(resp)
+        data = api_stop_strategy(auth_token, lifecycle_name)
         assert data['running'] is False, "停止后策略应处于停止状态"
 
         # 验证停止后策略列表
@@ -172,9 +160,7 @@ class TestStrategy:
         prev_heartbeat = found['lastHeartbeat']
 
         # 3. 再运行
-        kwargs['json'] = {'mode': 1, 'name': lifecycle_name}
-        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(resp)
+        data = api_run_strategy(auth_token, lifecycle_name)
         assert data['running'] is True, "再运行后策略应处于运行状态"
 
         # 验证再运行后策略列表
@@ -188,9 +174,7 @@ class TestStrategy:
         prev_heartbeat = found['lastHeartbeat']
 
         # 4. 再停止
-        kwargs['json'] = {'mode': 2, 'name': lifecycle_name}
-        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(resp)
+        data = api_stop_strategy(auth_token, lifecycle_name)
         assert data['running'] is False, "再停止后策略应处于停止状态"
 
         # 验证再停止后策略列表
@@ -219,7 +203,7 @@ class TestStrategy:
             pytest.skip("回测模式下不支持重复部署操作")
 
         redeploy_name = 'test_redeploy'
-        self.cleanup_strategy(auth_token, redeploy_name)
+        api_cleanup_strategy(auth_token, redeploy_name)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -239,7 +223,7 @@ class TestStrategy:
         assert data['running'] is True
 
         # 清理
-        self.cleanup_strategy(auth_token, redeploy_name)
+        api_cleanup_strategy(auth_token, redeploy_name)
 
     @pytest.mark.timeout(10)
     def test_stop_nonexistent_strategy(self, auth_token, is_backtest):
@@ -267,7 +251,7 @@ class TestStrategy:
         - 数组内容应包含该策略 QuoteInputNode 配置的 code（来自 ma_graph_strategy.json 的 sz.900005）
         """
         pools_name = 'test_pools_query'
-        self.cleanup_strategy(auth_token, pools_name)
+        api_cleanup_strategy(auth_token, pools_name)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -305,7 +289,7 @@ class TestStrategy:
             assert 'sz.900005' in target['symbols'], \
                 f"symbols 应包含 QuoteInputNode 配置的 code，实际为 {target['symbols']}"
         finally:
-            self.cleanup_strategy(auth_token, pools_name)
+            api_cleanup_strategy(auth_token, pools_name)
 
     @pytest.mark.timeout(600)
     def test_run_all_script(self, auth_token, is_backtest):
@@ -366,7 +350,7 @@ class TestStrategy:
             pytest.skip("回测模式下跳过，仅在 TickFlow/实盘模式下运行")
 
         name = 'test_quote_context'
-        self.cleanup_strategy(auth_token, name)
+        api_cleanup_strategy(auth_token, name)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -389,9 +373,7 @@ class TestStrategy:
 
         # 停止策略以触发 DebugNode 的 Done() 方法写入 CSV
         # （实时/tickflow 模式下 Done() 仅在停止时调用）
-        kwargs['json'] = {'mode': 2, 'name': name}
-        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        check_response(resp)
+        api_stop_strategy(auth_token, name)
         time.sleep(2)  # 等待文件写入
 
         # 验证 DebugNode 输出文件存在（证明 context 中有 quote 数据，策略图成功执行）
@@ -401,7 +383,7 @@ class TestStrategy:
         csv_files = [f for f in os.listdir(debug_dir) if f.endswith('.csv')]
         assert len(csv_files) > 0, f"Debug 输出目录中无 CSV 文件: {debug_dir}"
 
-        self.cleanup_strategy(auth_token, name)
+        api_cleanup_strategy(auth_token, name)
 
     @pytest.mark.timeout(120)
     def test_tickflow_kbar_aggregation(self, auth_token, is_backtest):
@@ -419,7 +401,7 @@ class TestStrategy:
             pytest.skip("回测模式下跳过，仅在 TickFlow/实盘模式下运行")
 
         name = 'test_kbar_agg'
-        self.cleanup_strategy(auth_token, name)
+        api_cleanup_strategy(auth_token, name)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -445,7 +427,7 @@ class TestStrategy:
         assert found['running'] is True, "策略应处于运行状态"
         assert found['epochCount'] >= 1, f"聚合完成后 epochCount 应 >= 1，实际 {found['epochCount']}"
 
-        self.cleanup_strategy(auth_token, name)
+        api_cleanup_strategy(auth_token, name)
 
     @pytest.mark.timeout(30)
     def test_delete_nonexistent_no_error(self, auth_token):
@@ -463,7 +445,7 @@ class TestStrategy:
             pytest.skip("回测模式下不支持策略操作")
 
         name = 'test_delete_idempotent'
-        self.cleanup_strategy(auth_token, name)
+        api_cleanup_strategy(auth_token, name)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -495,8 +477,8 @@ class TestStrategy:
 
         name_a = 'test_del_iso_a'
         name_b = 'test_del_iso_b'
-        self.cleanup_strategy(auth_token, name_a)
-        self.cleanup_strategy(auth_token, name_b)
+        api_cleanup_strategy(auth_token, name_a)
+        api_cleanup_strategy(auth_token, name_b)
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
@@ -521,8 +503,8 @@ class TestStrategy:
             assert found is not None, "删除 A 不应影响 B"
             assert found['running'] is True, "B 应仍在运行"
         finally:
-            self.cleanup_strategy(auth_token, name_a)
-            self.cleanup_strategy(auth_token, name_b)
+            api_cleanup_strategy(auth_token, name_a)
+            api_cleanup_strategy(auth_token, name_b)
 
 
 # ============== Multipart 部署（含模型文件 + 跨策略共享校验） ==============
@@ -600,7 +582,7 @@ class TestStrategyMultipartDeploy:
         resp = self._deploy_multipart(auth_token, self.DEPLOY_NAME)
         assert resp.status_code == 200, f"deploy failed: {resp.status_code} {resp.text}"
         assert resp.json()["name"] == self.DEPLOY_NAME
-        TestStrategy().cleanup_strategy(auth_token, self.DEPLOY_NAME)
+        api_cleanup_strategy(auth_token, self.DEPLOY_NAME)
 
     def test_cross_strategy_model_file_rejected(self, auth_token):
         resp = self._deploy_multipart(
@@ -666,7 +648,7 @@ class TestXGBoostStrategyBusiness:
         yield {"strategy": strategy, "model_file": model_file}
 
         # 清理
-        TestStrategy().cleanup_strategy(auth_token, self.DEPLOY_NAME)
+        api_cleanup_strategy(auth_token, self.DEPLOY_NAME)
 
     @pytest.mark.timeout(120)
     def test_xgb_strategy_backtest_runs(self, auth_token, deployed):

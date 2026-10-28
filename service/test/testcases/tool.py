@@ -3,6 +3,7 @@
 import json
 import pytest
 import requests
+import time
 import urllib3
 from pathlib import Path
 
@@ -182,6 +183,392 @@ def check_response(response, expected_status=200):
             return response.json()
 
     return None
+
+
+def get_auth_token() -> str:
+    """获取认证 token（通用登录接口）"""
+    resp = requests.post(
+        f"{BASE_URL}/user/login",
+        json={"name": "admin", "pwd": "admin"},
+        verify=VERIFY_SSL,
+    )
+    resp.raise_for_status()
+    return resp.json()["tk"]
+
+
+# --------------------------
+# 策略管理 API
+# --------------------------
+
+def api_load_strategy(token: str, name: str, script: dict) -> dict:
+    """加载策略（只初始化，不运行）
+    
+    Args:
+        token: 认证 token
+        name: 策略名称
+        script: 策略 JSON dict
+    
+    Returns:
+        API 响应 dict
+    """
+    headers = {"Authorization": token}
+    resp = requests.post(
+        f"{BASE_URL}/strategy",
+        json={"action": "load", "name": name, "script": script},
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_run_strategy(token: str, name: str) -> dict:
+    """设置策略为运行模式
+    
+    Args:
+        token: 认证 token
+        name: 策略名称
+    
+    Returns:
+        API 响应 dict
+    """
+    headers = {"Authorization": token}
+    resp = requests.post(
+        f"{BASE_URL}/strategy",
+        json={"mode": 1, "name": name},
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_stop_strategy(token: str, name: str) -> dict:
+    """暂停策略
+    
+    Args:
+        token: 认证 token
+        name: 策略名称
+    
+    Returns:
+        API 响应 dict
+    """
+    headers = {"Authorization": token}
+    resp = requests.post(
+        f"{BASE_URL}/strategy",
+        json={"mode": 2, "name": name},
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# --------------------------
+# 日终策略执行 API
+# --------------------------
+
+def api_simulate_bar(token: str, bar: dict) -> dict:
+    """推送 bar 数据触发日终策略执行
+    
+    Args:
+        token: 认证 token
+        bar: bar 数据 dict，包含 symbol, datetime, open, high, low, close, volume
+    
+    Returns:
+        API 响应 dict。失败时返回 {"status": "error", "error": ...}
+    """
+    headers = {"Authorization": token}
+    resp = requests.post(
+        f"{BASE_URL}/strategy/simulate/bar",
+        json=bar,
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=30,
+    )
+    if resp.ok:
+        return resp.json()
+    return {
+        "status": "error",
+        "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
+    }
+
+
+def api_get_decisions(token: str, strategy: str = None, date: str = None) -> list:
+    """获取决策列表
+    
+    Args:
+        token: 认证 token
+        strategy: 策略名称（可选，不传则返回所有策略的决策）
+        date: 日期字符串，格式 YYYY-MM-DD（可选）
+    
+    Returns:
+        决策列表
+    """
+    headers = {"Authorization": token}
+    params = {}
+    if strategy:
+        params["strategy"] = strategy
+    if date:
+        params["date"] = date
+    resp = requests.get(
+        f"{BASE_URL}/trade/decisions",
+        params=params,
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=10,
+    )
+    if resp.ok:
+        return resp.json() or []
+    return []
+
+
+def wait_for_decisions(token: str, strategy: str, date: str, timeout: int = 15) -> list:
+    """等待决策结果
+    
+    Args:
+        token: 认证 token
+        strategy: 策略名称
+        date: 日期字符串
+        timeout: 超时时间（秒）
+    
+    Returns:
+        决策列表，超时返回空列表
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        decisions = api_get_decisions(token, strategy, date)
+        if decisions and len(decisions) > 0:
+            return decisions
+        time.sleep(0.5)
+    return []
+
+
+def api_clear_decisions(token: str, date: str = None) -> int:
+    """清除指定日期的决策
+    
+    Args:
+        token: 认证 token
+        date: 日期字符串（可选，不传则清除所有决策）
+    
+    Returns:
+        删除的决策数量
+    """
+    headers = {"Authorization": token}
+    params = {}
+    if date:
+        params["date"] = date
+    resp = requests.delete(
+        f"{BASE_URL}/trade/decisions",
+        params=params,
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=10,
+    )
+    if resp.ok:
+        return resp.json().get("deleted", 0)
+    return 0
+
+
+def api_cleanup_strategy(token: str, name: str):
+    """清理测试策略（停止并删除）
+    
+    Args:
+        token: 认证 token
+        name: 策略名称
+    """
+    headers = {"Authorization": token}
+    try:
+        # 先停止
+        requests.post(
+            f"{BASE_URL}/strategy",
+            json={"mode": 2, "name": name},
+            headers=headers,
+            verify=VERIFY_SSL,
+            timeout=5,
+        )
+        # 再删除
+        requests.delete(
+            f"{BASE_URL}/strategy",
+            json={"name": name},
+            headers=headers,
+            verify=VERIFY_SSL,
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
+def api_order_with_decision_id(
+    token: str, symbol: str, decision_id: int,
+    quantity: int, price: float, direct: int = 0,
+) -> requests.Response:
+    """POST /v0/trade/order 关联 decisionId，返回原始 Response
+    
+    Args:
+        token: 认证 token
+        symbol: 标的代码
+        decision_id: 决策 ID
+        quantity: 数量
+        price: 价格
+        direct: 方向（0=买入，1=卖出）
+    
+    Returns:
+        requests.Response 对象
+    """
+    headers = {"Authorization": token}
+    body = {
+        "symbol": symbol,
+        "direct": direct,
+        "type": 1,  # 限价单
+        "quantity": quantity,
+        "prices": price,
+        "kind": 0,
+        "timeType": 0,
+        "decisionId": decision_id,
+    }
+    return requests.post(
+        f"{BASE_URL}/trade/order",
+        json=body,
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=10,
+    )
+
+
+def to_api_symbol(symbol: str) -> str:
+    """转换标的代码格式：sz.900001 → 900001.SZ
+    
+    Args:
+        symbol: 内部格式标的代码，如 sz.000001, sh.600000
+    
+    Returns:
+        API 格式标的代码，如 000001.SZ, 600000.SH
+    """
+    if "." not in symbol:
+        return symbol
+    exchange, code = symbol.split(".", 1)
+    exchange_upper = exchange.upper()
+    return f"{code}.{exchange_upper}"
+
+
+def from_api_symbol(symbol: str) -> str:
+    """转换标的代码格式：900001.SZ → sz.900001（to_api_symbol 的逆运算）
+    
+    Args:
+        symbol: API 格式标的代码，如 000001.SZ
+    
+    Returns:
+        内部格式标的代码，如 sz.000001
+    """
+    if "." not in symbol:
+        return symbol
+    code, exchange = symbol.rsplit(".", 1)
+    exchange_lower = exchange.lower()
+    return f"{exchange_lower}.{code}"
+
+
+def today_str() -> str:
+    """获取今日日期字符串，格式 YYYY-MM-DD"""
+    return time.strftime("%Y-%m-%d")
+
+
+# --------------------------
+# 资金与持仓 API
+# --------------------------
+
+def api_get_credit_state(token: str, strategy_name: str) -> dict:
+    """获取策略信用状态（两融）
+
+    Args:
+        token: 认证 token
+        strategy_name: 策略名称
+
+    Returns:
+        信用状态 dict，包含 borrowed_cash, borrowed_shares, short_avg_price, financed_amount
+    """
+    headers = {"Authorization": token}
+    resp = requests.post(
+        f"{BASE_URL}/strategy",
+        json={"action": "credit_state", "name": strategy_name},
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_get_latest_bar(token: str, symbol: str, start=None, end=None,
+                       date: str = None) -> dict:
+    """获取最新 bar 数据
+
+    端点 /stocks/history 用 ``id`` 参数（不是 ``symbol``），外部格式为
+    ``<code>.<EXCHANGE>``（如 900001.SZ），服务端再转回内部格式。
+
+    Args:
+        token: 认证 token
+        symbol: 内部格式标的代码，如 sz.900001
+        start: 起始时间，日期字符串 "YYYY-MM-DD" 或 Unix 秒；None = 不限
+        end:   结束时间，同上；None = 不限
+        date:  覆盖返回 dict 的 datetime 字段（可选）
+
+    Returns:
+        bar 数据 dict，datetime 已转成 "YYYY-MM-DD HH:MM:SS"
+
+    Raises:
+        ValueError: 无测试数据
+    """
+    headers = {"Authorization": token}
+    api_symbol = to_api_symbol(symbol)
+    params = {"id": api_symbol, "type": "1d"}
+    if start is not None:
+        params["start"] = start
+    if end is not None:
+        params["end"] = end
+
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/stocks/history",
+            params=params,
+            headers=headers,
+            verify=VERIFY_SSL,
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise ValueError(f"Cannot get bar data for {api_symbol}: {e}")
+
+    if not resp.ok:
+        raise ValueError(f"Cannot get bar data for {api_symbol}: HTTP {resp.status_code}")
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        raise ValueError(f"Cannot parse bar data for {api_symbol}: {e}")
+
+    if not isinstance(data, list) or not data:
+        raise ValueError(f"Empty bar data for {api_symbol}")
+
+    last = data[-1]
+    # datetime 是 Unix 时间戳（数字），需转成 "YYYY-MM-DD HH:MM:SS" 字符串
+    raw_dt = last.get("datetime", "")
+    try:
+        dt_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(raw_dt)))
+    except (ValueError, TypeError):
+        dt_str = str(raw_dt)
+
+    return {
+        "symbol": symbol,
+        "open": float(last.get("open", 0)),
+        "high": float(last.get("high", 0)),
+        "low": float(last.get("low", 0)),
+        "close": float(last.get("close", 0)),
+        "volume": int(float(last.get("volume", 0))),
+        "datetime": date or dt_str,
+    }
 
 
 # --------------------------
