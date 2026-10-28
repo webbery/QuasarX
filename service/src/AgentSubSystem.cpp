@@ -1587,7 +1587,11 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
         if (useSimulation) {
             // ── 回测路径：simulation exchange + BacktestContext ──
-            runId = simExchange->createBacktestContext(strategy, symbols, 1000000.0,
+            // 申请额度按策略自身配置的资金（JSON "capital"），而不是写死 1,000,000：
+            // 写死会在资金池被其他活跃策略占用一部分时必然分配失败，日终回放
+            // 全程 0 预算（买单全部 qty=0 被丢弃，只剩 HOLD）。
+            // 策略未配置资金时传 0，交给 CapitalPool 按剩余资金自动均分。
+            runId = simExchange->createBacktestContext(strategy, symbols, flow._capital,
                                                        String(), String(), forceReload);
             BacktestContext* btContext = simExchange->getBacktestContext(runId);
             if (!btContext) {

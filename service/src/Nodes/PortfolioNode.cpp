@@ -483,6 +483,27 @@ ExecutionPlan PortfolioNode::generatePlan(
                         INFO("[PortfolioNode] -> SHORT {} added to plan: qty={}, price={:.2f}",
                              get_symbol(item._symbol), quantity, price);
                     }
+                } else {
+                    // 预算不足一手时开空会被丢弃。这里必须显式告警：BUY 分支至少有
+                    // "Quantity 0 too small" 可查，空头此前完全静默 —— 决策集里只会看到
+                    // 上一根 bar 的旧值，排查时看不出是资金口径问题。
+                    if (_server->GetRunningMode() != RuningType::Backtest) {
+                        STRATEGY_WARN(strategy, "Short quantity {} too small for symbol {} "
+                                      "(budget={:.0f}, price={:.2f})",
+                                      quantity, get_symbol(item._symbol),
+                                      getSymbolCapital(symbol), price);
+                    } else {
+                        WARN("Short quantity {} too small for symbol {} (budget={:.0f}, price={:.2f})",
+                             quantity, get_symbol(item._symbol),
+                             getSymbolCapital(symbol), price);
+                    }
+                    // 与 BUY 分支一致：写回已评估的 quantity/price，
+                    // 让 ExecuteNode 知道这条 signal 已被评估过。
+                    auto* signal = context.getSignalBySymbol(symbol);
+                    if (signal) {
+                        signal->SetQuantity(quantity);
+                        signal->SetPrice(price);
+                    }
                 }
             } else {
                 if (_server->GetRunningMode() == RuningType::Backtest) {
@@ -508,7 +529,10 @@ bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {
         if (oldItem._symbol != newItem._symbol ||
             oldItem._action != newItem._action ||
             oldItem._quantity != newItem._quantity ||
-            oldItem._flag != newItem._flag) {
+            oldItem._flag != newItem._flag ||
+            // 价格也要算"变化"：股数按资金/价格取整，两天价格不同也可能算出同量，
+            // 只比数量会把限价留在上一根 bar 上（ExecuteNode 只在计划变化时翻译 plan）。
+            oldItem._limitPrice != newItem._limitPrice) {
             return true;
         }
     }

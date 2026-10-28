@@ -234,14 +234,57 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             }
         }
     } else {
-        // Plan 没有变化，但可能存在旧的 signal（quantity=0, price=0）
-        // 将所有 BUY/SELL signal 改为 HOLD，防止被 ConsumeSignals 消费
+        // Plan 没有变化：这份计划本轮依然有效，把它的量/价/flag 重新套到本轮 signal 上。
+        //
+        // 不能像以前那样把 BUY/SELL 一律降级为 HOLD：日终逐日回放里，连续两天
+        // 算出同一笔同量同价委托（价格相同，或不同价格取整后股数相同）时计划天然
+        // 不变，降级会让第二天的决策变成 HOLD —— 而 HOLD 不落库，接口/日报看起来
+        // 就像"当天没有决策"。
+        //
+        // 只有计划里确实没有该标的（PortfolioNode 评估后跳过，如 quantity<100、
+        // 已持多仓不再加仓）才降级为 HOLD，保持原来"不消费无效订单"的语义。
+        const auto& plan = context.GetExecutionPlan();
+        Map<symbol_t, const ExecutionItem*> planned;
+        for (const auto& item : plan._items) {
+            planned[item._symbol] = &item;
+        }
+
         const auto& allSignals = context.getAllSignals();
         for (const auto& [sym, signal] : allSignals) {
-            if (signal->GetAction() == TradeAction::BUY || signal->GetAction() == TradeAction::SELL) {
+            if (signal->GetAction() != TradeAction::BUY && signal->GetAction() != TradeAction::SELL) {
+                continue;
+            }
+
+            auto it = planned.find(sym);
+            if (it == planned.end()) {
                 if (signal->GetQuantity() <= 0) {
                     signal->SetAction(TradeAction::HOLD);
                 }
+                continue;
+            }
+
+            const ExecutionItem& item = *it->second;
+            if (item._action == TradeAction::HOLD) {
+                signal->SetAction(TradeAction::HOLD);
+                continue;
+            }
+            if (item._quantity > 0) {
+                // 与 plan→signal 翻译分支保持同一套字段，决策集与首次下发完全一致
+                signal->SetAction(item._action);
+                signal->SetQuantity(item._quantity);
+                signal->SetPrice(item._limitPrice);
+                signal->SetFlag(item._flag);
+                if (item._isEmergencyClose) {
+                    signal->SetEmergencyClose(true);
+                }
+                if (item._costPrice > 0.0) {
+                    signal->SetCostPrice(item._costPrice);
+                }
+                if (_server->GetRunningMode() == RuningType::Backtest) {
+                    signal->SetBacktestTime(context.Current());
+                }
+            } else if (signal->GetQuantity() <= 0) {
+                signal->SetAction(TradeAction::HOLD);
             }
         }
     }

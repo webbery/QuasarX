@@ -69,12 +69,36 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
         if (strategySys) {
             INFO("[SimulateBar] Calling EnsureDailyReady + MarkSymbolReady for {}", symbol);
             strategySys->EnsureDailyReady();
-            // 从 bar datetime 提取日期，日期变化时 ResetDaily 使策略可重新执行
+            // 从 bar datetime 提取日期，日期变化时 ResetDaily 使策略可重新执行；
+            // 同一标的在同一仿真日被重复推送时同样要重置 —— 数据被改写后如果还
+            // 保留 _dailyExecutedStrategies，MarkSymbolReady 会直接跳过，接口返回
+            // "Bar written ..." 却什么决策都不产生。
+            // 同一仿真日推不同标的（多标的逐标的灌数据）不重置，等全部就绪后统一执行。
             String simDate = bar.datetime.substr(0, 10);
             time_t simTs = FromStr(simDate, "%Y-%m-%d");
-            if (simTs != _lastSimDate) {
-                strategySys->ResetDaily();
-                _lastSimDate = simTs;
+            Vector<String> reMark;   // 重置后需要补回的就绪标的（多标的场景）
+            {
+                std::lock_guard<std::mutex> lock(_pushMtx);
+                const bool dateChanged = (simTs != _lastSimDate);
+                const bool sameSymbolRePush = !dateChanged && _pushedSymbols.count(symbol) > 0;
+                if (dateChanged) {
+                    strategySys->ResetDaily();
+                    _lastSimDate = simTs;
+                    _pushedSymbols.clear();
+                } else if (sameSymbolRePush) {
+                    INFO("[SimulateBar] Same-day re-push for {} at {}, resetting daily state",
+                         symbol, simDate);
+                    // 重置会清空 _dailyReadySymbols：把本仿真日其它已推标的记下来补回，
+                    // 否则多标的策略会因"永远差一个标的就绪"而当天不再执行。
+                    for (const auto& s : _pushedSymbols) {
+                        if (s != symbol) reMark.push_back(s);
+                    }
+                    strategySys->ResetDaily();
+                }
+                _pushedSymbols.insert(symbol);
+            }
+            for (const auto& s : reMark) {
+                strategySys->MarkSymbolReady(s, simDate);
             }
             strategySys->MarkSymbolReady(symbol, simDate);
         } else {

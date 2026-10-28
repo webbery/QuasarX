@@ -15,6 +15,7 @@
 #include "Util/lmdb.h"
 #include "Util/string_algorithm.h"
 #include "Util/DecisionDB.h"
+#include "Util/datetime.h"
 #include "json.hpp"
 #include "Util/system.h"
 #include "server.h"
@@ -1246,7 +1247,8 @@ BrokerSubSystem::NavResult BrokerSubSystem::QueryNav(run_id_t runId, time_t star
 // ═══════════════════════════════════════════════════════════
 
 int BrokerSubSystem::AddDecision(const String& strategy, symbol_t symbol, DecisionAction action,
-                                 int64_t quantity, double price, int epoch) {
+                                 int64_t quantity, double price, int epoch,
+                                 const String& asOf) {
     std::lock_guard<std::mutex> lock(_decisionMtx);
 
     DecisionRecord rec{};
@@ -1257,7 +1259,12 @@ int BrokerSubSystem::AddDecision(const String& strategy, symbol_t symbol, Decisi
     rec._quantity = quantity;
     rec._price = price;
     rec._epoch = epoch;
-    rec._timestamp = time(nullptr);
+    // 归属日优先：日终回放的 as-of 是模拟交易日（如 "2025-01-15"），空则退回墙钟。
+    // FromStr 解析失败返回 -1，同样退回墙钟。
+    // decisions 表按 timestamp 的日期过滤，必须与 DecisionSet._asOf 对齐，
+    // 否则报表/接口按归属日查不到这条决策。
+    time_t asOfTs = asOf.empty() ? -1 : FromStr(asOf, "%Y-%m-%d");
+    rec._timestamp = (asOfTs > 0) ? asOfTs : time(nullptr);
     rec._executed = false;
     rec._executed_quantity = 0;
     rec._executed_price = 0;

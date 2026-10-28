@@ -72,10 +72,14 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
     char timebuf[64];
     struct tm tm_val;
     time_t ts = record._timestamp;
+    // 本地时区格式化：_timestamp 由 FromStr("YYYY-MM-DD") 得到本地零点（与
+    // daily_positions / 报告目录同一口径），而 queryByDate 直接拿
+    // CAST(timestamp AS DATE) 和调用方的日期字符串比较。此前用 gmtime，在 UTC+8
+    // 会把本地零点格式化成前一天 16:00，按归属日查询整整差一天。
 #ifdef _WIN32
-    gmtime_s(&tm_val, &ts);
+    localtime_s(&tm_val, &ts);
 #else
-    gmtime_r(&ts, &tm_val);
+    localtime_r(&ts, &tm_val);
 #endif
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
 

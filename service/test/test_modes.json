@@ -31,7 +31,8 @@
         "test_capacity_scan",
         "test_hmm",
         "test_shortable",
-        "test_provenance"
+        "test_provenance",
+        "test_credit"
       ]
     },
     "tickflow": {

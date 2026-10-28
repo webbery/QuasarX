@@ -197,13 +197,15 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
 
     // 决策入库（内存 + DuckDB），并回填决策 id 供 SSE 引用。
     // 只有 BUY/SELL 落库：HOLD 不是一笔决策，decisions 表的语义是"待执行指令"。
+    // 时间戳带上 set._asOf：日终回放时它是模拟交易日，落库后才能按归属日查到。
     Map<symbol_t, int> decisionIds;
     if (auto* broker = _server->GetBrokerSubSystem()) {
         for (const auto& d : set._items) {
             DecisionAction da;
             if (!d.decisionAction(da)) continue;   // HOLD / EXEC
             decisionIds[d._symbol] = broker->AddDecision(set._strategy, d._symbol, da,
-                                                         d._quantity, d._price, d._epoch);
+                                                         d._quantity, d._price, d._epoch,
+                                                         set._asOf);
         }
     }
 

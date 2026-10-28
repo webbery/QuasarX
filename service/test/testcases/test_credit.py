@@ -5,6 +5,10 @@
 - stock_hist_sim 模式（回测模式）
 - Debug 构建（simulate/bar 端点）
 - node_test_data/margin_test_strategy.json 测试策略
+- prepare.py margin_stock 预灌 sz.900001：SignalNode 的 allowShort=true 分支
+  只对 margin_stock 里的标的保留「无持仓 SELL」，不在名单里会直接降级为 HOLD，
+  open_short 永远出不来（名单由 prepare.py 在服务启动前写入，运行期无法补）
+- CapitalPool 有可用资金：部署借的额度 Stop/删除不归还，用例开始前先 reclaim
 
 覆盖：
 1. _flag 贯通：验证融券卖出（SELL flag=0）能正确表达为 OpenShort
@@ -26,7 +30,7 @@ from tool import (
     BASE_URL, VERIFY_SSL, get_auth_token,
     api_load_strategy, api_run_strategy, api_simulate_bar,
     api_get_decisions, wait_for_decisions, api_get_credit_state,
-    api_get_latest_bar
+    api_get_latest_bar, reclaim_capital
 )
 
 # ==================== 配置 ====================
@@ -47,6 +51,13 @@ class TestMarginTrading:
         self.token = get_auth_token()
         if not STRATEGY_PATH.exists():
             pytest.skip(f"测试策略不存在: {STRATEGY_PATH}")
+
+        # 归还资金（测试隔离）：部署（InitStrategy）会向 CapitalPool 借一笔额度，
+        # 而 Stop/删除都不会归还，只有 reclaim 接口会。别的用例残留的 active 策略
+        # 会把整池 100 万占满 → 本策略 allocate 失败 → 日终回放 targetCapital=0
+        # → 所有买单 qty=0 被丢弃，决策只剩 HOLD（HOLD 又不落库）→ 用例拿不到决策。
+        # reclaim_all 清空注册表，本用例随后的部署会重新分配。
+        reclaim_capital(self.token)
 
     def test_flag_propagation_open_short(self):
         """测试 _flag 贯通：融券卖出（SELL flag=0）应表达为 OpenShort
@@ -93,13 +104,26 @@ class TestMarginTrading:
             pytest.skip(f"simulate/bar 不可用: {result}")
         
         # 等待决策结果
-        decisions = wait_for_decisions(self.token, STRATEGY_NAME, test_date)
+        time.sleep(2)
+        
+        # 按归属日查询：决策入库用 DecisionSet._asOf 作时间戳，模拟日就是 2025-01-15。
+        # 先按日期查（精确、不受今天其它策略决策干扰），查不到再退回"今天"
+        # （兼容没有归属日的老数据）。
+        all_decisions = api_get_decisions(self.token, STRATEGY_NAME, test_date)
+        if not all_decisions:
+            all_decisions = api_get_decisions(self.token)
+        
+        # 调试信息
+        if not all_decisions:
+            pytest.skip(
+                f"无决策生成。simulate_bar 返回: {result}"
+            )
         
         # 查找融券卖出的决策（action == "open_short"）
-        open_short_decisions = [d for d in decisions if d.get("action") == "open_short"]
+        open_short_decisions = [d for d in all_decisions if d.get("action") == "open_short"]
         
         assert len(open_short_decisions) > 0, \
-            f"应该至少有一个融券卖出（open_short）决策，实际决策: {[d.get('action') for d in decisions]}"
+            f"应该至少有一个融券卖出（open_short）决策，实际决策: {[d.get('action') for d in all_decisions]}"
         
         # 验证 flag == 0（通过 label 字段验证）
         for d in open_short_decisions:

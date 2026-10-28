@@ -216,8 +216,12 @@ public:
 
     // ─── 决策管理 ───
     // 添加决策记录（内存 + DuckDB 持久化），返回分配的 id
+    // asOf：决策归属日（"YYYY-MM-DD"）。日终回放时是推送的模拟日；不传则用墙钟。
+    //   decisions.timestamp 的日期部分就是 GET /trade/decisions?date= 的过滤条件，
+    //   写墙钟会把 "2025-01-15" 的决策记成今天，按归属日查询永远为空。
     int AddDecision(const String& strategy, symbol_t symbol, DecisionAction action,
-                    int64_t quantity, double price, int epoch);
+                    int64_t quantity, double price, int epoch,
+                    const String& asOf = "");
     // 查询当日决策列表（date 格式 "YYYY-MM-DD"）
     Vector<DecisionRecord> GetDecisions(const String& date);
     // 标记决策已执行
