@@ -53,6 +53,7 @@
 #include "Handler/PythonRunnerHandler.h"
 #include "Handler/MLHandler.h"
 #include "Handler/HMMHandler.h"
+#include "Handler/StabilityHandler.h"
 #include "Handler/QuoteDownloadHandler.h"
 #include "Util/PythonRunner.h"
 #include "Handler/QuoteDataHandler.h"
@@ -218,6 +219,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_DIVIDEND        "/dividend"
 #define API_ML              "/ml"
 #define API_HMM             "/hmm"
+#define API_STABILITY       "/analysis/stability"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -454,6 +456,8 @@ void Server::Regist() {
     REGIST_POST(API_HMM);
     REGIST_GET(API_HMM);
     REGIST_DEL(API_HMM);
+    REGIST_POST(API_STABILITY);
+    REGIST_GET(API_STABILITY);
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
     REGIST_GET(API_OPTION_HISTORY);
@@ -1677,6 +1681,7 @@ void Server::InitHandlers() {
     RegistHandler(API_OPTION_IV_SURFACE, OptionPricingHandler);
     RegistHandler(API_ML, MLHandler);
     RegistHandler(API_HMM, HMMHandler);
+    RegistHandler(API_STABILITY, StabilityHandler);
 
 #ifdef _DEBUG
     RegistHandler(API_SIMULATE_BAR, SimulateBarHandler);

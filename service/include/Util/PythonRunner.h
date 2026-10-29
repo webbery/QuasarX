@@ -13,6 +13,40 @@
 #include <unistd.h>
 #endif
 
+// Python 子进程 stdout/stderr 的 readLine 空闲超时（毫秒）。
+// 训练/优化脚本只在每个 trial/阶段边界输出一行，而单个 trial 的
+// train+backtest 可超过 1 分钟；超时过短会把仍在工作的子进程误判为
+// "脚本未输出 result" 并对其发 SIGTERM。
+constexpr int QS_PYTHON_READLINE_TIMEOUT_MS = 300000;
+
+// 取出 Python 输出行 JSON 里的 "type" 字段；不是 JSON 对象或没有 type 时返回空串。
+//
+// 不能用子串匹配 find("\"type\":\"error\"")：Python 端 json.dumps 不带
+// separators 时输出的是 {"type": "error", ...}（冒号后有空格），子串匹配会漏判，
+// 于是真实错误既没进 stderrLines，也没进 resultLine，最终只报出
+// "optimize script 未输出 result" 这种无信息量的兜底文案。
+inline String jsonLineType(const String& line) {
+    try {
+        auto j = nlohmann::json::parse(line);
+        if (j.is_object() && j.contains("type") && j["type"].is_string())
+            return j["type"].get<String>();
+    } catch (...) {}
+    return String();
+}
+
+// 从 Python 的错误行里取出可读文案：优先 message 字段，其次 error 字段，
+// 都不是就退回原始行。避免把整段 JSON 甩给调用方。
+inline String jsonLineMessage(const String& line) {
+    try {
+        auto j = nlohmann::json::parse(line);
+        if (j.is_object()) {
+            if (j.contains("message") && j["message"].is_string()) return j["message"].get<String>();
+            if (j.contains("error") && j["error"].is_string()) return j["error"].get<String>();
+        }
+    } catch (...) {}
+    return line;
+}
+
 struct PythonOutput {
     enum Type { STDOUT, STDERR, DONE };
     Type type;

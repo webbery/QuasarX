@@ -1,4 +1,5 @@
 #include "Handler/SRHandler.h"
+#include "Util/JobSession.h"
 #include "Util/PythonRunner.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
@@ -72,40 +73,13 @@ void SRHandler::post(const httplib::Request& req, httplib::Response& res) {
     INFO("[SR] 启动符号回归: task={}, symbol={}, horizon={}, csv={}", task, symbol, horizon, csvPath);
 
     // ── 启动 Python 脚本 ──
-    PythonRunner runner;
-    if (!runner.start("tools/symbolic_regression.py", args, interpreter)) {
+    auto runner = std::make_shared<PythonRunner>();
+    if (!runner->start("tools/symbolic_regression.py", args, interpreter)) {
         res.status = 500;
         res.set_content(R"({"message":"无法启动符号回归脚本"})", "application/json");
         return;
     }
 
     // ── SSE 流式输出 ──
-    res.set_header("Content-Type", "text/event-stream");
-    res.set_header("Cache-Control", "no-cache");
-    res.set_header("Connection", "keep-alive");
-    res.set_header("Access-Control-Allow-Origin", "*");
-
-    res.set_chunked_content_provider("text/event-stream",
-        [&](size_t offset, httplib::DataSink& sink) {
-            if (!sink.is_writable() || Server::IsExit()) {
-                runner.kill();
-                sink.done();
-                return false;
-            }
-
-            PythonOutput out;
-            if (runner.readLine(out, 10000)) {
-                if (out.type == PythonOutput::DONE) {
-                    auto msg = format_sse("done",
-                        {{"exit_code", std::to_string(out.exit_code)}});
-                    sink.write(msg.c_str(), msg.size());
-                    sink.done();
-                    return false;
-                }
-                String eventType = (out.type == PythonOutput::STDOUT) ? "output" : "error";
-                auto msg = format_sse(eventType, {{"line", out.line}});
-                sink.write(msg.c_str(), msg.size());
-            }
-            return true;
-        });
+    ServePythonRunner(res, runner, 10000);
 }

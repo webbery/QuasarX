@@ -33,8 +33,10 @@ ml_metrics 共同使用。注意与另外两份旧实现区分：旧实现把自
   - 长表 (M,)：score / future / date_codes 三个一维数组，M 为样本行。
     `daily_cs_ic_long` 面向"所有特征堆在一张表"的训练评估场景。
 
-`daily_cs_ic_wide` 与 `daily_cs_ic_long` 在同一批数据上必须给出相同结果
-（tools/test_ml_stats.py 有对拍用例）。
+`daily_cs_ic_wide` 与 `daily_cs_ic_long` 在同一批数据上必须给出相同的 IC 值
+（tools/test_ml_stats.py 有对拍用例）。两者的**对齐方式**不同：宽表返回与
+输入等长的逐日 IC（当日有效样本不足时为 NaN），长表只返回有有效 IC 的日期
+及其取值，比较时需按长表返回的日期码回取宽表对应位置。
 
 只依赖 numpy，便于单测和被不同模型（XGBoost / CNN / Transformer）复用。
 """
@@ -64,6 +66,9 @@ __all__ = [
     "fold_stats",
     "effective_gap",
     "MIN_FOLD_OBS",
+    "ks_2samp",
+    "psi",
+    "block_bounds",
 ]
 
 
@@ -566,3 +571,205 @@ def fold_stats(ic, n_folds: int, nw_lag: int, gap: int = 0,
             "effective_gap": int(eff_gap),
             "gap_raised": bool(gap_raised),
             "fold_dates": dates}
+
+
+# ============================================================
+# 分布漂移（KS / PSI）
+# ============================================================
+
+def ks_2samp(a, b) -> dict:
+    """两样本 Kolmogorov-Smirnov 检验。
+
+    返回 {"D": float, "p": float|None, "n": int, "m": int, "p_method": str}。
+
+    D = max|F_a(x) - F_b(x)|，在合并排序后的所有取值点上算。
+    p 用渐近 Kolmogorov 分布（大样本近似）：
+        λ = (√n_eff + 0.12 + 0.11/√n_eff)·D
+        Q(λ) = 2 Σ (-1)^{k-1} exp(-2k²λ²)
+    其中 n_eff = nm/(n+m)。
+
+    小样本（min(n,m) < 20）时 p=None，只给 D——渐近近似在 n<20 时误差大，
+    不假装精确。p_method 写 "asymptotic" 或 "insufficient"，便于调用方判断。
+
+    与 scipy.stats.ks_2samp(method="asymp") 对拍（D 1e-12、p 1e-3）。
+    """
+    x = np.asarray(a, dtype=float).ravel()
+    y = np.asarray(b, dtype=float).ravel()
+    x = x[np.isfinite(x)]
+    y = y[np.isfinite(y)]
+    n, m = len(x), len(y)
+    if n == 0 or m == 0:
+        return {"D": float("nan"), "p": None, "n": n, "m": m,
+                "p_method": "insufficient"}
+
+    # 合并排序，计算经验分布的差
+    xy = np.concatenate([x, y])
+    order = np.argsort(xy, kind="mergesort")
+    xy_sorted = xy[order]
+    # 标记每个位置来自 x 还是 y
+    is_x = np.zeros(len(xy), dtype=bool)
+    is_x[:n] = True
+    is_x = is_x[order]
+
+    # 累积分布：F_a(t) = #{x_i ≤ t}/n, F_b(t) = #{y_i ≤ t}/m
+    # 在排序后的每个点上算
+    cum_x = np.cumsum(is_x) / n
+    cum_y = np.cumsum(~is_x) / m
+    D = float(np.max(np.abs(cum_x - cum_y)))
+
+    # 小样本时 p 不可靠，返回 None
+    if min(n, m) < 20:
+        return {"D": D, "p": None, "n": n, "m": m,
+                "p_method": "insufficient"}
+
+    # 渐近 p 值
+    n_eff = (n * m) / (n + m)
+    sqrt_n_eff = math.sqrt(n_eff)
+    lam = (sqrt_n_eff + 0.12 + 0.11 / sqrt_n_eff) * D
+    if lam < 1e-12:
+        return {"D": D, "p": 1.0, "n": n, "m": m, "p_method": "asymptotic"}
+
+    # Q(λ) = 2 Σ (-1)^{k-1} exp(-2k²λ²)，k=1,2,...
+    # 截断到项 < 1e-12
+    p = 0.0
+    k = 1
+    while True:
+        term = 2.0 * ((-1) ** (k - 1)) * math.exp(-2.0 * k * k * lam * lam)
+        p += term
+        if abs(term) < 1e-12:
+            break
+        k += 1
+        if k > 1000:  # 安全上限
+            break
+    p = max(0.0, min(1.0, p))
+
+    return {"D": D, "p": float(p), "n": n, "m": m, "p_method": "asymptotic"}
+
+
+def psi(ref, cur, bins: int = 10, binning: str = "auto", eps: float = 1e-6) -> dict:
+    """Population Stability Index。
+
+    返回 {"psi": float, "binning_used": str, "n_bins": int, "n_clipped": int,
+          "n_ref": int, "n_cur": int, "bins": list[dict]}。
+
+    PSI = Σ (p_cur - p_ref)·ln(p_cur/p_ref)，p 先 clip 到 eps（记录 n_clipped）。
+
+    分箱：
+      - "auto"：unique(ref) <= bins 时用每个唯一值一箱（离散特征必须这样，
+        否则分位箱全是并列值）；否则用 ref 的分位数边界。
+      - "quantile"：强制分位数边界。
+      - "width"：等宽边界（min(ref)..max(ref)）。
+    边界重复时去重，有效箱 < 3 时退化为等宽箱并标记 binning_used。
+
+    逐箱明细 bins[i] = {"lo": float, "hi": float, "ref_frac": float,
+                         "cur_frac": float, "contrib": float}。
+    contrib = (cur_frac - ref_frac)·ln(cur_frac/ref_frac)，所有 contrib 之和 = psi。
+
+    PSI 不对称：ref 必须是基线，cur 是当前窗。
+
+    与 sklearn 的 population_stability_index 对拍（同分箱、同 eps 下 PSI 1e-10）。
+    """
+    ref = np.asarray(ref, dtype=float).ravel()
+    cur = np.asarray(cur, dtype=float).ravel()
+    ref = ref[np.isfinite(ref)]
+    cur = cur[np.isfinite(cur)]
+    n_ref, n_cur = len(ref), len(cur)
+    if n_ref == 0 or n_cur == 0:
+        return {"psi": float("nan"), "binning_used": binning, "n_bins": 0,
+                "n_clipped": 0, "n_ref": n_ref, "n_cur": n_cur, "bins": []}
+
+    # 分箱边界
+    #
+    # 三种口径：
+    #   unique   —— 每个唯一值一箱（离散特征/状态量必须这样，分位箱会被并列值压扁）
+    #   quantile —— ref 的分位边界（连续特征默认）
+    #   width    —— 等宽边界（quantile 退化时的兜底）
+    # histogram 的最后一箱是闭区间，所以右端要用 nextafter 推开一点，
+    # 否则 ref 的最大值会落在箱外；左端不需要扩，第一箱本来就左闭。
+    binning_used = binning
+    if binning == "auto":
+        binning_used = "unique" if len(np.unique(ref)) <= bins else "quantile"
+
+    if binning_used == "unique":
+        u = np.unique(ref)
+        edges = np.append(u, np.nextafter(u[-1], np.inf))
+    elif binning_used == "quantile":
+        edges = np.unique(np.percentile(ref, np.linspace(0, 100, bins + 1)))
+        if len(edges) < 2:
+            # ref 是常量：分位边界全部重合，退化为唯一值箱
+            binning_used = "unique"
+            edges = np.array([ref[0], np.nextafter(ref[0], np.inf)])
+    elif binning_used == "width":
+        if ref.min() == ref.max():
+            binning_used = "unique"
+            edges = np.array([ref[0], np.nextafter(ref[0], np.inf)])
+        else:
+            edges = np.linspace(ref.min(), ref.max(), bins + 1)
+    else:
+        raise ValueError(f"unknown binning: {binning}")
+
+    n_bins = len(edges) - 1
+    # 计算每箱的占比
+    ref_counts = np.histogram(ref, bins=edges)[0]
+    cur_counts = np.histogram(cur, bins=edges)[0]
+    ref_frac = ref_counts / n_ref
+    cur_frac = cur_counts / n_cur
+
+    # clip 到 eps
+    n_clipped = 0
+    ref_frac_clipped = ref_frac.copy()
+    cur_frac_clipped = cur_frac.copy()
+    mask_ref = ref_frac_clipped < eps
+    mask_cur = cur_frac_clipped < eps
+    n_clipped = int(mask_ref.sum() + mask_cur.sum())
+    ref_frac_clipped[mask_ref] = eps
+    cur_frac_clipped[mask_cur] = eps
+
+    # 逐箱 contrib
+    bins_detail = []
+    psi_total = 0.0
+    for i in range(n_bins):
+        r = ref_frac_clipped[i]
+        c = cur_frac_clipped[i]
+        contrib = (c - r) * math.log(c / r)
+        psi_total += contrib
+        bins_detail.append({
+            "lo": float(edges[i]),
+            "hi": float(edges[i + 1]),
+            "ref_frac": float(ref_frac[i]),
+            "cur_frac": float(cur_frac[i]),
+            "contrib": float(contrib),
+        })
+
+    return {"psi": float(psi_total), "binning_used": binning_used,
+            "n_bins": n_bins, "n_clipped": n_clipped,
+            "n_ref": n_ref, "n_cur": n_cur, "bins": bins_detail}
+
+
+def block_bounds(n: int, n_blocks: int, gap: int) -> list:
+    """等宽连续折的边界。
+
+    返回 [(start, stop), ...]，共 n_blocks 个元组。
+    折宽 = (n - (B-1)·gap) // B，余数留在尾部不参与。
+    相邻折之间跳过 gap 个样本。
+
+    与 fold_stats 的切分逻辑完全一致：同参数下 fold_stats 的 fold_ic
+    与 block 稳定性的 ic 逐块相等（test_stability.py 有对拍用例）。
+    """
+    n_blocks = int(n_blocks)
+    gap = int(gap)
+    if n_blocks < 1 or gap < 0:
+        return []
+    need = n_blocks * 1 + max(0, n_blocks - 1) * gap  # 最少每折 1 个样本
+    if n < need:
+        return []
+
+    width = (n - (n_blocks - 1) * gap) // n_blocks
+    bounds = []
+    start = 0
+    for _ in range(n_blocks):
+        stop = start + width
+        bounds.append((start, stop))
+        start = stop + gap
+    return bounds
+

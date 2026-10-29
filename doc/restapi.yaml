@@ -1232,10 +1232,15 @@ paths:
       description: |
         根据 mode 参数执行不同操作：0-部署并运行策略，1-运行已部署的策略，2-停止运行中的策略。
         也支持通过 `action` 字段触发内置动作：
-        - `validate` / `load` / `reclaim_all`：见 schema
+        - `validate`：只校验策略图，不部署；
+        - `load`：只初始化策略（InitStrategy），不写文件、不运行；
+        - `reclaim`：归还指定策略在 CapitalPool 里占用的资金，需同时传 `name`
+          （部署时会向资金池借一笔额度，Stop/删除都不会自动归还）；
+        - `reclaim_all`：归还全部策略的资金；
         - `batch_models`：批量返回每个策略关联的所有 XGBoost 模型信息（production + 最新 experiment + is_latest）。
           请求体为 `{names: ["strat1","strat2"]}`，10s 服务端缓存，避免每次策略列表刷新都重扫磁盘。
           前端 StrategyTracker 展开策略行时调用，对应 `StrategyBatchModelsResponse`。
+        部署（mode=0）时同名策略仍在运行会返回 409，可用 `force: true` 强制覆盖。
       tags:
         - Strategy
       requestBody:
@@ -2554,6 +2559,117 @@ paths:
               schema:
                 type: object
 
+  /analysis/stability:
+    post:
+      summary: 策略稳定性扫描
+      description: |
+        对策略的特征分布、信号稳定性、信号条件收益曲线进行系统性检查。
+        支持三项分析：
+        - **drift**：特征分布漂移检查（PSI/KS 检验，缺失率跳变，滚动 PSI）
+        - **block**：分块稳定性检查（连续折 IC、top-k 超额、单调性趋势）
+        - **signal**：信号条件前瞻收益曲线（分桶收益、spread、单调性）
+
+        输入为宽表特征缓存 CSV（DebugNode 导出或 /v0/ml action=collect 产出），
+        输出为一份 JSON 报告（`stability.json`），包含三项分析的完整结果。
+
+        **异步执行**：提交后立即返回 `session_id` 和 `run_id`，通过 SSE 推送进度，
+        通过 `GET ?action=status` 查询状态，通过 `GET ?action=result` 获取完整结果。
+
+        **与 ML 的关系**：本端点独立于 `/v0/ml`，不依赖训练流程。可用于：
+        - ML 策略：检查特征分布漂移、信号稳定性
+        - 非 ML 策略：检查信号稳定性、信号条件收益曲线
+        - 任何策略：检查特征分布漂移
+
+        **产物**：只输出一份 JSON（`stability.json`），不生成 md/csv/图。
+        历史对比靠 `run_id` + 文件自身，`meta.inputs.csv_sha256` 保证可复现。
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StabilityScanRequest"
+            examples:
+              basic:
+                summary: 基础扫描（drift + block + signal）
+                value:
+                  action: scan
+                  csv_path: "/data/debug/CTA_v16/xgb_debug.csv"
+                  strategy_id: "CTA_v16"
+                  checks: ["drift", "block", "signal"]
+              drift_only:
+                summary: 只检查分布漂移
+                value:
+                  action: scan
+                  csv_path: "/data/debug/CTA_v16/xgb_debug.csv"
+                  checks: ["drift"]
+                  psi_warn: 0.10
+                  psi_alert: 0.25
+      responses:
+        '200':
+          description: 扫描任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StabilityScanSubmitResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '409':
+          description: 已有扫描任务在运行
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+    get:
+      summary: 查询稳定性扫描状态/结果
+      description: |
+        通过 `action` 参数区分四种操作：
+        - `events`：SSE 流，实时推送扫描进度（step/progress/result/warning）
+        - `status`：查询当前扫描状态（running/done/error）
+        - `result`：获取完整结果 JSON（通过 `run_id`）
+        - `list`：列出所有历史扫描结果
+      tags:
+        - Analysis
+      parameters:
+        - in: query
+          name: action
+          required: true
+          schema:
+            type: string
+            enum: [events, status, result, list]
+          description: 操作类型
+        - in: query
+          name: session_id
+          schema:
+            type: string
+          description: 会话 ID（events/status 必填）
+        - in: query
+          name: run_id
+          schema:
+            type: string
+          description: 运行 ID（result 必填）
+      responses:
+        '200':
+          description: 操作结果
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/StabilityStatusResponse"
+                  - $ref: "#/components/schemas/StabilityResultResponse"
+                  - $ref: "#/components/schemas/StabilityListResponse"
+        '404':
+          description: 会话或结果不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ═══════════════════════════════════════════════════════════
   #  行情数据
   # ═══════════════════════════════════════════════════════════
@@ -3128,13 +3244,28 @@ paths:
           **数据切分**：matrix/vector 两条路径都按"唯一日期"切分，保证同一天的所有标的
           落在同一段；不再按行号切分（旧实现会把最后几个标的当成测试集）。
 
+          **折间隔离（purge）**：单次切分时，训练侧那一段的尾部会挖掉 `gap_bars`
+          个交易日（不传时取 `label.period`），避免训练样本的前瞻标签窗口伸进
+          验证/测试段。留出段保持完整的名义跨度 —— 它是唯一无偏的读数。
+          响应里的 `leakage_checks.overlap_rows` 是**实际算出来**的污染行数
+          （此前是硬编码的字面量 0），`gap_applied=false` 表示缺日期列、
+          无法按日期留间隔。
+
         - action=optimize：Optuna 自动优化 + 快速回测评估
           1. 前端先调 action=collect 拿到 csv_path 作为 feature_cache 传入
           2. 后端后台线程启动 xgboost_optimize.py
           3. 每个 Optuna trial：训练模型 → 保存到 experiments/ → 调 /v0/backtest
-             （feature_cache + model_path 快速模式）→ 解析 summary[optimize_metric]
-          4. SSE 流式推送 trial/value/result 事件
-          5. 通过 GET /v0/ml?action=train_status&session_id=... 读取最终 best_params
+             （feature_cache + model_path 快速模式）
+          4. **选超参只看 DEV 段**（`val_ratio` 那段）：objective 用 DEV 段的
+             窗口指标，不再用整段历史回测的 summary —— 后者会让测试期参与
+             超参选择。`select_window=full` 可切回旧口径（仅用于复现历史数字）
+          5. 对各 trial 的 DEV 显著性做 BH-FDR 校正（`fdr_alpha`），
+             `select_by=q` 时只在通过校正的 trial 里选
+          6. 搜索结束后对选中的 trial 在**留出段**（`test_ratio` 那段）评一次，
+             `selection.selection_bias = best_dev_value − holdout_value`
+             直接给出"选超参本身乐观了多少"
+          7. SSE 流式推送 trial/value/result 事件
+          8. 通过 GET /v0/ml?action=train_status&session_id=... 读取最终 best_params
 
         - action=collect：收集特征数据
           与 train 共享上游子图执行逻辑，但只收集不训练，返回 csv_path
@@ -3249,6 +3380,11 @@ paths:
                   objective: multi:softprob
                   num_class: 3
                   test_ratio: 0.2
+                  val_ratio: 0.15
+                  # 选优口径：只用 DEV 段选超参，留出段只评一次
+                  select_window: val
+                  select_by: dev_metric
+                  fdr_alpha: 0.10
               screen:
                 summary: 特征筛选（门禁）
                 value:
@@ -3390,6 +3526,156 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /strategy/simulate/bar:
+    post:
+      summary: 注入一根模拟 bar 并触发日终策略
+      security:
+        - BearerAuth: []
+      description: |
+        仅 Debug 构建（`_DEBUG`）注册此路由。流程：写入 QuoteDB（`stock_1d`）
+        → 重算后复权 → 标记该标的就绪 → 当策略依赖的全部标的就绪时，
+        异步执行一次日终回放（决策归属日取 bar 的 `datetime`）。
+
+        **重跑语义**：
+        - 仿真日期变化：重置日终状态，按新日期重跑；
+        - 同一仿真日、**同一标的**重复推送：视为该交易日数据被改写，重置后重跑；
+        - 同一仿真日推**不同**标的（多标的逐标的灌数据）：不重置，
+          等全部标的就绪后统一执行一次。
+
+        接口 200 只表示 bar 已写入并触发，决策在后台线程生成，
+        需要稍后通过 `GET /trade/decisions?date=<决策归属日>` 读取。
+        只有 BUY/SELL 会入库，HOLD 不产生决策记录。
+      tags:
+        - Strategy
+      requestBody:
+        description: bar 数据
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SimulateBarRequest"
+      responses:
+        '200':
+          description: bar 已写入，策略异步执行
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulateBarResponse"
+        '400':
+          description: 参数缺失或 JSON 解析失败（symbol、close 必填）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: QuoteDB 未初始化或写入失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /trade/decisions:
+    get:
+      summary: 查询指定归属日的决策
+      security:
+        - BearerAuth: []
+      description: |
+        按决策归属日查询待执行决策，日期取 `decisions.timestamp` 的日期部分。
+        该时间戳在日终执行时由 `DecisionSet.as_of`（模拟交易日）写入，
+        不是记录创建时的墙钟时间——所以回放 `2025-01-15` 的 bar，
+        记录会落在 `2025-01-15` 而不是执行当天。
+
+        只返回 BUY/SELL 对应的四类动作（open_long / close_long / open_short /
+        close_short）。HOLD 表示"无动作"，不写入决策表。
+        未传 `date` 时默认服务器当天。
+
+        注意：当前不支持按策略过滤，`strategy` 参数会被忽略，返回该日所有策略的决策。
+      tags:
+        - Order
+      parameters:
+        - in: query
+          name: date
+          required: false
+          schema:
+            type: string
+            format: date
+            example: '2025-01-15'
+          description: 决策归属日（YYYY-MM-DD），缺省为服务器当天
+      responses:
+        '200':
+          description: 决策列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TradeDecision"
+        '401':
+          description: 缺少或非法的 Authorization
+    put:
+      summary: 标记决策已确认（关闭，不执行）
+      security:
+        - BearerAuth: []
+      description: 将指定决策标记为 closed，之后不再作为待执行指令返回
+      tags:
+        - Order
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: integer
+                  description: 决策 id
+                  example: 16
+              required:
+                - id
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '404':
+          description: 决策不存在
+    delete:
+      summary: 清除指定归属日的决策记录
+      security:
+        - BearerAuth: []
+      description: 删除 `decisions` 表中该日期的记录，并清空内存缓存。
+      tags:
+        - Order
+      parameters:
+        - in: query
+          name: date
+          required: false
+          schema:
+            type: string
+            format: date
+            example: '2025-01-15'
+          description: 要清除的归属日（YYYY-MM-DD），缺省为服务器当天
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  deleted:
+                    type: integer
+                    description: 删除的决策条数
+                    example: 1
 
 components:
   securitySchemes:
@@ -4284,12 +4570,30 @@ components:
       properties:
         name:
           type: string
-          description: 策略名称
+          description: 策略名称（action=reclaim / batch_models 时也用于指定目标）
           example: 'xgboost'
         mode:
           type: integer
           description: 模式, 0-部署并运行, 1-运行已部署的策略, 2-停止运行中的策略
           example: 0
+        action:
+          type: string
+          description: |
+            内置动作，与 mode 二选一：
+            validate=只校验策略图；load=只初始化不落盘不运行；
+            reclaim=归还指定策略的资金（需 name）；reclaim_all=归还全部策略资金；
+            batch_models=批量查询模型绑定（需 names）。
+          example: 'reclaim'
+        force:
+          type: boolean
+          description: 部署时同名策略仍在运行则强制覆盖（默认 false，冲突返回 409）
+          default: false
+        names:
+          type: array
+          items:
+            type: string
+          description: action=batch_models 时的策略名列表
+          example: ['xgboost', 'momentum']
         script:
           type: object
           description: 策略图 JSON (仅在 mode=0 部署时需要)
@@ -4297,7 +4601,7 @@ components:
         params:
           type: object
           description: 训练模式下的参数
-          example: {}    
+          example: {}
     BacktestResponse:
       type: object
       properties:
@@ -5411,6 +5715,19 @@ components:
         test_ratio:
           type: number
           default: 0.2
+          description: |
+            留出段比例（单次切分时）。留出段保持完整的名义跨度，
+            不参与训练，也不参与任何超参/阈值选择。
+        gap_bars:
+          type: integer
+          default: 0
+          description: |
+            单次切分时，从训练侧那一段的尾部挖掉的间隔长度（唯一交易日数）。
+            0 表示取 `label.period` —— 标签是 label.period 根 bar 的前瞻收益时，
+            这是保证训练样本的标签窗口不伸进验证/测试段的最小间隔。
+
+            与 `cv.gap.bars` 同一口径。CV 模式下本字段不生效，
+            CV 的间隔由 `cv.gap` 控制。
         params:
           type: object
         py_env:
@@ -5488,6 +5805,36 @@ components:
         meta:
           type: object
           description: 修改后的完整 meta.json 内容（含自动写入的 updated_at）
+
+    LeakageChecks:
+      type: object
+      description: |
+        折间泄漏的实测统计。这些值是**算出来的**，不是写死的字面量：
+        `overlap_rows` 逐段统计"训练样本的前瞻标签窗口伸进下一段"的样本行数。
+        gap >= label.period 时它必须为 0；不为 0 说明间隔不够。
+      properties:
+        gap_ge_label_period:
+          type: boolean
+          description: gap >= label.period
+        gap_dates:
+          type: integer
+          description: 实际生效的段间隔离长度（唯一交易日数）
+        gap_applied:
+          type: boolean
+          description: 是否真的留了间隔（缺日期列时为 false）
+        gap_shrunk:
+          type: boolean
+          description: |
+            间隔是否因数据量不够而被压缩（压缩后可能仍有泄漏，
+            由 overlap_rows 如实报出）
+        overlap_rows:
+          type: integer
+          nullable: true
+          description: |
+            训练样本的前瞻标签窗口伸进下一段的样本行数。必须为 0。
+            无日期列、无法按日期留间隔时为 null（不假装通过）。
+        oof_rows:
+          type: integer
 
     CVConfig:
       type: object
@@ -5628,16 +5975,7 @@ components:
         oof_ic:
           $ref: "#/components/schemas/CVIC"
         leakage_checks:
-          type: object
-          properties:
-            gap_ge_label_period:
-              type: boolean
-              description: gap >= label.period
-            overlap_rows:
-              type: integer
-              description: OOF 重叠行数（必须为 0）
-            oof_rows:
-              type: integer
+          $ref: "#/components/schemas/LeakageChecks"
 
     CVFold:
       type: object
@@ -5665,6 +6003,11 @@ components:
           type: integer
         best_rounds:
           type: integer
+        overlap_rows:
+          type: integer
+          description: |
+            本折里训练样本的前瞻标签窗口伸进 OOS 的样本行数。
+            gap >= label.period 时必须为 0。
         metrics:
           type: object
           additionalProperties: { type: number }
@@ -5714,19 +6057,35 @@ components:
           1. 前端先调 POST /v0/ml?action=collect 拿到 csv_path
           2. POST /v0/ml?action=optimize 把 csv_path 作为 feature_cache 传入
           3. 后端启动后台线程跑 xgboost_optimize.py，每个 trial：
-             a. Python xgboost 训练 → 保存到 experiments/optimize_fast_{ts}/
+             a. Python xgboost 训练（只用训练段）→ 保存到 experiments/optimize_fast_{ts}/
              b. POST http://localhost:19107/v0/backtest (feature_cache + model_path)
-             c. 解析 summary[optimize_metric] 作为 Optuna objective
-          4. SSE 流式推送 trial/value/result 事件
-          5. GET /v0/ml?action=train_status&session_id=... 读最终结果
+             c. 在**选择窗口**上重算指标作为 Optuna objective
+          4. 对各 trial 的 DEV 显著性做 BH-FDR 校正
+          5. 搜索结束后对选中的 trial 在留出段评一次
+          6. SSE 流式推送 trial/value/result 事件
+          7. GET /v0/ml?action=train_status&session_id=... 读最终结果
+
+        三段式切分（按唯一交易日，单位是交易日）
+        ----------------------------------------
+          TRAIN   = [0, T-gap)      训练模型
+          DEV     = [T, V-gap)      选超参（objective 只看这段）
+          HOLDOUT = [V, N)          最终只评一次，不参与任何选择
+
+        留出段是唯一无偏的读数；`selection.selection_bias` 给出
+        "选超参这件事本身乐观了多少"（= best_dev_value − holdout_value）。
 
         optimize_metric 字段映射（Python 侧）：
-          sharpe        → summary["sharp"]
-          total_return  → summary["total_return"]
-          annual_return → summary["annual_return"]
-          max_drawdown  → summary["max_drawdown"]（负数，越大越好）
-          win_rate      → summary["win_rate"]
-          calmar_ratio  → summary["calmar_ratio"]
+          sharpe        → "sharp"
+          total_return  → "total_return"
+          annual_return → "annual_return"
+          max_drawdown  → "max_drawdown"
+          win_rate      → "win_rate"
+          calmar_ratio  → "calmar_ratio"
+
+        注意：服务端的 `max_drawdown` 是**正数**（回撤幅度）。Python 侧在
+        计算 objective 时会取负号统一成"越大越好"，所以 trial 的 `value`
+        对 max_drawdown 而言是负的回撤；trial 的 `summary.max_drawdown`
+        仍是正的原值。
       properties:
         action:
           type: string
@@ -5755,6 +6114,37 @@ components:
           type: string
           enum: [sharpe, total_return, annual_return, max_drawdown, win_rate, calmar_ratio]
           default: sharpe
+        select_window:
+          type: string
+          enum: [val, full]
+          default: val
+          description: |
+            选超参时用哪段数据：
+            - `val`（默认）：只用 DEV 段（`val_ratio` 那段）。留出段不参与选择。
+            - `full`：整段历史（旧行为）。此时测试期参与了超参选择，
+              报出的指标是乐观的；仅用于复现历史数字，不要据此下结论。
+        fdr_alpha:
+          type: number
+          default: 0.10
+          description: |
+            BH-FDR 显著性水平。对各 trial 的 DEV 窗口日均收益做 Newey-West
+            t 检验后对 p 值做 BH 校正（口径与特征门禁一致）。必须在 (0,1) 内，
+            否则返回 400。
+        select_by:
+          type: string
+          enum: [dev_metric, q]
+          default: dev_metric
+          description: |
+            选优口径：
+            - `dev_metric`（默认）：取 DEV 段指标最高的 trial。
+            - `q`：只在通过 BH-FDR（`q <= fdr_alpha`）的 trial 里取指标最高的；
+              一个都没通过时退回 `dev_metric` 并给出告警。
+        gap_bars:
+          type: integer
+          default: 0
+          description: |
+            段间隔离长度（唯一交易日数），从训练侧那一段的尾部挖掉。
+            0 表示取 `label.period`。
         param_domains:
           type: string
           description: 参数搜索域 JSON 字符串
@@ -5768,6 +6158,11 @@ components:
         test_ratio:
           type: number
           default: 0.2
+          description: 留出段（HOLDOUT）比例，只用于最终评估，不参与选择
+        val_ratio:
+          type: number
+          default: 0.15
+          description: 选择段（DEV）比例，用于挑选超参；数据量 < 1000 时退化为 0
         start_date:
           type: string
           format: date
@@ -5783,6 +6178,69 @@ components:
         py_env:
           type: string
           description: Python 解释器环境名（可选）
+
+    OptimizeSelection:
+      type: object
+      description: |
+        参数搜索的选优口径与留出集评估结果。出现在 action=optimize 的
+        最终结果里。
+      properties:
+        window:
+          type: string
+          enum: [val, full]
+          description: 实际生效的选择窗口（`full` 可能来自无 DEV 段时的退化）
+        metric:
+          type: string
+          description: 优化目标
+        select_by:
+          type: string
+          enum: [dev_metric, q]
+        fdr_alpha:
+          type: number
+        n_trials_scored:
+          type: integer
+          description: 成功评分的 trial 数
+        n_trials_q_pass:
+          type: integer
+          description: 通过 BH-FDR 校正的 trial 数
+        dev_start:
+          type: string
+          format: date
+          nullable: true
+          description: 选择段起始日（window=full 时为 null）
+        dev_end:
+          type: string
+          format: date
+          nullable: true
+        holdout_start:
+          type: string
+          format: date
+          nullable: true
+          description: 留出段起始日
+        holdout_end:
+          type: string
+          format: date
+          nullable: true
+        gap_dates:
+          type: integer
+          description: 实际生效的段间隔离长度（唯一交易日数）
+        best_dev_value:
+          type: number
+          nullable: true
+          description: 选中 trial 在选择段上的指标
+        holdout_value:
+          type: number
+          nullable: true
+          description: 选中 trial 在留出段上的指标（只评一次）
+        selection_bias:
+          type: number
+          nullable: true
+          description: |
+            best_dev_value − holdout_value。直接量化"挑超参这件事本身
+            乐观了多少"。显著为正说明选择段上的指标不可直接外推。
+        optuna_best_trial_number:
+          type: integer
+          description: Optuna 自身记账的最优 trial（可能与最终选中的不同）
 
     XGBoostTrainResponse:
       type: object
@@ -5857,6 +6315,10 @@ components:
         cv:
           $ref: "#/components/schemas/CVResult"
           description: CV 结果（仅 cv.enabled=true 时存在）
+        leakage_checks:
+          $ref: "#/components/schemas/LeakageChecks"
+          description: |
+            折间泄漏的实测统计（单次切分路径）。CV 路径下见 `cv.leakage_checks`。
 
     XGBoostShapResponse:
       type: object
@@ -6134,6 +6596,34 @@ components:
               summary:
                 type: object
                 additionalProperties: true
+              dev_value:
+                type: number
+                nullable: true
+                description: 该 trial 在选择段（DEV）上的指标
+              dev_n_days:
+                type: integer
+                description: 选择段内的有效交易日数
+              dev_t:
+                type: number
+                nullable: true
+                description: 选择段日均收益的 Newey-West t 值
+              dev_p:
+                type: number
+                nullable: true
+                description: 对应的双侧 p 值
+              dev_q:
+                type: number
+                nullable: true
+                description: BH-FDR 校正后的 q 值
+              q_pass:
+                type: boolean
+                description: 是否通过 BH-FDR 校正（q <= fdr_alpha）
+              holdout_value:
+                type: number
+                nullable: true
+                description: |
+                  该 trial 在留出段上的指标。留出段不参与选择，
+                  这里只是把每个 trial 的留出表现都记下来备查。
         importance:
           type: array
           items:
@@ -6147,6 +6637,9 @@ components:
           type: string
         output_dir:
           type: string
+        selection:
+          $ref: "#/components/schemas/OptimizeSelection"
+          description: 选优口径与留出集评估结果
 
     # ── 分红除权数据 schemas ──
 
@@ -6305,3 +6798,308 @@ components:
         ex_date:
           type: string
           description: 被删除的除权除息日（删除单次分红事件时返回）
+
+    # ═══ 日终模拟（simulate/bar） ═══
+    SimulateBarRequest:
+      type: object
+      description: |
+        一根模拟 bar。写入 `stock_1d` 后按 bar 的日期触发日终回放。
+        `open/high/low` 缺省取 `close`，`volume/turnover` 缺省为 0。
+      properties:
+        symbol:
+          type: string
+          description: 标的代码（内部格式）
+          example: 'sz.900001'
+        datetime:
+          type: string
+          description: bar 时间。日期部分即决策归属日；缺省为服务器当天
+          example: '2025-01-15 00:00:00'
+        open:
+          type: number
+          example: 45.0
+        high:
+          type: number
+          example: 46.0
+        low:
+          type: number
+          example: 44.0
+        close:
+          type: number
+          description: 收盘价（必填）
+          example: 45.0
+        volume:
+          type: integer
+          format: int64
+          example: 1000000
+        turnover:
+          type: number
+          example: 45000000.0
+      required:
+        - symbol
+        - close
+
+    SimulateBarResponse:
+      type: object
+      description: bar 写入结果。策略在后台异步执行，此响应不代表决策已生成。
+      properties:
+        status:
+          type: string
+          example: ok
+        symbol:
+          type: string
+          example: 'sz.900001'
+        datetime:
+          type: string
+          example: '2025-01-15 00:00:00'
+        close:
+          type: number
+          example: 45.0
+        message:
+          type: string
+          example: 'Bar written and symbol marked ready. Strategy will execute when all dependencies are met.'
+
+    # ═══ 决策 ═══
+    TradeDecision:
+      type: object
+      description: |
+        一条待执行决策。HOLD 不入库，因此 `action` 只会出现四种开平仓动作。
+      properties:
+        id:
+          type: integer
+          example: 16
+        strategy:
+          type: string
+          example: 'margin_test_strategy'
+        symbol:
+          type: string
+          example: 'sz.900001'
+        action:
+          type: string
+          enum: [open_long, close_long, open_short, close_short]
+          description: |
+            开多 / 平多 / 开空 / 平空。由 TradeAction + flag 派生：
+            SELL+开仓=open_short（融券卖出），BUY+平仓=close_short。
+        label:
+          type: string
+          enum: [买入开多, 卖出平多, 卖出开空, 买入平空]
+          description: 中文动作描述，与 `action` 一一对应
+        quantity:
+          type: integer
+          format: int64
+          example: 4400
+        price:
+          type: number
+          example: 45.0
+        epoch:
+          type: integer
+          description: 产生该决策的回放 epoch
+          example: 61
+        timestamp:
+          type: integer
+          format: int64
+          description: |
+            决策归属日当地 00:00:00 的 epoch 秒（日终回放取模拟交易日，
+            非回放路径取创建时刻）。查询接口按该时间戳的日期部分过滤。
+        executed:
+          type: boolean
+        executedQuantity:
+          type: integer
+          format: int64
+        executedPrice:
+          type: number
+        closed:
+          type: boolean
+          description: 是否已被人工确认关闭（PUT /trade/decisions）
+
+    # ═══ 策略稳定性扫描 ═══
+    StabilityScanRequest:
+      type: object
+      description: 策略稳定性扫描请求
+      required:
+        - action
+        - csv_path
+      properties:
+        action:
+          type: string
+          enum: [scan, cancel, delete]
+          description: 操作类型
+        csv_path:
+          type: string
+          description: 宽表特征缓存 CSV 路径（DebugNode 导出或 /v0/ml action=collect 产出）
+        strategy_id:
+          type: string
+          description: 策略标识（用于历史对比分组）
+        ohlcv_cache:
+          type: string
+          description: OHLCV 数据路径（可选，用于计算可交易性掩码）
+        entry:
+          type: string
+          enum: [close, next_open]
+          default: close
+          description: 入场价格类型
+        return_horizon:
+          type: integer
+          default: 5
+          minimum: 1
+          maximum: 250
+          description: 分块稳定性的主前瞻期
+        horizons:
+          type: array
+          items:
+            type: integer
+          default: [1, 5, 10, 20]
+          description: 信号条件曲线的横轴（主前瞻期会自动并入）
+        checks:
+          type: array
+          items:
+            type: string
+            enum: [drift, block, signal]
+          default: [drift, block, signal]
+          description: 要执行的检查项
+        features:
+          type: string
+          description: drift 范围（逗号分隔特征名）；空=全部
+        signals:
+          type: string
+          description: block/curve 对象（逗号分隔信号名）；空=自动探测
+        ref_mode:
+          type: string
+          enum: [first_frac, window, dev]
+          default: first_frac
+          description: 漂移分析的参考窗模式
+        ref_frac:
+          type: number
+          default: 0.5
+          minimum: 0.01
+          maximum: 0.99
+          description: first_frac 模式的参考窗比例
+        bins:
+          type: integer
+          default: 10
+          minimum: 2
+          maximum: 50
+          description: PSI 分箱数
+        binning:
+          type: string
+          enum: [auto, quantile, width]
+          default: auto
+          description: PSI 分箱方式
+        psi_warn:
+          type: number
+          default: 0.10
+          minimum: 0.01
+          description: PSI 告警阈值
+        psi_alert:
+          type: number
+          default: 0.25
+          minimum: 0.01
+          description: PSI 报警阈值
+        n_blocks:
+          type: integer
+          default: 5
+          minimum: 2
+          maximum: 50
+          description: 分块稳定性折数
+        quantiles:
+          type: integer
+          default: 5
+          minimum: 2
+          maximum: 20
+          description: 信号曲线分桶数
+        min_names:
+          type: integer
+          default: 15
+          minimum: 2
+          description: 每日最少有效标的数
+        min_bucket_names:
+          type: integer
+          default: 5
+          minimum: 1
+          description: 每桶最少样本数
+        py_env:
+          type: string
+          description: Python 环境名称
+
+    StabilityScanSubmitResponse:
+      type: object
+      description: 扫描任务提交响应
+      properties:
+        session_id:
+          type: string
+          description: 会话 ID（用于查询状态和 SSE）
+        run_id:
+          type: string
+          description: 运行 ID（用于获取结果）
+        status:
+          type: string
+          enum: [started]
+
+    StabilityStatusResponse:
+      type: object
+      description: 扫描状态响应
+      properties:
+        status:
+          type: string
+          enum: [running, done, error]
+        session_id:
+          type: string
+        run_id:
+          type: string
+        progress:
+          type: object
+          description: 当前进度（仅 running 时）
+        summary:
+          type: object
+          description: 扫描摘要（仅 done 时）
+        error:
+          type: string
+          description: 错误信息（仅 error 时）
+
+    StabilityResultResponse:
+      type: object
+      description: 完整扫描结果（stability.json 内容）
+      properties:
+        schema:
+          type: string
+          example: stability/v1
+        meta:
+          type: object
+          description: 元数据（run_id, created_at, inputs, params）
+        summary:
+          type: object
+          description: 判决摘要
+        drift:
+          type: object
+          description: 分布漂移检查结果
+        block:
+          type: object
+          description: 分块稳定性检查结果
+        signal:
+          type: object
+          description: 信号条件收益曲线结果
+        warnings:
+          type: array
+          items:
+            type: object
+          description: 结构化告警
+
+    StabilityListResponse:
+      type: array
+      description: 历史扫描结果列表
+      items:
+        type: object
+        properties:
+          run_id:
+            type: string
+          created_at:
+            type: string
+          strategy_id:
+            type: string
+          csv_path:
+            type: string
+          checks:
+            type: array
+            items:
+              type: string
+          summary:
+            type: object

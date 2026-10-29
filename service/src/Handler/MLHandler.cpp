@@ -44,40 +44,6 @@ std::mutex MLHandler::s_sessionMtx;
 
 namespace {
 
-// Python 子进程 stdout/stderr 的 readLine 空闲超时（毫秒）。
-// 训练/优化脚本只在每个 trial/阶段边界输出一行，而单个 trial 的
-// train+backtest 可超过 1 分钟；超时过短会把仍在工作的子进程误判为
-// "脚本未输出 result" 并对其发 SIGTERM。
-#define QS_PYTHON_READLINE_TIMEOUT_MS 300000
-
-// 取出 Python 输出行 JSON 里的 "type" 字段；不是 JSON 对象或没有 type 时返回空串。
-//
-// 不能用子串匹配 find("\"type\":\"error\"")：Python 端 json.dumps 不带
-// separators 时输出的是 {"type": "error", ...}（冒号后有空格），子串匹配会漏判，
-// 于是真实错误既没进 stderrLines，也没进 resultLine，最终只报出
-// "optimize script 未输出 result" 这种无信息量的兜底文案。
-String jsonLineType(const String& line) {
-    try {
-        auto j = nlohmann::json::parse(line);
-        if (j.is_object() && j.contains("type") && j["type"].is_string())
-            return j["type"].get<String>();
-    } catch (...) {}
-    return String();
-}
-
-// 从 Python 的错误行里取出可读文案：优先 message 字段，其次 error 字段，
-// 都不是就退回原始行。避免把整段 JSON 甩给调用方。
-String jsonLineMessage(const String& line) {
-    try {
-        auto j = nlohmann::json::parse(line);
-        if (j.is_object()) {
-            if (j.contains("message") && j["message"].is_string()) return j["message"].get<String>();
-            if (j.contains("error") && j["error"].is_string()) return j["error"].get<String>();
-        }
-    } catch (...) {}
-    return line;
-}
-
 #ifdef _WIN32
 inline int QS_GETPID() { return _getpid(); }
 #else
@@ -553,15 +519,15 @@ CollectPhaseResult runCollectPhase(
 }  // namespace
 
 // 尝试获取会话槽：检查当前活跃会话，返回 CanCreate/Reused/Conflict
-SessionAcquireResult MLHandler::tryAcquireSession(MLAction kind) {
+SessionAcquireResult<TrainSession> MLHandler::tryAcquireSession(MLAction kind) {
     std::lock_guard<std::mutex> lk(s_sessionMtx);
     if (!s_activeSession || s_activeSession->_done) {
-        return {SessionAcquireResult::CanCreate, nullptr};
+        return {SessionAcquireResult<TrainSession>::CanCreate, nullptr};
     }
     if (s_activeSession->_kind == kind) {
-        return {SessionAcquireResult::Reused, s_activeSession};
+        return {SessionAcquireResult<TrainSession>::Reused, s_activeSession};
     }
-    return {SessionAcquireResult::Conflict, s_activeSession};
+    return {SessionAcquireResult<TrainSession>::Conflict, s_activeSession};
 }
 
 // 构建 409 冲突响应：当有其他 ML 会话正在运行时
@@ -577,14 +543,14 @@ void MLHandler::respondConflict(httplib::Response& res, const String& sessionId,
 void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& res) {
     // 幂等检查：只有同 kind (Optimize) 的活跃会话才复用，不同 kind 返回 409
     auto acquire = tryAcquireSession(MLAction::Optimize);
-    if (acquire.status == SessionAcquireResult::Reused) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Reused) {
         nlohmann::json resp;
         resp["session_id"] = acquire.existing->_sessionId;
         resp["status"] = "running";
         res.set_content(resp.dump(), "application/json");
         return;
     }
-    if (acquire.status == SessionAcquireResult::Conflict) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Conflict) {
         respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
         return;
     }
@@ -642,6 +608,37 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
     String endDate = params.value("end_date", "");
     String frequency = params.value("frequency", "1d");
 
+    // ── 选优口径（防选择偏差）────────────────────────────────────────
+    // select_window=val：只用 DEV 段（val_ratio 那段）选超参，留出段
+    //   （test_ratio 那段）只评一次。此前用整段历史选，等于让测试期
+    //   参与了超参选择。
+    // select_window=full：旧行为，保留用于复现历史数字。
+    String selectWindow = params.value("select_window", "val");
+    if (selectWindow != "val" && selectWindow != "full") {
+        res.status = 400;
+        res.set_content(R"json({"message":"invalid 'select_window' (expected val|full)"})json",
+                        "application/json");
+        return;
+    }
+    // BH-FDR 显著性水平；--select-by q 时用它筛掉站不住的 trial
+    double fdrAlpha = params.value("fdr_alpha", 0.10);
+    if (!(fdrAlpha > 0.0 && fdrAlpha < 1.0)) {
+        res.status = 400;
+        res.set_content(R"json({"message":"invalid 'fdr_alpha' (expected 0 < alpha < 1)"})json",
+                        "application/json");
+        return;
+    }
+    // dev_metric：按 DEV 段指标选；q：只在通过 BH-FDR 的 trial 里选
+    String selectBy = params.value("select_by", "dev_metric");
+    if (selectBy != "dev_metric" && selectBy != "q") {
+        res.status = 400;
+        res.set_content(R"json({"message":"invalid 'select_by' (expected dev_metric|q)"})json",
+                        "application/json");
+        return;
+    }
+    // 段间隔离长度（唯一交易日数）；0 = 取 label.period
+    int gapBars = params.value("gap_bars", 0);
+
     auto session = std::make_shared<TrainSession>();
     session->_sessionId = fmt::format("xgb_opt_{}", std::chrono::steady_clock::now().time_since_epoch().count());
     session->_kind = MLAction::Optimize;
@@ -657,7 +654,8 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
     // 后台线程：调 xgboost_optimize.py（前端先调 collect 拿到 csv_path 作为 feature_cache 传入）
     std::thread([this, params, fastStrategy, session, sendSSE, labelSource, labelPeriod,
                  labelType, labelShape, volK, labelSigmaMode, objective, numClass, testRatio, valRatio, nTrials,
-                 paramDomains, optimizeMetric, startDate, endDate, frequency, featureCache]() {
+                 paramDomains, optimizeMetric, startDate, endDate, frequency, featureCache,
+                 selectWindow, fdrAlpha, selectBy, gapBars]() {
         String strategyPath;
         try {
             strategyPath = makeTempPath("xgb_opt_strategy", "json");
@@ -691,6 +689,11 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
                 "--optimize-metric", optimizeMetric,
                 "--param-domains", paramDomains,
                 "--frequency", frequency,
+                // 选优口径：DEV 段选参 + BH-FDR；留出段只评一次
+                "--select-window", selectWindow,
+                "--fdr-alpha", std::to_string(fdrAlpha),
+                "--select-by", selectBy,
+                "--gap-bars", std::to_string(gapBars),
             };
             if (!startDate.empty()) args.insert(args.end(), {"--start-date", startDate});
             if (!endDate.empty()) args.insert(args.end(), {"--end-date", endDate});
@@ -802,13 +805,17 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
     resp["status"] = "running";
     resp["n_trials"] = nTrials;
     resp["optimize_metric"] = optimizeMetric;
+    resp["select_window"] = selectWindow;
+    resp["select_by"] = selectBy;
+    resp["fdr_alpha"] = fdrAlpha;
+    resp["gap_bars"] = gapBars;
     res.set_content(resp.dump(), "application/json");
 }
 
 void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
     // 幂等检查：只有同 kind (Train) 的活跃会话才复用，不同 kind 返回 409
     auto acquire = tryAcquireSession(MLAction::Train);
-    if (acquire.status == SessionAcquireResult::Reused) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Reused) {
         nlohmann::json resp;
         resp["session_id"] = acquire.existing->_sessionId;
         resp["status"] = "running";
@@ -816,7 +823,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         INFO("[MLTrain] Returning existing session: {}", acquire.existing->_sessionId);
         return;
     }
-    if (acquire.status == SessionAcquireResult::Conflict) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Conflict) {
         respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
         INFO("[MLTrain] Conflict: another session running (kind={})", mlActionToString(acquire.existing->_kind));
         return;
@@ -863,6 +870,9 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     }
     double testRatio = params.value("test_ratio", 0.2);
     double valRatio = params.value("val_ratio", 0.15);
+    // 单次切分时训练段尾部挖掉的间隔（唯一交易日数）；0 = 取 label.period。
+    // 与 CV 的 cv.gap.bars 同一口径，都是防标签前瞻窗口伸进下一段。
+    int gapBars = params.value("gap_bars", 0);
 
     String labelSource = labelCfg.value("source", "");
     int labelPeriod = labelCfg.value("period", 5);
@@ -917,7 +927,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
 
     // 后台训练线程：执行所有训练阶段，通过 sendSSE 推送进度
     std::thread trainThread([state, session, sendSSE, params, this,
-        script, labelCfg, xgbParams, dateRangeCfg, cvCfg, cvEnabled, testRatio, valRatio,
+        script, labelCfg, xgbParams, dateRangeCfg, cvCfg, cvEnabled, testRatio, valRatio, gapBars,
         labelSource, labelPeriod, labelType, labelShape, volK, labelSigmaMode, objective, numClass,
         startDate, endDate, frequency, strategyName, modelType]() mutable {
 
@@ -971,6 +981,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             "--num-class", std::to_string(numClass), "--model-output", state->_modelPath,
             "--params", xgbParams.dump(), "--test-ratio", std::to_string(testRatio),
             "--val-ratio", std::to_string(valRatio),
+            "--gap-bars", std::to_string(gapBars),
             "--frequency", frequency,
         };
         if (!startDate.empty()) args.insert(args.end(), {"--start-date", startDate});
@@ -1272,14 +1283,14 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
 
     // 幂等检查：只有同 kind (Collect) 的活跃会话才复用，不同 kind 返回 409
     auto acquire = tryAcquireSession(MLAction::Collect);
-    if (acquire.status == SessionAcquireResult::Reused) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Reused) {
         nlohmann::json resp;
         resp["session_id"] = acquire.existing->_sessionId;
         resp["status"] = "running";
         res.set_content(resp.dump(), "application/json");
         return;
     }
-    if (acquire.status == SessionAcquireResult::Conflict) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Conflict) {
         respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
         return;
     }
@@ -1492,14 +1503,14 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
 
     // ---- 2. 幂等检查：只有同 kind (Screen) 的活跃会话才复用，不同 kind 返回 409 ----
     auto acquire = tryAcquireSession(MLAction::Screen);
-    if (acquire.status == SessionAcquireResult::Reused) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Reused) {
         nlohmann::json resp;
         resp["session_id"] = acquire.existing->_sessionId;
         resp["status"] = "running";
         res.set_content(resp.dump(), "application/json");
         return;
     }
-    if (acquire.status == SessionAcquireResult::Conflict) {
+    if (acquire.status == SessionAcquireResult<TrainSession>::Conflict) {
         respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
         return;
     }
@@ -1729,40 +1740,8 @@ void MLHandler::handleTrainProgress(const httplib::Request& req, httplib::Respon
         return;
     }
 
-    // SSE 流：先回放历史事件，再实时推送新事件
-    res.set_header("Content-Type", "text/event-stream");
-    res.set_header("Cache-Control", "no-cache");
-    res.set_header("Connection", "keep-alive");
-    res.set_header("Access-Control-Allow-Origin", "*");
-
-    size_t replayIdx = 0;
-    res.set_chunked_content_provider("text/event-stream",
-        [session, replayIdx](size_t /*offset*/, httplib::DataSink& sink) mutable -> bool {
-            if (!sink.is_writable()) return false;
-
-            while (true) {
-                std::unique_lock<std::mutex> lk(session->_mtx);
-
-                // 回放历史事件
-                if (replayIdx < session->_eventLog.size()) {
-                    auto& ev = session->_eventLog[replayIdx++];
-                    String msg = "event:" + ev._type + "\ndata:" + ev._dataStr + "\n\n";
-                    lk.unlock();
-                    sink.write(msg.c_str(), msg.size());
-                    return true;
-                }
-
-                // 训练已完成，发送最终结果后关闭
-                if (session->_done) {
-                    lk.unlock();
-                    sink.done();
-                    return false;
-                }
-
-                // 等待新事件
-                session->_cv.wait_for(lk, std::chrono::milliseconds(500));
-            }
-        });
+    // SSE 流：先回放历史事件，再实时推送新事件（实现见 Util/JobSession）
+    ServeJobSession(res, session);
 }
 
 void MLHandler::handleTrainStatus(const httplib::Request& req, httplib::Response& res) {
@@ -1786,18 +1765,7 @@ void MLHandler::handleTrainStatus(const httplib::Request& req, httplib::Response
         return;
     }
 
-    nlohmann::json resp;
-    std::lock_guard<std::mutex> lk(session->_mtx);
-    if (!session->_done) {
-        resp["status"] = "running";
-    } else if (session->_hasError) {
-        resp = session->_result;
-        resp["status"] = "error";
-    } else {
-        resp = session->_result;
-        resp["status"] = "done";
-    }
-    res.set_content(resp.dump(), "application/json");
+    res.set_content(session->snapshot().dump(), "application/json");
 }
 
 void MLHandler::handleCancel(const httplib::Request& req, httplib::Response& res) {
@@ -1828,20 +1796,9 @@ void MLHandler::handleCancel(const httplib::Request& req, httplib::Response& res
         return;
     }
 
-    // 标记取消
-    session->_cancelled = true;
-    
-    // 终止后台 Python 进程
-    // 拷贝 shared_ptr：保证 kill() 执行期间 runner 不会被后台线程释放
-    std::shared_ptr<PythonRunner> runner;
-    {
-        std::lock_guard<std::mutex> lk(session->_mtx);
-        runner = session->_runner;
-    }
-    if (runner) {
-        INFO("[MLCancel] Killing runner for session {}", sessionId);
-        runner->kill();
-    }
+    // 标记取消并终止后台 Python 进程
+    INFO("[MLCancel] Cancelling session {}", sessionId);
+    session->cancel();
 
     nlohmann::json resp;
     resp["message"] = "cancelled";
@@ -2309,17 +2266,8 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
             res.set_content(R"({"message":"session not found"})", "application/json");
             return;
         }
-        session->_cancelled = true;
-        // 拷贝 shared_ptr：保证 kill() 执行期间 runner 不会被后台线程释放
-        std::shared_ptr<PythonRunner> runner;
-        {
-            std::lock_guard<std::mutex> lk(session->_mtx);
-            runner = session->_runner;
-        }
-        if (runner) {
-            INFO("[MLCancel] Killing runner for session {}", sessionId);
-            runner->kill();
-        }
+        INFO("[MLCancel] Cancelling session {}", sessionId);
+        session->cancel();
         nlohmann::json resp;
         resp["message"] = "cancelled";
         resp["session_id"] = sessionId;

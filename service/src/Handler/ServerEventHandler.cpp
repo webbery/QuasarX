@@ -1,4 +1,5 @@
 #include "Handler/ServerEventHandler.h"
+#include "Util/JobSession.h"
 #include "Util/system.h"
 #include "nng/nng.h"
 #include "server.h"
@@ -102,10 +103,7 @@ ServerEventHandler::~ServerEventHandler() {
 }
 
 void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res) {
-    res.set_header("Content-Type", "text/event-stream");
-    res.set_header("Cache-Control", "no-cache");
-    res.set_header("Connection", "keep-alive");
-    res.set_header("Access-Control-Allow-Origin", "*"); // 允许跨域
+    SetSseHeaders(res);  // 允许跨域
     if (!_dispather) {
         _dispather = new std::thread(&ServerEventHandler::run, this);
     }

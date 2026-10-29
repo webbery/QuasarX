@@ -1,4 +1,5 @@
 #include "Handler/PythonRunnerHandler.h"
+#include "Util/JobSession.h"
 #include "Util/PythonRunner.h"
 #include "Util/string_algorithm.h"
 #include "server.h"
@@ -31,40 +32,12 @@ void PythonRunnerHandler::post(const httplib::Request& req, httplib::Response& r
             args.push_back(a.get<std::string>());
     }
 
-    PythonRunner runner;
-    if (!runner.start(script, args, interpreter)) {
+    auto runner = std::make_shared<PythonRunner>();
+    if (!runner->start(script, args, interpreter)) {
         res.status = 500;
         res.set_content(R"({"message":"failed to start script"})", "application/json");
         return;
     }
 
-    res.set_header("Content-Type", "text/event-stream");
-    res.set_header("Cache-Control", "no-cache");
-    res.set_header("Connection", "keep-alive");
-    res.set_header("Access-Control-Allow-Origin", "*");
-
-    res.set_chunked_content_provider("text/event-stream",
-        [&](size_t offset, httplib::DataSink& sink) {
-            if (!sink.is_writable() || Server::IsExit()) {
-                runner.kill();
-                sink.done();
-                return false;
-            }
-
-            PythonOutput out;
-            if (runner.readLine(out, 5000)) {
-                if (out.type == PythonOutput::DONE) {
-                    auto msg = format_sse("done",
-                        {{"exit_code", std::to_string(out.exit_code)}});
-                    sink.write(msg.c_str(), msg.size());
-                    sink.done();
-                    return false;
-                }
-                auto msg = format_sse(
-                    out.type == PythonOutput::STDOUT ? "output" : "error",
-                    {{"line", out.line}});
-                sink.write(msg.c_str(), msg.size());
-            }
-            return true;
-        });
+    ServePythonRunner(res, runner, 5000);
 }

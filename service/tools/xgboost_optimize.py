@@ -2,9 +2,36 @@
 XGBoost Optuna 超参数自动优化 + 快速回测评估
 
 每个 Optuna trial：
-  1. 用 Python xgboost 训练模型 → 保存到 experiments/
+  1. 用 Python xgboost 训练模型（只用训练段）→ 保存到 experiments/
   2. 调 POST {base_url}/v0/backtest（快速模式：feature_cache + model_path）
-  3. 解析 summary.{metric} 作为 Optuna objective
+  3. 在**选择窗口**（DEV 段）上重算指标，作为 Optuna objective
+  4. 对各 trial 的 DEV 显著性做 BH-FDR 校正
+  5. 搜索结束后，对选中的 trial 在**留出窗口**（HOLDOUT 段）上评一次
+
+为什么要留出窗口
+----------------
+此前每个 trial 的 objective 是"整段历史回测的 summary"。回测覆盖训练数据
+之外的时间，于是**测试期参与了超参选择** —— 这是最典型的选择偏差：挑出来
+的"最优超参"里有一部分优势只是它对测试期的记忆。
+
+现在改成三段式（按唯一日期切，单位是交易日）：
+
+    TRAIN  = [0, T-gap)              训练模型
+    DEV    = [T, V-gap)              选超参（objective 只看这段）
+    HOLDOUT= [V, N)                  最终只评一次，不参与任何选择
+
+留出段是唯一无偏的读数。`selection_bias = best_dev_value - holdout_value`
+直接给出"选超参这件事本身乐观了多少"。
+
+多重检验校正
+------------
+n_trials 个 trial 是 n_trials 次"这个配置有正收益"的检验。不校正的话，
+最优 trial 的指标里有相当一部分来自运气。这里对每个 trial 的 DEV 窗口
+日均收益做 Newey-West t 检验，再对 p 值做 BH-FDR（口径与特征门禁
+`feature_screen.py` 一致），并可用 `--select-by q` 只在通过校正的 trial 里选。
+
+注意：TPE 会把新样本采到当前最优点附近，各 trial 之间并不独立，BH 在这里
+偏保守；它给出的是"在 n 次搜索下，有多少 trial 的优势站得住"的粗略判断。
 
 输入参数：
   --base-url              QuasarX 服务地址（默认 https://localhost:19107）
@@ -18,7 +45,12 @@ XGBoost Optuna 超参数自动优化 + 快速回测评估
   --vol-k                 自适应阈值系数
   --objective             XGBoost objective
   --num-class             分类数
-  --test-ratio            测试集比例
+  --test-ratio            留出段比例
+  --val-ratio             选择段（DEV）比例
+  --gap-bars              段间隔离长度（唯一交易日数）；0 = 取 label-period
+  --select-window         val=按 DEV 段选（默认）；full=整段历史（旧行为，有泄漏）
+  --fdr-alpha             BH-FDR 显著性水平（默认 0.10）
+  --select-by             dev_metric=按 DEV 指标选（默认）；q=只在 FDR 通过的 trial 里选
   --param-domains         参数搜索域 JSON
   --n-trials              Optuna 试验次数（默认 50）
   --optimize-metric       优化目标（默认 sharpe）:
@@ -31,7 +63,8 @@ XGBoost Optuna 超参数自动优化 + 快速回测评估
   {"type":"info",     "phase":"load_data", ...}
   {"type":"trial",    "number":0, "value":1.85, "params":{...}, "duration_ms":1200}
   ...
-  {"type":"result",   "best_params":{...}, "best_value":2.10, "n_trials":N, ...}
+  {"type":"result",   "best_params":{...}, "best_value":2.10, "n_trials":N,
+                      "selection":{...}}
 """
 
 import argparse
@@ -51,6 +84,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from xgb_util import add_label_args, compute_label, label_meta
 from cv_util import sort_samples_by_date, split_indices_by_date
+from backtest_metrics import compute_metrics, slice_window
+from ml_stats import bh_qvalues, newey_west_t
 
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
@@ -211,28 +246,63 @@ def load_and_prepare_data(args):
     n = len(X)
     use_val = args.val_ratio > 0 and n >= 1000
 
+    # 段间隔离长度：默认取 label_period（标签是 label_period 根 bar 的前瞻
+    # 收益，训练段的标签窗口不能伸进下一段）。
+    gap_dates = args.gap_bars if args.gap_bars and args.gap_bars > 0 else int(args.label_period)
+
     # 与 xgboost_train.py 同一口径：按唯一日期切分，避免多标的按行切分时
     # 把最后几个标的当成测试集。
     X, y, sample_dates, has_sample_dates = sort_samples_by_date(X, y, sample_dates)
 
     split = None
     if has_sample_dates:
-        split = split_indices_by_date(sample_dates, use_val, args.val_ratio, args.test_ratio)
+        split = split_indices_by_date(sample_dates, use_val, args.val_ratio,
+                                      args.test_ratio, gap_dates)
         if split is None and use_val:
             emit({"type": "warning",
-                  "message": "日期数不足以切出 train/val/test 三段，退化为 train/test 两段"})
+                  "code": "no_dev_segment",
+                  "message": "日期数不足以切出 train/val/test 三段，退化为 train/test 两段，"
+                             "此时没有 DEV 选择段"})
             use_val = False
-            split = split_indices_by_date(sample_dates, False, args.val_ratio, args.test_ratio)
+            split = split_indices_by_date(sample_dates, False, args.val_ratio,
+                                          args.test_ratio, gap_dates)
         if split is None:
             emit({"type": "warning",
+                  "code": "row_split_fallback",
                   "message": "日期切分失败，退化为按行切分（多标的场景可能出现同日跨集）"})
 
+    segments = {"gap_dates": gap_dates, "gap_shrunk": False,
+                "train_start": None, "train_end": None,
+                "dev_start": None, "dev_end": None,
+                "holdout_start": None, "holdout_end": None}
+
     if split is not None:
-        if use_val:
-            train_end, val_end = split
-        else:
-            train_end, val_end = split[0], None
+        train_end = split["train_end"]
+        val_start = split["val_start"]
+        val_end = split["val_end"]
+        test_start = split["test_start"]
         split_mode = "date"
+        segments["gap_shrunk"] = bool(split.get("gap_shrunk", False))
+        segments["gap_dates"] = int(split.get("gap_dates", gap_dates))
+
+        uniq = pd.DatetimeIndex(sorted(set(sample_dates)))
+
+        def _day(k):
+            """第 k 个唯一日期的 YYYY-MM-DD。"""
+            k = int(k)
+            if k < 0:
+                k = 0
+            if k >= len(uniq):
+                k = len(uniq) - 1
+            return str(uniq[k].date())
+
+        segments["train_start"] = _day(0)
+        segments["train_end"] = _day(split["train_date_end"] - 1)
+        if use_val and split["val_date_end"] > split["val_date_start"]:
+            segments["dev_start"] = _day(split["val_date_start"])
+            segments["dev_end"] = _day(split["val_date_end"] - 1)
+        segments["holdout_start"] = _day(split["test_date_start"])
+        segments["holdout_end"] = _day(split["n_dates"] - 1)
     else:
         if use_val:
             train_end = int(n * (1 - args.val_ratio - args.test_ratio))
@@ -240,17 +310,27 @@ def load_and_prepare_data(args):
         else:
             train_end = int(n * (1 - args.test_ratio))
             val_end = None
+        val_start = train_end
+        test_start = val_end if val_end is not None else train_end
         split_mode = "row"
 
     if use_val:
-        n_val = val_end - train_end
+        n_val = val_end - val_start
         emit({"type": "info", "phase": "split", "split_mode": split_mode,
-              "n_train": train_end, "n_val": n_val, "n_test": n - val_end, "n_features": X.shape[1]})
-        return X[:train_end], y[:train_end], X[train_end:val_end], y[train_end:val_end], X[val_end:], y[val_end:], feature_cols
-    else:
-        emit({"type": "info", "phase": "split", "split_mode": split_mode,
-              "n_train": train_end, "n_val": 0, "n_test": n - train_end, "n_features": X.shape[1]})
-        return X[:train_end], y[:train_end], None, None, X[train_end:], y[train_end:], feature_cols
+              "n_train": train_end, "n_val": n_val, "n_test": n - test_start,
+              "n_features": X.shape[1], "gap_dates": segments["gap_dates"],
+              "dev": [segments["dev_start"], segments["dev_end"]],
+              "holdout": [segments["holdout_start"], segments["holdout_end"]]})
+        return (X[:train_end], y[:train_end],
+                X[val_start:val_end], y[val_start:val_end],
+                X[test_start:], y[test_start:], feature_cols, segments)
+
+    emit({"type": "info", "phase": "split", "split_mode": split_mode,
+          "n_train": train_end, "n_val": 0, "n_test": n - test_start,
+          "n_features": X.shape[1], "gap_dates": segments["gap_dates"],
+          "dev": None, "holdout": [segments["holdout_start"], segments["holdout_end"]]})
+    return (X[:train_end], y[:train_end], None, None,
+            X[test_start:], y[test_start:], feature_cols, segments)
 
 
 def train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feature_cols):
@@ -268,7 +348,10 @@ def train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feat
     dval = xgb.DMatrix(X_val, label=y_val, feature_names=feature_cols) if X_val is not None else None
     dtest = xgb.DMatrix(X_test, label=y_test, feature_names=feature_cols) if len(X_test) > 0 else None
 
-    eval_set = dval if dval is not None else dtest
+    # eval 集只能是验证集。留出段（X_test）绝不能进 eval —— 那等于把
+    # 留出集喂给训练过程。（本函数不做 early stopping，eval 只用于监控，
+    # 但口径仍要摆正，免得以后加了 early stopping 就变成真泄漏。）
+    eval_set = dval
     evals = [(dtrain, "train")] + ([(eval_set, "eval")] if eval_set is not None else [])
     booster = xgb.train(
         xgb_params, dtrain,
@@ -300,7 +383,11 @@ def save_model_and_get_path(booster, feature_cols, args, trial_number):
 
 
 def call_fast_backtest(args, trial_model_path, trial_meta_path):
-    """调 POST /v0/backtest（快速模式），返回 summary dict"""
+    """调 POST /v0/backtest（快速模式），返回 (响应 dict, 错误信息)。
+
+    返回整个响应而不只是 summary：按窗口重算指标需要 daily_dates /
+    daily_returns，而 summary 是整段历史的汇总。
+    """
     strategy = json.loads(Path(args.fast_backtest_strategy).read_text())
 
     # 改写 XGBoost 节点的 modelFile 为 trial 模型路径（绝对路径 → 逻辑路径）
@@ -331,8 +418,91 @@ def call_fast_backtest(args, trial_model_path, trial_meta_path):
 
     if resp.status_code != 200:
         return None, f"HTTP {resp.status_code}: {resp.text[:200]}"
-    data = resp.json()
-    return data.get("summary", {}), None
+    return resp.json(), None
+
+
+def score_of(metrics: dict, metric: str) -> float:
+    """把指标转成"越大越好"的分数。
+
+    回撤在服务端是正数（max_drawdown_ratio 返回回撤幅度），直接拿它做
+    maximize 会挑出回撤最大的那组参数 —— 必须取负号统一方向。
+    """
+    v = float(metrics.get(metric, 0.0) or 0.0)
+    if metric == "max_drawdown":
+        return -v
+    return v
+
+
+def safe_round(value, digits=6):
+    """JSON 安全的四舍五入：NaN/Inf → None。
+
+    Python 的 json 会把 NaN/Inf 写成 ``NaN`` / ``Infinity``，这不是合法 JSON，
+    服务端 nlohmann::json 会直接解析失败 —— 整个 trial 的结果就丢了。
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(f, digits) if np.isfinite(f) else None
+
+
+def window_metrics(response: dict, start_date, end_date):
+    """按日期窗口重算回测指标；窗口内没有样本时返回 None。"""
+    if not response:
+        return None
+    dates = response.get("daily_dates") or []
+    rets = response.get("daily_returns") or []
+    if not dates or not rets:
+        return None
+    try:
+        window = slice_window(dates, rets, start_date, end_date)
+    except ValueError:
+        return None
+    if window.size < 2:
+        return None
+    return compute_metrics(window)
+
+
+def apply_fdr(trials_record, fdr_alpha: float) -> int:
+    """对各 trial 的 DEV 显著性做 BH-FDR 校正，回填 dev_q / q_pass。
+
+    n_trials 个 trial 就是 n_trials 次"这个配置有正收益"的检验。不校正的话，
+    最优 trial 的指标里混着运气。
+
+    注意 TPE 会把新样本采到当前最优点附近，各 trial 之间并不独立，BH 在这里
+    偏保守；它给出的是"在 n 次搜索下有多少 trial 的优势站得住"的粗略判断。
+
+    返回通过校正的 trial 数。
+    """
+    for t in trials_record:
+        t.setdefault("dev_q", None)
+        t.setdefault("q_pass", False)
+    scored = [t for t in trials_record
+              if t.get("status") == "ok" and t.get("dev_p") is not None]
+    if scored:
+        qs = bh_qvalues([t["dev_p"] for t in scored], m_tests=len(scored))
+        for t, q in zip(scored, qs):
+            t["dev_q"] = safe_round(q)
+            t["q_pass"] = bool(np.isfinite(q) and q <= fdr_alpha)
+    return int(sum(1 for t in trials_record if t.get("q_pass")))
+
+
+def select_trial(trials_record, select_by: str):
+    """按口径选出最终 trial；选不出来时返回 None。
+
+    select_by="dev_metric" —— 取 DEV 指标最高的 trial。
+    select_by="q"          —— 只在通过 BH-FDR 的 trial 里取 DEV 指标最高的；
+                               一个都没通过时返回 None（由调用方决定是否退回）。
+    """
+    ok = [t for t in trials_record if t.get("status") == "ok"]
+    if not ok:
+        return None
+    if select_by == "q":
+        candidates = [t for t in ok if t.get("q_pass")]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda t: t["dev_value"])
+    return max(ok, key=lambda t: t["dev_value"])
 
 
 def main():
@@ -340,8 +510,18 @@ def main():
     parser.add_argument("--data", required=True, help="训练数据 CSV（Python 训练用）")
     parser.add_argument("--objective", default="multi:softprob")
     parser.add_argument("--num-class", type=int, default=3)
-    parser.add_argument("--test-ratio", type=float, default=0.2)
-    parser.add_argument("--val-ratio", type=float, default=0.15, help="验证集比例（数据量 < 1000 时退化为 0）")
+    parser.add_argument("--test-ratio", type=float, default=0.2,
+                        help="留出段（HOLDOUT）比例，只用于最终评估")
+    parser.add_argument("--val-ratio", type=float, default=0.15,
+                        help="选择段（DEV）比例，用于挑选超参；数据量 < 1000 时退化为 0")
+    parser.add_argument("--gap-bars", type=int, default=0,
+                        help="段间隔离长度（唯一交易日数）；0 = 取 label-period")
+    parser.add_argument("--select-window", default="val", choices=["val", "full"],
+                        help="val=按 DEV 段选超参（默认，无泄漏）；full=整段历史（旧行为，测试期参与选择）")
+    parser.add_argument("--fdr-alpha", type=float, default=0.10,
+                        help="BH-FDR 显著性水平")
+    parser.add_argument("--select-by", default="dev_metric", choices=["dev_metric", "q"],
+                        help="dev_metric=按 DEV 指标选（默认）；q=只在 FDR 通过的 trial 里选")
     parser.add_argument("--param-domains", default="{}")
     parser.add_argument("--n-trials", type=int, default=50)
     parser.add_argument("--optimize-metric", default="sharpe",
@@ -381,16 +561,32 @@ def main():
     summary_field = METRIC_TO_SUMMARY[metric]
 
     # ── 加载训练数据 ──
-    X_train, y_train, X_val, y_val, X_test, y_test, feature_cols = load_and_prepare_data(args)
+    (X_train, y_train, X_val, y_val, X_test, y_test,
+     feature_cols, segments) = load_and_prepare_data(args)
     if len(X_train) == 0:
         emit({"type": "error", "message": "训练集为空"})
         sys.exit(1)
+
+    # 选择窗口：DEV 段。选超参只看这段，留出段不参与任何选择。
+    select_window = args.select_window
+    dev_start = segments.get("dev_start")
+    dev_end = segments.get("dev_end")
+    if select_window == "val" and not (dev_start and dev_end):
+        emit({"type": "warning",
+              "code": "no_dev_window",
+              "message": "没有可用的 DEV 选择段（样本数不足 1000 或未按日期切分），"
+                         "退化为整段历史选择 —— 该口径下测试期参与了超参选择，"
+                         "报出的指标是乐观的，不能据此下结论",
+              "detail": {"n_samples": int(len(X_train)),
+                         "min_samples": 1000,
+                         "fallback": "full"}})
+        select_window = "full"
 
     is_classification = args.label_type == "classification"
     if is_classification:
         n_classes = len(set(y_train[~np.isnan(y_train)]))
         if n_classes <= 1:
-            emit({"type": "error", "message": f"训练集标签只有 {n_classes} 个类别"})
+            emit({"type": "error", "message": "训练集标签只有 {n_classes} 个类别"})
             sys.exit(1)
         if n_classes == 2:
             args.objective = "binary:logistic"
@@ -404,16 +600,20 @@ def main():
     emit({"type": "info", "phase": "optimize_start",
           "n_trials": args.n_trials, "metric": metric, "summary_field": summary_field,
           "base_url": args.base_url, "output_dir": args.output_dir,
-          "search_params": list(domains.keys())})
+          "search_params": list(domains.keys()),
+          "select_window": select_window,
+          "dev": [dev_start, dev_end] if select_window == "val" else None,
+          "holdout": [segments.get("holdout_start"), segments.get("holdout_end")],
+          "gap_dates": segments.get("gap_dates")})
 
     # ── Optuna 搜索 ──
     total_start = time.time()
     trials_record = []
     best_value_so_far = -float("inf")
-    best_model_path = None
+    nw_lag = max(10, 2 * int(args.label_period))
 
     def objective(trial):
-        nonlocal best_value_so_far, best_model_path
+        nonlocal best_value_so_far
 
         trial_start = time.time()
         params = suggest_params(trial, domains)
@@ -432,10 +632,11 @@ def main():
         emit({"type": "trial_progress", "number": trial.number, "phase": "backtesting"})
 
         # 快速回测
-        summary, err = call_fast_backtest(args, trial_model_path, str(Path(trial_model_path).with_suffix(".meta.json")))
+        response, err = call_fast_backtest(args, trial_model_path,
+                                           str(Path(trial_model_path).with_suffix(".meta.json")))
         duration_ms = int((time.time() - trial_start) * 1000)
 
-        if err or summary is None:
+        if err or response is None:
             trial_info = {
                 "number": trial.number,
                 "value": None,
@@ -450,10 +651,55 @@ def main():
             # 返回 -inf 让 Optuna 标记为最差但不报错
             return -1e9
 
-        value = float(summary.get(summary_field, 0.0))
+        summary = response.get("summary", {}) or {}
+
+        # 选择指标：DEV 段的窗口指标；拿不到窗口就退回整段 summary
+        dev_stats = None
+        if select_window == "val":
+            dev_stats = window_metrics(response, dev_start, dev_end)
+        if dev_stats is None:
+            value = score_of(summary, metric)
+            dev_stats = {"n_days": 0}
+        else:
+            value = score_of(dev_stats, metric)
+
+        if not np.isfinite(value):
+            trial_info = {
+                "number": trial.number,
+                "value": None,
+                "best": round(best_value_so_far, 6) if best_value_so_far > -float("inf") else None,
+                "params": {k: (round(v, 6) if isinstance(v, float) else v) for k, v in params.items()},
+                "duration_ms": duration_ms,
+                "status": "failed",
+                "error": f"指标 {metric} 非有限值（{value}）",
+            }
+            trials_record.append(trial_info)
+            emit({"type": "trial", **trial_info})
+            return -1e9
+
+        # 留出段的指标（最终只报一次，不参与选择）
+        holdout_stats = window_metrics(response,
+                                       segments.get("holdout_start"),
+                                       segments.get("holdout_end"))
+        holdout_value = (score_of(holdout_stats, metric)
+                         if holdout_stats is not None else None)
+
+        # 显著性：DEV 窗口日均收益的 Newey-West t 与 p 值
+        dev_t = None
+        dev_p = None
+        if select_window == "val":
+            dates = response.get("daily_dates") or []
+            rets = response.get("daily_returns") or []
+            if dates and rets:
+                try:
+                    dev_rets = slice_window(dates, rets, dev_start, dev_end)
+                except ValueError:
+                    dev_rets = None
+                if dev_rets is not None and dev_rets.size >= 10:
+                    dev_t, dev_p = newey_west_t(dev_rets, nw_lag)
+
         if value > best_value_so_far:
             best_value_so_far = value
-            best_model_path = trial_model_path
 
         trial_info = {
             "number": trial.number,
@@ -463,6 +709,11 @@ def main():
             "duration_ms": duration_ms,
             "status": "ok",
             "summary": summary,
+            "dev_value": safe_round(value),
+            "dev_n_days": int(dev_stats.get("n_days", 0)),
+            "dev_t": safe_round(dev_t, 4),
+            "dev_p": safe_round(dev_p),
+            "holdout_value": safe_round(holdout_value),
         }
         trials_record.append(trial_info)
         emit({"type": "trial", **trial_info})
@@ -482,21 +733,53 @@ def main():
     except Exception:
         pass
 
-    best = study.best_trial
-    best_params = {k: (round(v, 6) if isinstance(v, float) else v)
-                   for k, v in best.params.items()}
+    # ── 多重检验校正 ──
+    # n_trials 个 trial 就是 n_trials 次"这个配置有正收益"的检验。不校正的话，
+    # 最优 trial 的指标里混着运气。这里对每个 trial 的 DEV 窗口日均收益做
+    # Newey-West t 检验，再对 p 值做 BH-FDR（口径与特征门禁一致）。
+    n_q_pass = apply_fdr(trials_record, args.fdr_alpha)
 
-    # 拷贝最优模型到 best.json
+    ok_trials = [t for t in trials_record if t.get("status") == "ok"]
+
+    # ── 选优 ──
+    selected = select_trial(trials_record, args.select_by)
+    if selected is None and args.select_by == "q":
+        emit({"type": "warning",
+              "code": "no_trial_passed_fdr",
+              "message": f"没有 trial 通过 BH-FDR（alpha={args.fdr_alpha}，"
+                         f"n_trials={len(ok_trials)}），退回按 DEV 指标选 —— "
+                         f"选出的最优 trial 的优势未必站得住",
+              "detail": {"fdr_alpha": args.fdr_alpha,
+                         "n_trials": len(ok_trials)}})
+        selected = select_trial(trials_record, "dev_metric")
+
+    if selected is None:
+        emit({"type": "error", "message": "没有成功的 trial"})
+        sys.exit(1)
+
+    best_params = {k: (round(v, 6) if isinstance(v, float) else v)
+                   for k, v in selected["params"].items()}
+    best_value = float(selected["dev_value"])
+    holdout_value = selected.get("holdout_value")
+    selection_bias = (best_value - float(holdout_value)
+                      if holdout_value is not None else None)
+
+    # 拷贝选中的模型到 best.json（连同 meta —— XGBoostNode 靠 meta 里的
+    # features 字段恢复推理顺序，只拷 .json 会得到一个装不上的模型）
     best_dest = Path(args.output_dir) / "best.json"
-    if best_model_path and Path(best_model_path).exists():
-        shutil.copy(best_model_path, best_dest)
+    selected_model = Path(args.output_dir) / f"trial_{selected['number']}.json"
+    if selected_model.exists():
+        shutil.copy(selected_model, best_dest)
+        meta_src = Path(args.output_dir) / f"trial_{selected['number']}.meta.json"
+        if meta_src.exists():
+            shutil.copy(meta_src, Path(args.output_dir) / "best.meta.json")
 
     emit({
         "type": "result",
         "best_params": best_params,
-        "best_value": round(best.value, 6),
-        "best_trial_number": best.number,
-        "best_model": str(best_dest) if best_model_path else None,
+        "best_value": safe_round(best_value),
+        "best_trial_number": selected["number"],
+        "best_model": str(best_dest) if best_dest.exists() else None,
         "n_trials": args.n_trials,
         "n_completed": len(study.trials),
         "trials": trials_record,
@@ -504,6 +787,23 @@ def main():
         "optimization_duration_ms": total_duration_ms,
         "metric": metric,
         "output_dir": args.output_dir,
+        "selection": {
+            "window": select_window,
+            "metric": metric,
+            "select_by": args.select_by,
+            "fdr_alpha": float(args.fdr_alpha),
+            "n_trials_scored": len(ok_trials),
+            "n_trials_q_pass": int(n_q_pass),
+            "dev_start": dev_start if select_window == "val" else None,
+            "dev_end": dev_end if select_window == "val" else None,
+            "holdout_start": segments.get("holdout_start"),
+            "holdout_end": segments.get("holdout_end"),
+            "gap_dates": segments.get("gap_dates"),
+            "best_dev_value": safe_round(best_value),
+            "holdout_value": safe_round(holdout_value),
+            "selection_bias": safe_round(selection_bias),
+            "optuna_best_trial_number": study.best_trial.number,
+        },
     })
 
 

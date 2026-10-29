@@ -86,6 +86,9 @@ def main():
     parser.add_argument("--test-ratio", type=float, default=0.2)
     parser.add_argument("--val-ratio", type=float, default=0.15,
                         help="单次切分的验证集比例；CV 时作为折内 early-stopping 比例")
+    parser.add_argument("--gap-bars", type=int, default=0,
+                        help="单次切分时训练段尾部挖掉的间隔（唯一交易日数）；"
+                             "0 = 取 label-period")
     parser.add_argument("--start-date", default="", help="训练数据开始日期 (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="", help="训练数据结束日期 (YYYY-MM-DD)")
     parser.add_argument("--frequency", default="1d", help="数据频率 (1d/1w/1M)")
@@ -160,6 +163,8 @@ def main():
         result = run_single_split(
             dataset, adapter, args.test_ratio, args.val_ratio,
             model_output=args.model_output, emit=emit,
+            label_period=args.label_period,
+            gap_dates=(args.gap_bars if args.gap_bars > 0 else None),
         )
 
     result["type"] = "result"

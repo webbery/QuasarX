@@ -10,7 +10,8 @@
 
 import numpy as np
 
-from cv_util import build_walk_forward_folds, split_indices_by_date
+from cv_util import (build_walk_forward_folds, count_label_overlap_rows,
+                     split_indices_by_date)
 from ml_metrics import (classification_metrics, ic_metrics,
                         predictions_payload, regression_metrics)
 
@@ -50,60 +51,113 @@ def _make_result(dataset, adapter, model, best_rounds, history,
 
 
 def run_single_split(dataset, adapter, test_ratio, val_ratio,
-                     model_output, emit):
-    """单次 train/val/test 时序切分（原训练路径）。"""
+                     model_output, emit, label_period=0, gap_dates=None):
+    """单次 train/val/test 时序切分（原训练路径）。
+
+    折间隔离：训练侧那一段的尾部挖掉 `gap_dates` 个交易日的间隔，避免训练
+    样本的前瞻标签窗口伸进验证/测试段。此前这条路径**不留 gap** —— 训练段
+    最后 `label_period` 根 bar 的标签覆盖到了测试段，是泄漏来源之一。
+    间隔按唯一日期计（多标的场景下按行号隔没有意义）。
+
+    gap_dates 为 None 时取 label_period（标签是 label_period 根 bar 的前瞻
+    收益时，这是保证不污染的最小间隔）。
+
+    没有日期列时无法按日期留 gap，退化为按行切分并告警，泄漏检查一并标记为
+    不可用，而不是假装通过。
+    """
     X, y = dataset.X, dataset.y
     n = len(X)
     if n == 0:
         raise ValueError("训练数据为空")
 
+    if gap_dates is None:
+        gap_dates = int(label_period or 0)
+    gap_dates = max(0, int(gap_dates))
     use_val = val_ratio > 0 and n >= 1000
     split = None
     if dataset.dates is not None and len(dataset.dates) == n:
-        split = split_indices_by_date(dataset.dates, use_val, val_ratio, test_ratio)
+        split = split_indices_by_date(dataset.dates, use_val, val_ratio,
+                                      test_ratio, gap_dates)
         if split is None and use_val:
             emit({"type": "warning",
+                  "code": "no_val_segment",
                   "message": "日期数不足以切出 train/val/test 三段，退化为 train/test 两段"})
             use_val = False
-            split = split_indices_by_date(dataset.dates, False, val_ratio, test_ratio)
+            split = split_indices_by_date(dataset.dates, False, val_ratio,
+                                          test_ratio, gap_dates)
         if split is None:
             emit({"type": "warning",
+                  "code": "row_split_fallback",
                   "message": "日期切分失败，退化为按行切分（多标的场景可能出现同日跨集）"})
 
     if split is not None:
-        if use_val:
-            train_end, val_end = split
-        else:
-            train_end, val_end = split[0], None
+        train_end = split["train_end"]
+        val_start = split["val_start"]
+        val_end = split["val_end"]
+        test_start = split["test_start"]
         split_mode = "date"
+        gap_applied = True
     else:
+        # 没有可用日期：无法按日期留 gap，只能按行切分
         if use_val:
             train_end = int(n * (1 - val_ratio - test_ratio))
             val_end = int(n * (1 - test_ratio))
         else:
             train_end = int(n * (1 - test_ratio))
             val_end = None
+        val_start = train_end
+        test_start = val_end if val_end is not None else train_end
         split_mode = "row"
+        gap_applied = False
+        emit({"type": "warning",
+              "code": "gap_not_applicable",
+              "message": f"无日期列，无法留 {gap_dates} 根 bar 的折间间隔；"
+                         "标签前瞻窗口可能伸进测试段",
+              "detail": {"gap_dates": gap_dates, "label_period": int(label_period or 0)}})
 
     if use_val:
-        X_train, X_val, X_test = X[:train_end], X[train_end:val_end], X[val_end:]
-        y_train, y_val, y_test = y[:train_end], y[train_end:val_end], y[val_end:]
-        test_start = val_end
+        X_train, X_val, X_test = X[:train_end], X[val_start:val_end], X[test_start:]
+        y_train, y_val, y_test = y[:train_end], y[val_start:val_end], y[test_start:]
         n_val = len(X_val)
     else:
         X_val, y_val = None, None
-        X_train, X_test = X[:train_end], X[train_end:]
-        y_train, y_test = y[:train_end], y[train_end:]
-        test_start = train_end
+        X_train, X_test = X[:train_end], X[test_start:]
+        y_train, y_test = y[:train_end], y[test_start:]
         n_val = 0
 
     test_dates = []
     if dataset.dates is not None and hasattr(dataset.dates, "strftime"):
         test_dates = dataset.dates[test_start:].strftime("%Y-%m-%d").tolist()
 
+    # 泄漏检查：训练/验证样本的前瞻标签窗口伸进下一段的行数
+    leakage_checks = {
+        "gap_ge_label_period": bool(gap_dates >= int(label_period or 0)),
+        "gap_dates": int(gap_dates),
+        "gap_applied": bool(gap_applied),
+        "overlap_rows": None,
+        "oof_rows": int(len(X_test)),
+    }
+    if split is not None and split_mode == "date":
+        _, date_codes = _date_codes(dataset.dates)
+        train_mask = np.zeros(n, dtype=bool)
+        train_mask[:train_end] = True
+        # 训练段之后的第一段：有三段时是验证段，两段时直接是测试段
+        next_after_train = (split["val_date_start"] if use_val
+                            else split["test_date_start"])
+        overlap = count_label_overlap_rows(
+            date_codes, train_mask, next_after_train, label_period)
+        if use_val:
+            val_mask = np.zeros(n, dtype=bool)
+            val_mask[val_start:val_end] = True
+            overlap += count_label_overlap_rows(
+                date_codes, val_mask, split["test_date_start"], label_period)
+        leakage_checks["overlap_rows"] = int(overlap)
+        leakage_checks["gap_shrunk"] = bool(split.get("gap_shrunk", False))
+
     emit({"type": "progress", "phase": "split",
           "n_train": len(X_train), "n_val": n_val, "n_test": len(X_test),
-          "n_features": X.shape[1], "split_mode": split_mode})
+          "n_features": X.shape[1], "split_mode": split_mode,
+          "gap_dates": gap_dates, "overlap_rows": leakage_checks["overlap_rows"]})
 
     fit = adapter.fit(
         X_train, y_train, X_val, y_val,
@@ -134,6 +188,7 @@ def run_single_split(dataset, adapter, test_ratio, val_ratio,
         split_mode=split_mode,
     )
     result["model_path"] = model_output
+    result["leakage_checks"] = leakage_checks
     return result
 
 
@@ -206,6 +261,7 @@ def run_walk_forward(dataset, adapter, cv_cfg, label_period,
     fold_results = []
     fold_rounds = []
     last_payload = None
+    overlap_rows_total = 0
 
     for f in folds:
         f_start, f_end = f["train_start"], f["train_end"]
@@ -256,6 +312,13 @@ def run_walk_forward(dataset, adapter, cv_cfg, label_period,
         if np.any(oof_seen[oos_mask]):
             raise ValueError(f"fold {f['index']} 的 OOS 与之前的折重叠，OOF 无法唯一归属")
 
+        # 泄漏检查：整段训练区里标签窗口伸进本折 OOS 的样本行数。
+        # gap >= label_period 时恒为 0 —— 这是算出来的，不是写死的。
+        train_seg_mask = (date_codes >= f_start) & (date_codes < f_end)
+        overlap_rows = count_label_overlap_rows(
+            date_codes, train_seg_mask, f["oos_start"], label_period)
+        overlap_rows_total += int(overlap_rows)
+
         raw = adapter.predict(fit.model, X[oos_mask])
         score, pred_idx, proba = adapter.decode(raw, dataset.classes)
 
@@ -294,6 +357,7 @@ def run_walk_forward(dataset, adapter, cv_cfg, label_period,
             "best_rounds": int(fit.best_rounds),
             "metrics": metrics,
             "ic": ic,
+            "overlap_rows": int(overlap_rows),
         })
 
         last_payload = {
@@ -356,7 +420,9 @@ def run_walk_forward(dataset, adapter, cv_cfg, label_period,
         "oof_ic": oof_ic,
         "leakage_checks": {
             "gap_ge_label_period": bool(gap_bars >= int(label_period)),
-            "overlap_rows": 0,
+            "gap_dates": int(gap_bars),
+            "gap_applied": True,
+            "overlap_rows": int(overlap_rows_total),
             "oof_rows": n_oof,
         },
     }

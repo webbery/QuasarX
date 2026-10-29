@@ -16,6 +16,12 @@ export interface TrainLog {
   step: string
   level: 'info' | 'warning' | 'error'
   line: string
+  /**
+   * 结构化告警码。Python 侧对"会改变结论"的软失败会带 code，
+   * 前端据此做差异化提示（而不是把所有警告都当成同一句话）。
+   * 例：no_dev_window —— 没有 DEV 选择段，指标口径退化为整段历史（乐观）。
+   */
+  code?: string
 }
 
 export interface LearningCurvePoint {
@@ -457,6 +463,8 @@ export function useMLState() {
   const optimizeRunning = ref(false)
   const optimizeTrials = ref<OptimizeTrial[]>([])
   const optimizeProgress = ref('')
+  /** 优化过程中的告警。优化面板常驻展示，不依赖训练日志面板是否可见。 */
+  const optimizeLogs = ref<TrainLog[]>([])
 
   const DEFAULT_PARAM_DOMAINS: Record<string, { min: number; max: number; step?: number; log?: boolean; enabled: boolean }> = {
     learning_rate:    { min: 0.005, max: 0.3,  log: true,     enabled: true },

@@ -1,12 +1,10 @@
 #pragma once
 #include "HttpHandler.h"
+#include "Util/JobSession.h"
 #include <xgboost/c_api.h>
 #include <xgboost/version_config.h>
 #include <atomic>
 #include <mutex>
-#include <condition_variable>
-#include <queue>
-#include <functional>
 
 class QNode;
 
@@ -29,15 +27,6 @@ inline ModelType stringToModelType(const String& s) {
     if (s == "narx") return ModelType::NARX;
     return ModelType::XGBoost;  // 默认
 }
-
-// ML 任务类型：用于会话幂等检查，不同 kind 的任务不能共享同一个 session
-enum class MLAction : uint8_t {
-    Unknown = 0,
-    Train,
-    Optimize,
-    Collect,
-    Screen,
-};
 
 inline String mlActionToString(MLAction a) {
     switch (a) {
@@ -78,68 +67,8 @@ struct CachedMLModel {
     }
 };
 
-// 训练会话：记录事件历史，支持 SSE 重连回放
+// 训练会话：在通用 JobSession 之上记录 ML 任务归属与阶段产物。
 class PythonRunner;  // forward declaration
-
-struct TrainSession {
-    String _sessionId;
-    MLAction _kind = MLAction::Unknown;  // 会话归属的 action，用于幂等检查
-    std::atomic<bool> _done{false};
-    std::atomic<bool> _cancelled{false};
-    
-    // 后台 Python 进程句柄，用于 cancel 时终止子进程。
-    // 用 shared_ptr：cancel 线程调用 kill() 期间，后台线程可能已经跑完并释放自己的引用，
-    // 裸指针会导致 use-after-free。
-    std::shared_ptr<PythonRunner> _runner;
-
-    std::mutex _mtx;
-    std::condition_variable _cv;
-
-    // 事件历史（用于重连后回放）
-    // 存储预序列化的 JSON 字符串，避免 replay 时 dump 已损坏的 json 对象
-    struct Event { String _type; String _dataStr; };
-    Vector<Event> _eventLog;
-
-    // 最终结果（训练完成后设置）
-    nlohmann::json _result;
-    bool _hasError = false;
-
-    // 特征收集阶段产出（collect 完成后设置，train 可复用）
-    String _csvPath;
-    nlohmann::json _featureStats;
-
-    // 线程安全地推送事件
-    void pushEvent(const String& type, const nlohmann::json& data) {
-        String dataStr;
-        try {
-            dataStr = data.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-        } catch (...) {
-            dataStr = "{}";
-        }
-        std::lock_guard<std::mutex> lk(_mtx);
-        _eventLog.push_back({type, std::move(dataStr)});
-        _cv.notify_all();
-    }
-
-    void finish(const nlohmann::json& res, bool error = false) {
-        std::lock_guard<std::mutex> lk(_mtx);
-        _result = res;
-        _hasError = error;
-        _done = true;
-        _cv.notify_all();
-    }
-};
-
-// 会话获取结果：用于幂等检查
-struct SessionAcquireResult {
-    enum Status {
-        CanCreate,   // 可以创建新会话（无活跃会话或活跃会话已 done）
-        Reused,      // 同 kind 的活跃会话存在，可复用
-        Conflict     // 不同 kind 的活跃会话存在，冲突
-    };
-    Status status;
-    std::shared_ptr<TrainSession> existing;  // Reused 或 Conflict 时非空
-};
 
 class MLHandler : public HttpHandler {
 public:
@@ -171,7 +100,7 @@ private:
     void handleUpdateMeta(const nlohmann::json& params, httplib::Response& res);
 
     // 尝试获取会话槽：检查当前活跃会话，返回 CanCreate/Reused/Conflict
-    static SessionAcquireResult tryAcquireSession(MLAction kind);
+    static SessionAcquireResult<TrainSession> tryAcquireSession(MLAction kind);
 
     // 构建 409 冲突响应：当有其他 ML 会话正在运行时
     static void respondConflict(httplib::Response& res, const String& sessionId, MLAction kind);

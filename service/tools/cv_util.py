@@ -7,32 +7,79 @@ matrix 模式下同一天会有多个标的的多行样本，按行号切会把�
 
 Phase 1 的 walk-forward 折计划也放在本模块；评估指标和 NW t 在
 ml_metrics.py，Dataset 组装在 ml_dataset.py。
+
+折间隔离（gap / purge）
+------------------------
+标签是 horizon 根 bar 的前瞻收益时，相邻两段之间必须留出 horizon 根 bar，
+否则训练样本的标签窗口会伸进下一段，看到下一段的价格。walk-forward 的
+折计划（``build_walk_forward_folds``）一直按这个规则留 gap；单次切分
+（``split_indices_by_date``）此前**没有**留 gap，是泄漏来源之一。
+
+``count_label_overlap_rows`` 把"泄漏了多少行"算出来，让泄漏检查从
+硬编码的字面量变成真实统计。
 """
 
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence
 
 import numpy as np
 
-# (train_end, val_end) 或 (split, None)
-Split = Optional[Tuple[int, Optional[int]]]
+
+def _floor_ratio(n: int, frac: float) -> int:
+    """按比例取整（向下），并抵消浮点相减带来的边界误差。
+
+    ``1.0 - 0.15 - 0.2`` 在二进制浮点下是 0.6499999999999999，于是
+    ``int(100 * (1 - 0.15 - 0.2))`` 得 64 而不是 65 —— 切分边界与文档写的
+    比例差一天。加一个极小的 epsilon 只影响"恰好落在整数边界"的情形，
+    其余取值不变。
+    """
+    return int(n * frac + 1e-9)
 
 
 def split_indices_by_date(dates: Sequence, use_val: bool,
-                          val_ratio: float, test_ratio: float) -> Split:
-    """按唯一日期计算 train/val/test 的行边界。
+                          val_ratio: float, test_ratio: float,
+                          gap_dates: int = 0) -> Optional[dict]:
+    """按唯一日期计算 train/val/test 的行边界，并预留折间间隔。
 
     参数
     ----
     dates : 已按时间升序排列的样本日期（可重复；同一个值代表同一天的多条样本）
     use_val : 是否切出验证集
     val_ratio, test_ratio : 验证/测试集的日期占比
+    gap_dates : 相邻两段之间被完全跳过的**日期数**（purge）。
 
     返回
     ----
-    use_val=True  : (train_end, val_end)，三段为 [0,train_end)、
-                    [train_end,val_end)、[val_end,n)
-    use_val=False : (split, None)，两段为 [0,split)、[split,n)
+    dict，键：
+      train_end  训练段结束行号（不含）  训练 = [0, train_end)
+      val_start  验证段起始行号（含）      验证 = [val_start, val_end)
+      val_end    验证段结束行号（不含）
+      test_start 测试段起始行号（含）      测试 = [test_start, n)
+      train_date_end / val_date_end  以唯一日期计的段边界下标
+      gap_dates  实际生效的间隔日期数
+      n_dates    唯一日期总数
     日期数不足或无法切出非空段时返回 None。
+
+    关于 gap_dates
+    --------------
+    标签是 horizon 根 bar 的前瞻收益时，第 d 天的标签覆盖 [d, d+horizon]。
+    要让训练段的标签窗口不伸进下一段，训练侧的段必须从尾部挖掉 horizon
+    根 bar，所以 gap_dates 应取 label_period。
+
+    purge 语义：间隔从**训练侧那一段的尾部**挖掉，留出段保持完整的名义跨度
+
+        训练段 = [0, T-gap)
+        验证段 = [T, V-gap)
+        测试段 = [V, N)          ← 完整，不被间隔截短
+
+    留出集是唯一无偏的读数，不该被间隔切掉尾巴；而训练段少几天无关紧要。
+    这与 walk-forward 折计划的 ``train_end = oos_start - gap`` 同一口径。
+
+    间隔按**日期**而不是行号计：多标的场景下同一天有多个标的的多行样本，
+    按行号隔 horizon 行只能剔掉某一个标的的若干行，起不到隔离作用。
+
+    数据不够放间隔时，间隔会被压缩到"刚好放得下"，并在返回值里用
+    ``gap_shrunk`` 标出来 —— 压缩后可能仍有泄漏，由调用方用
+    ``count_label_overlap_rows`` 如实报出。
 
     切分边界永远落在某个日期的第一行，因此同一天的所有样本必然在同一段。
     """
@@ -51,35 +98,101 @@ def split_indices_by_date(dates: Sequence, use_val: bool,
     if n_dates < 2:
         return None
 
+    gap = max(0, int(gap_dates or 0))
+
     def row_at(k: int) -> int:
-        return first_idx[k] if k < n_dates else n
+        return first_idx[k] if 0 <= k < n_dates else n
+
+    def _pack(train_end_k, val_start_k, val_end_k, test_start_k,
+              eff_gap, has_val, has_test):
+        """把日期边界翻成行边界并做一致性检查。
+
+        purge 语义：间隔从**训练侧那一段的尾部**挖掉，而不是在两段之间插洞。
+        这样留出段（test）保持完整的名义跨度 —— 留出集是唯一无偏的读数，
+        不该被间隔截短；而训练段少几天无关紧要。
+
+          训练段 = [0, T-gap)
+          验证段 = [T, V-gap)
+          测试段 = [V, N)          ← 完整名义跨度
+
+        污染判据：第 d 天的标签覆盖 [d, d+label_period]，因此
+            a + label_period <= b   （训练段末 a，验证段首 b）
+            c + label_period <= d   （验证段末 c，测试段首 d）
+        取 gap = label_period 时两条恰好成立。
+        """
+        train_end = row_at(train_end_k)
+        val_start = row_at(val_start_k)
+        val_end = row_at(val_end_k)
+        test_start = row_at(test_start_k) if has_test else n
+        if not (0 < train_end < n):
+            return None
+        if has_val and not (train_end <= val_start <= val_end <= n):
+            return None
+        if has_test and not (0 < test_start <= n):
+            return None
+        return {
+            "train_end": int(train_end),
+            "val_start": int(val_start),
+            "val_end": int(val_end),
+            "test_start": int(test_start),
+            "train_date_end": int(train_end_k),
+            "val_date_start": int(val_start_k),
+            "val_date_end": int(val_end_k),
+            "test_date_start": int(test_start_k) if has_test else int(n_dates),
+            "gap_dates": int(eff_gap),
+            "gap_requested": int(gap),
+            "gap_shrunk": bool(eff_gap < gap),
+            "n_dates": int(n_dates),
+        }
 
     if use_val:
         if test_ratio <= 0:
-            # 保留“test_ratio=0 即不评估测试集”的旧语义：val 一直延伸到末尾
-            train_k = int(n_dates * (1.0 - val_ratio))
-            train_k = min(max(train_k, 1), n_dates - 1)
-            return row_at(train_k), n
-        train_k = int(n_dates * (1.0 - val_ratio - test_ratio))
-        val_k = int(n_dates * (1.0 - test_ratio))
-        # 每段至少留一个日期；val 段必须非空，且测试段非空
-        train_k = min(max(train_k, 1), n_dates - 1)
-        val_k = min(max(val_k, train_k + 1), n_dates - 1)
-        if val_k <= train_k:
-            return None
-        train_end, val_end = row_at(train_k), row_at(val_k)
-        if not (0 < train_end < val_end < n):
-            return None
-        return train_end, val_end
+            # 保留"test_ratio=0 即不评估测试集"的旧语义：val 一直延伸到末尾
+            T = _floor_ratio(n_dates, 1.0 - val_ratio)
+            T = min(max(T, 1), n_dates - 1)
+            eff_gap = min(gap, max(T - 1, 0))
+            return _pack(T - eff_gap, T, n_dates, n_dates,
+                         eff_gap, has_val=True, has_test=False)
+
+        T = _floor_ratio(n_dates, 1.0 - val_ratio - test_ratio)   # 训练段名义末尾
+        V = _floor_ratio(n_dates, 1.0 - test_ratio)                # 测试段名义起点
+        T = min(max(T, 1), n_dates - 1)
+        V = min(max(V, T + 1), n_dates - 1)
+        # 间隔要放得下：训练段至少留 1 天，验证段至少留 1 天
+        max_gap = max(min(T - 1, V - T - 1), 0)
+        eff_gap = min(gap, max_gap)
+        return _pack(T - eff_gap, T, V - eff_gap, V,
+                     eff_gap, has_val=True, has_test=True)
 
     if test_ratio <= 0:
-        return n, None
-    split_k = int(n_dates * (1.0 - test_ratio))
-    split_k = min(max(split_k, 1), n_dates - 1)
-    split = row_at(split_k)
-    if not (0 < split < n):
         return None
-    return split, None
+    T = _floor_ratio(n_dates, 1.0 - test_ratio)
+    T = min(max(T, 1), n_dates - 1)
+    eff_gap = min(gap, max(T - 1, 0))
+    return _pack(T - eff_gap, T - eff_gap, T - eff_gap, T,
+                 eff_gap, has_val=False, has_test=True)
+
+
+def count_label_overlap_rows(date_codes, fit_mask, next_start_idx: int,
+                              label_period: int) -> int:
+    """统计训练集中"标签窗口伸进下一段"的样本行数。
+
+    第 d 天的标签覆盖 [d, d+label_period]。下一段从第 next_start_idx 天
+    开始，所以当 d + label_period >= next_start_idx 时，该训练样本的标签
+    窗口已经看到了下一段的价格 —— 这就是折间泄漏。
+
+    next_start_idx 是以**唯一日期**计的下标（与 split_indices_by_date
+    返回的 train_date_end / oos_start 同一口径）。
+
+    返回污染的训练行数；label_period <= 0 时返回 0。
+    """
+    if label_period is None or int(label_period) <= 0:
+        return 0
+    codes = np.asarray(date_codes)
+    mask = np.asarray(fit_mask, dtype=bool)
+    lo = int(next_start_idx) - int(label_period)
+    return int((mask & (codes >= lo)).sum())
+
 
 
 def sort_samples_by_date(X, y, dates, *extra):
