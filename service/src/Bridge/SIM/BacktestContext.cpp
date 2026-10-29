@@ -81,20 +81,34 @@ void BacktestContext::setPosition(symbol_t symbol, int64_t qty) {
     _positionMgr.SetPosition(symbol, qty);
 }
 
-void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price) {
+void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price,
+                                     CreditAction credit, double marginRatio) {
+    // 只有显式的融券卖出（ShortSell）才允许在无多仓时开出负仓。
+    // 普通卖单（credit=None）在无持仓时仍然被拒绝 —— 现有多头回测行为不变。
+    bool allowShort = (credit == CreditAction::ShortSell);
+
     // 调用 StockPositionManager 执行持仓变动，返回费用明细
-    TradeFees fees = _positionMgr.AdjustPosition(symbol, delta, price);
-    
+    TradeFees fees = _positionMgr.AdjustPosition(symbol, delta, price, allowShort);
+
     // 从 CapitalPool 扣/加资金
     if (_capitalPool && !_strategyNameForCapital.empty()) {
         double amount = std::abs(delta) * price;
         if (delta > 0) {
             // 买入：扣资金 = amount + fees
-            _capitalPool->updateAvailable(_strategyNameForCapital, -(amount + fees.total()));
+            // 融资买入只占用保证金部分，其余为借入现金（不占用可用资金）
+            double cashOut = (credit == CreditAction::MarginBuy)
+                                 ? amount * std::clamp(marginRatio, 0.0, 1.0)
+                                 : amount;
+            _capitalPool->updateAvailable(_strategyNameForCapital, -(cashOut + fees.total()));
         } else if (delta < 0) {
             // 卖出：加资金 = amount - fees
             _capitalPool->updateAvailable(_strategyNameForCapital, amount - fees.total());
         }
+    }
+
+    // 信用敞口回写（融资余额 / 在借股数 / 开空均价）
+    if (credit != CreditAction::None) {
+        applyCreditFill(get_symbol(symbol), credit, std::abs(delta), price, marginRatio);
     }
 }
 

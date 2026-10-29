@@ -1,11 +1,11 @@
 #pragma once
-#include "StrategyNode.h"
+#include "Nodes/SignalNodeBase.h"
 #include "Util/system.h"
 
 class FormulaParser;
 class Server;
 // 构建买入/卖出信号
-class SignalNode: public QNode {
+class SignalNode: public SignalNodeBase {
 public:
     RegistClassName(SignalNode);
     static const nlohmann::json getParams();
@@ -13,9 +13,8 @@ public:
     SignalNode(Server* server);
     ~SignalNode();
 
-    virtual bool Init(const nlohmann::json& config);
+    virtual bool Init(const nlohmann::json& config) override;
     virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
-    virtual Map<String, ArgType> out_elements();
 
     bool ParseBuyExpression(const String& expression);
     bool ParseSellExpression(const String& expression);
@@ -23,16 +22,11 @@ public:
     Set<symbol_t> GetPool() {
         return {_pools.begin(), _pools.end()};
     }
+protected:
+    String nodeTypeName() const override { return className(); }
 private:
-    /// 确保可做空标的列表已加载（如果 allowShort=true）
-    void ensureMarginStockData();
-
-    Server* _server;
     FormulaParser* _buyParser;
     FormulaParser* _sellParser;
-    Vector<symbol_t> _pools;
-    bool _allowShort = false;  // 是否允许做空
     String _buyExpression;     // 原始买入表达式（用于日志）
     String _sellExpression;    // 原始卖出表达式（用于日志）
-    Set<symbol_t> _shortableSymbols;  // 可做空标的集合（allowShort=true 时有效）
 };

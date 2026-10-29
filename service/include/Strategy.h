@@ -67,6 +67,7 @@ enum class StrategyNodeType {
     Stack,
     Test,
     Spread,     // 价差计算节点（配对交易）
+    Pair,       // 配对节点（按偏离度产出两腿动作）
     Protection, // 风控保护节点（止损/止盈/追踪/时间）
     EMD,        // 经验模态分解节点（信号处理）
     HMM,        // 隐马尔可夫节点（因果推理：市场状态识别）

@@ -105,6 +105,8 @@ KNOWN_PARAMS = {
     "signal": {"buy", "sell", "allowShort"},
     "portfolio": {"positionRatio", "allowShort", "max_single_pct", "max_total_pct",
                   "sizing_method", "volatility_target"},
+    "spread": {"method", "window", "beta", "symbolA", "priceField"},
+    "pair": {"entryZ", "exitZ", "stopZ", "maxHoldBars", "zField", "allowShort"},
     # 成本四项在 StrategySubSystem.cpp 读取，slippageModel 在 Strategy.cpp 读取
     "execution": {"commission", "stampDuty", "minFee", "slippage", "slippageModel",
                   "type"},
@@ -243,11 +245,18 @@ def signal_node(nid, symbol, *, buy="true", sell="false", allow_short=None,
 
 
 def portfolio_node(nid, *, position_ratio=1.0, allow_short=None, label="投资组合",
-                   position=None):
-    """投资组合节点。position_ratio 是仓位比例 (0.0~1.0)。"""
+                   sizing_method=None, position=None):
+    """投资组合节点。position_ratio 是仓位比例 (0.0~1.0)。
+
+    `sizing_method` 服务端取值：equal（默认）/ kelly / volatility_target /
+    strength。strength 按上游发布的 ``{symbol}.strength`` 归一化分配资金，
+    配对策略用它实现按对冲系数分配两腿名义金额。
+    """
     params = {"positionRatio": P.number(position_ratio)}
     if allow_short is not None:
         params["allowShort"] = P.boolean(allow_short)
+    if sizing_method is not None:
+        params["sizing_method"] = P.select(sizing_method)
     return _node(nid, "portfolio", label, params, position)
 
 
@@ -371,6 +380,97 @@ def protection_node(nid, *, label="风控保护", stop_loss=None, take_profit=No
         if spec is not None:
             params[key] = dict(spec)
     return _node(nid, "protection", label, params, position)
+
+
+def spread_node(nid, *, method="rolling_regression", window=60, beta=1.0,
+                symbol_a=None, price_field="close", label="价差",
+                position=None):
+    """价差节点（配对交易第一层）。
+
+    服务端读 method / window / beta / symbolA / priceField 五个参数。
+    `symbol_a` 指定分子腿（价差 = P_A - β·P_B 的 A）；为 None 时按上游发现顺序。
+    """
+    params = {
+        "method": P.select(method),
+        "window": P.number(window),
+        "beta": P.number(beta),
+        "priceField": P.text(price_field),
+    }
+    if symbol_a is not None:
+        params["symbolA"] = P.text(symbol_a)
+    return _node(nid, "spread", label, params, position)
+
+
+def pair_node(nid, *, entry_z=2.0, exit_z=0.5, stop_z=3.5, max_hold_bars=0,
+              z_field="pair_z", allow_short=True, label="配对",
+              position=None):
+    """配对节点（配对交易第二层）。
+
+    `z_field` 必须与上游 ZScore 节点的 label 一致 —— 节点按
+    ``{symbol}.{z_field}`` 读偏离度。
+    """
+    params = {
+        "entryZ": P.number(entry_z),
+        "exitZ": P.number(exit_z),
+        "stopZ": P.number(stop_z),
+        "maxHoldBars": P.number(max_hold_bars),
+        "zField": P.text(z_field),
+        "allowShort": P.boolean(allow_short),
+    }
+    return _node(nid, "pair", label, params, position)
+
+
+def pair_trading_strategy(strategy_id, symbol_a, symbol_b, *, name=None,
+                          version=1, description="配对交易策略", capital=200000,
+                          backtest=None, source="A_hfq",
+                          method="rolling_regression", window=60,
+                          z_window=20, entry_z=2.0, exit_z=0.5, stop_z=3.5,
+                          max_hold_bars=0, allow_short=True,
+                          sizing_method="strength", position_ratio=1.0,
+                          commission=0.0003, stamp_duty=0.001, min_fee=5,
+                          slippage=0.0005, debug_label=None):
+    """产出完整的配对交易策略图。
+
+    拓扑::
+
+        Input(A) ─┐
+                  ├─► Spread ─► Function(ZScore) ─► Pair ─► Portfolio ─► Execution
+        Input(B) ─┘                                   │
+                                                        └─► Debug（可选）
+
+    z 由 FunctionNode(ZScore) 产出，节点 label 取 z_field（默认 "pair_z"），
+    Pair 节点按 ``{symbol}.{z_field}`` 读取。
+
+    `sizing_method="strength"` 时两腿按对冲系数分配名义金额
+    （分子腿权重 1、分母腿权重 |β|），由 Pair 节点发布的 strength 决定。
+    """
+    z_field = "pair_z"
+    builder = StrategyBuilder(strategy_id, name, version=version,
+                              description=description, capital=capital,
+                              backtest=backtest, source=source)
+    builder.input("1", symbol=symbol_a)
+    builder.input("2", symbol=symbol_b)
+    builder.spread("3", method=method, window=window, symbol_a=symbol_a)
+    builder.function("4", "ZScore", z_window, label=z_field)
+    builder.pair("5", entry_z=entry_z, exit_z=exit_z, stop_z=stop_z,
+                 max_hold_bars=max_hold_bars, z_field=z_field,
+                 allow_short=allow_short)
+    builder.portfolio("6", position_ratio=position_ratio, allow_short=allow_short,
+                      sizing_method=sizing_method)
+    builder.execution("7", commission=commission, stamp_duty=stamp_duty,
+                      min_fee=min_fee, slippage=slippage)
+
+    builder.connect("1", "3", prop="close")
+    builder.connect("2", "3", prop="close")
+    builder.connect("3", "4", prop="pair_spread")
+    builder.connect("4", "5", prop=z_field)
+    builder.connect("5", "6")
+    builder.connect("6", "7")
+
+    if debug_label:
+        builder.debug("8", debug_label)
+        builder.connect("5", "8")
+    return builder.build()
 
 
 # ----------------------------------------------------------------------
@@ -515,6 +615,12 @@ class StrategyBuilder:
 
     def portfolio(self, nid, **kwargs):
         return self.add(portfolio_node(nid, **kwargs))
+
+    def spread(self, nid, **kwargs):
+        return self.add(spread_node(nid, **kwargs))
+
+    def pair(self, nid, **kwargs):
+        return self.add(pair_node(nid, **kwargs))
 
     def execution(self, nid, **kwargs):
         return self.add(execution_node(nid, **kwargs))

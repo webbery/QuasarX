@@ -25,6 +25,7 @@
 #include "Nodes/ExecuteNode.h"
 #include "Nodes/PortfolioNode.h"
 #include "Nodes/SpreadNode.h"
+#include "Nodes/PairNode.h"
 #include "Nodes/ProtectionNode.h"
 #include "Nodes/EMDNode.h"
 #include "Nodes/HMMNode.h"
@@ -51,6 +52,7 @@ namespace {
             {"portfolio", StrategyNodeType::Portfolio},
             {"test", StrategyNodeType::Test},
             {"spread", StrategyNodeType::Spread},
+            {"pair", StrategyNodeType::Pair},
             {"protection", StrategyNodeType::Protection},
             {"emd", StrategyNodeType::EMD},
             {"hmm", StrategyNodeType::HMM},
@@ -175,6 +177,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Spread:
             nodeInstance = generate_node<SpreadNode>(node["id"]);
+            break;
+        case StrategyNodeType::Pair:
+            nodeInstance = generate_node<PairNode>(node["id"], server);
             break;
         case StrategyNodeType::Protection:
             nodeInstance = generate_node<ProtectionNode>(node["id"], server);

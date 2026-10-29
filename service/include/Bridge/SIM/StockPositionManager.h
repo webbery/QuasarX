@@ -30,19 +30,25 @@ public:
 
     // === 持仓操作 ===
 
-    /// @brief 买入（增加多头持仓，返回费用明细）
+    /// @brief 买入（增加多头持仓；有空仓时为买券还券，返回费用明细）
     TradeFees Buy(symbol_t symbol, int64_t qty, double price);
 
-    /// @brief 卖出（减少多头持仓，返回费用明细和实际卖出数量）
+    /// @brief 卖出（平多 / 开空，返回费用明细和实际卖出数量）
     struct SellResult {
         TradeFees fees;
         int64_t actualQty = 0;  // 实际卖出数量（可能因 T+1 或持仓不足而减少）
         double proceeds = 0.0;  // 净收入 = amount - fees
+        bool isShortOpen = false;  // true = 本次卖出开出了空仓（融券卖出）
     };
-    SellResult Sell(symbol_t symbol, int64_t qty, double price);
+    ///
+    /// allowShort=false（默认）时，无多仓的卖出直接拒绝 —— 保持既有"只做多"行为，
+    /// RealTimeSimulation / TickFlowBridge 两个调用方不受影响。
+    /// allowShort=true 且当前无多仓时，本次卖出开出负仓（融券卖出）。
+    SellResult Sell(symbol_t symbol, int64_t qty, double price, bool allowShort = false);
 
     /// @brief 调整持仓（通用：delta > 0 买入，delta < 0 卖出）
-    TradeFees AdjustPosition(symbol_t symbol, int64_t delta, double price);
+    TradeFees AdjustPosition(symbol_t symbol, int64_t delta, double price,
+                            bool allowShort = false);
 
     /// @brief 应用持仓事件（分红/送股等被动事件，不走 Buy/Sell 路径）
     /// 不产生佣金/印花税，不触发 T+1

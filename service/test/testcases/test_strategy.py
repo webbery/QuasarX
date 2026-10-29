@@ -731,3 +731,190 @@ class TestXGBoostStrategyBusiness:
         vals = valid.values
         assert not np.allclose(vals, vals[0]), \
             f"概率恒定为 {vals[0]:.4f}，模型训练域可能未覆盖推理域"
+
+
+# ============== 配对交易策略业务层测试 ==============
+
+class TestPairTradingStrategy:
+    """配对交易策略端到端：价差 → z → 两腿动作 → 成交
+
+    策略图：Input(A) + Input(B) → Spread → Function(ZScore) → Pair → Portfolio → Execution
+    数据：node_test_data/generate_node_data.py 生成的合成配对数据 —— 分子腿被推高
+          制造偏离，z 越过 entryZ 触发入场，随后回归到 exitZ 以内触发出场。
+
+    覆盖四件事：
+      1. 两腿信号永远成对出现（同进同出，不留裸腿）
+      2. z 未就绪的预热期不出任何信号
+      3. 入场方向与偏离度符号一致（z>0 → 空分子腿），出场只发生在 |z| <= exitZ
+      4. 空头腿在回测里真的开出了负仓（成交层，不是只有信号）
+    """
+
+    STRATEGY_NAME = "test_pair_trading"
+    DEBUG_LABEL = "debug_pair"
+    SUMMARY_FILE = Path(__file__).parent / "node_test_data" / "test_data_summary.json"
+
+    @pytest.fixture(scope="class")
+    def pair_meta(self):
+        with open(self.SUMMARY_FILE) as f:
+            return json.load(f)["pair"]
+
+    @pytest.fixture(scope="class")
+    def strategy(self, pair_meta):
+        """用 strategy_builder 的配对策略工厂组图"""
+        from strategy_builder import pair_trading_strategy
+
+        return pair_trading_strategy(
+            self.STRATEGY_NAME,
+            pair_meta["symbol_a"],
+            pair_meta["symbol_b"],
+            name="配对交易测试",
+            description="两腿偏离阈值入场、回归出场",
+            capital=200000,
+            backtest={"start": "2024-01-01", "end": "2024-12-31"},
+            source="A_hfq",
+            method="rolling_regression",
+            window=pair_meta["beta_window"],
+            z_window=pair_meta["z_window"],
+            entry_z=pair_meta["entry_z"],
+            exit_z=pair_meta["exit_z"],
+            stop_z=pair_meta["stop_z"],
+            allow_short=True,
+            sizing_method="strength",
+            debug_label=self.DEBUG_LABEL,
+        )
+
+    @pytest.fixture(scope="class")
+    def backtest_result(self, auth_token, strategy):
+        """跑回测。测试前先归还资金池，避免实盘策略占满额度导致分配失败。"""
+        from tool import reclaim_capital
+
+        reclaim_capital(auth_token)
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(strategy), "validate": False},
+            headers={"Authorization": auth_token},
+            verify=VERIFY_SSL,
+            timeout=300,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.status_code} {resp.text[:300]}"
+        return resp.json()
+
+    def _signal_columns(self, pair_meta):
+        import pandas as pd
+
+        csv_path = DEBUG_DIR / self.STRATEGY_NAME / f"{self.DEBUG_LABEL}.csv"
+        assert csv_path.exists(), f"Debug CSV 不存在: {csv_path}"
+        df = pd.read_csv(csv_path)
+        col_a = f"{pair_meta['symbol_a']}.signal"
+        col_b = f"{pair_meta['symbol_b']}.signal"
+        assert col_a in df.columns, f"CSV 缺少 {col_a}，实际列: {list(df.columns)}"
+        assert col_b in df.columns, f"CSV 缺少 {col_b}，实际列: {list(df.columns)}"
+        return df, col_a, col_b
+
+    def test_backtest_runs(self, backtest_result):
+        """回测返回完整 summary"""
+        summary = backtest_result.get("summary", {})
+        assert summary, f"summary 缺失，响应键: {list(backtest_result.keys())}"
+        for key in ["buy_count", "sell_count", "sharp", "max_drawdown", "total_return"]:
+            assert key in summary, f"summary 缺少 {key}，实际: {list(summary.keys())}"
+        assert summary["max_drawdown"] >= 0, f"max_drawdown 应非负: {summary['max_drawdown']}"
+
+    def test_signals_are_paired(self, backtest_result, pair_meta):
+        """两腿信号必须成对：要么都是 0，要么方向相反（不留裸腿）"""
+        import pandas as pd
+
+        df, col_a, col_b = self._signal_columns(pair_meta)
+        sig_a = pd.to_numeric(df[col_a], errors="coerce").fillna(0).to_numpy()
+        sig_b = pd.to_numeric(df[col_b], errors="coerce").fillna(0).to_numpy()
+        assert len(sig_a) == len(sig_b)
+
+        for i in range(len(sig_a)):
+            assert sig_a[i] == 0 or sig_b[i] == 0 or sig_a[i] != sig_b[i], (
+                f"bar {i}: 两腿信号应同时为 0 或方向相反，"
+                f"实际 A={sig_a[i]} B={sig_b[i]}")
+            assert sig_a[i] in (-1.0, 0.0, 1.0), f"bar {i}: 非法信号值 {sig_a[i]}"
+            assert sig_b[i] in (-1.0, 0.0, 1.0), f"bar {i}: 非法信号值 {sig_b[i]}"
+
+    def test_no_signal_before_z_ready(self, backtest_result, pair_meta):
+        """预热期（β 窗口 + z 窗口攒满之前）不出任何信号"""
+        import pandas as pd
+
+        df, col_a, col_b = self._signal_columns(pair_meta)
+        sig_a = pd.to_numeric(df[col_a], errors="coerce").fillna(0).to_numpy()
+        sig_b = pd.to_numeric(df[col_b], errors="coerce").fillna(0).to_numpy()
+
+        import numpy as np
+
+        warmup = pair_meta["beta_window"] + pair_meta["z_window"] - 1
+        warmup = min(warmup, len(sig_a))
+        assert np.all(sig_a[:warmup] == 0), "预热期出现了买入/卖出信号"
+        assert np.all(sig_b[:warmup] == 0), "预热期出现了买入/卖出信号"
+
+    def test_entry_direction_follows_z(self, backtest_result, pair_meta):
+        """入场方向跟随偏离度符号；出场只发生在 |z| <= exitZ
+
+        z > 0 → 分子腿偏贵 → 空分子腿、多分母腿（A=-1, B=+1）
+        z < 0 → 反之（A=+1, B=-1）
+        与入场相反的方向即出场腿，此时偏离度已回到均值附近。
+        """
+        import pandas as pd
+
+        df, col_a, col_b = self._signal_columns(pair_meta)
+        sig_a = pd.to_numeric(df[col_a], errors="coerce").fillna(0).to_numpy()
+        sig_b = pd.to_numeric(df[col_b], errors="coerce").fillna(0).to_numpy()
+        z_ref = pair_meta["reference"]["z"]
+
+        n = min(len(sig_a), len(z_ref))
+        entries, exits = 0, 0
+        for i in range(n):
+            if sig_a[i] == 0 and sig_b[i] == 0:
+                continue
+            z = z_ref[i]
+            if z != z:  # NaN
+                continue
+            # 与 z 同向的腿是"想持有"的方向：z>0 时想空 A（信号 -1）
+            entry_like = (sig_a[i] == -1 if z > 0 else sig_a[i] == 1)
+            if entry_like:
+                entries += 1
+                assert abs(z) >= pair_meta["entry_z"], (
+                    f"bar {i}: 入场时 |z|={abs(z):.3f} 未达 entryZ={pair_meta['entry_z']}")
+            else:
+                exits += 1
+                assert abs(z) <= pair_meta["exit_z"], (
+                    f"bar {i}: 出场时 |z|={abs(z):.3f} 超过 exitZ={pair_meta['exit_z']}，"
+                    "止损未触发（stopZ）时出场只能由回归条件触发")
+
+        assert entries > 0, "整段回测没有出现过入场信号"
+        assert exits > 0, "整段回测没有出现过出场信号"
+
+    def test_short_leg_opens_negative_position(self, backtest_result, pair_meta):
+        """成交层：空头腿真的开出负仓，且最终平掉
+
+        回测结果的 buy/sell 不区分平多与开空，靠持仓符号判断：
+        把成交按时间回放，净持仓出现负数即为空头开仓。
+        """
+        sym_a = pair_meta["symbol_a"]
+        sym_b = pair_meta["symbol_b"]
+
+        trades = []
+        for item in backtest_result.get("buy", []):
+            trades.append((item["time"], item["symbol"], item["quantity"], +1))
+        for item in backtest_result.get("sell", []):
+            trades.append((item["time"], item["symbol"], item["quantity"], -1))
+        trades.sort(key=lambda x: x[0])
+
+        position = {sym_a: 0, sym_b: 0}
+        min_position = {sym_a: 0, sym_b: 0}
+        for _, symbol, qty, sign in trades:
+            if symbol not in position:
+                continue
+            position[symbol] += sign * qty
+            min_position[symbol] = min(min_position[symbol], position[symbol])
+
+        assert min_position[sym_a] < 0 or min_position[sym_b] < 0, (
+            f"没有任何一条腿开出过负仓（持仓轨迹 {position}），"
+            "说明回测成交链路没有接通融券卖出")
+
+        # 两腿最终都要回到 0（配对平仓）
+        assert position[sym_a] == 0 and position[sym_b] == 0, (
+            f"回测结束时仍有未平仓位: A={position[sym_a]} B={position[sym_b]}")

@@ -13,7 +13,7 @@
 #include <utility>
 #include "boost/algorithm/string.hpp"
 
-SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
+SignalNode::SignalNode(Server* server):SignalNodeBase(server), _buyParser(nullptr), _sellParser(nullptr) {
 }
 
 bool SignalNode::Init(const nlohmann::json& config) {
@@ -35,21 +35,12 @@ bool SignalNode::Init(const nlohmann::json& config) {
         }
     }
 
-    // BFS 上游拿到 _pools,提前到 validate() 之前。
-    // 这样 validate() 才能按 short-name ("close") 正确解析 availableVars,
-    // 不再因为 key 名不匹配而把类型校验静默放行。
-    Set<symbol_t> upstreamSymbols = discoverUpstreamSymbols();
-
-    if (upstreamSymbols.empty()) {
-        WARN("[SignalNode:{}] No upstream symbols found from QuoteInputNode, signal node will be skipped", _id);
+    // 基类初始化：allowShort + 上游标的池（提前到 validate() 之前，
+    // 这样 validate() 才能按 short-name ("close") 正确解析 availableVars，
+    // 不再因为 key 名不匹配而把类型校验静默放行）+ 可做空名单
+    if (!SignalNodeBase::Init(config)) {
         return false;
     }
-
-    for (const auto& sym : upstreamSymbols) {
-        _pools.emplace_back(sym);
-    }
-
-    INFO("[SignalNode:{}] Found {} symbols from upstream", _id, _pools.size());
 
     // 解析/验证阶段打点：validate() 成功时是静默的，Init 中途抛异常时
     // 只剩一句 e.what()（如 "map::at"），无法判断断在哪个阶段。
@@ -103,70 +94,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error(error);
     }
 
-    if (config["params"].contains("allowShort")) {
-        _allowShort = config["params"]["allowShort"]["value"];
-    }
-
-    // 如果允许做空，确保可做空标的列表已加载
-    if (_allowShort) {
-        ensureMarginStockData();
-    }
-
     return true;
-}
-
-void SignalNode::ensureMarginStockData() {
-    // 只读：margin_stock 是全局数据，由 Server::RefreshMarginStockList 在每周六
-    // 的日终时点刷新，策略不负责拉取。此前在这里同步调 fetch_shortable_stocks.py
-    // 有三个问题：
-    //   1. 全量拉交易所名单（实测 1681 只 / 6 分钟）只为回答本策略几个标的的成员资格；
-    //   2. RunCommand 同步阻塞在 Init 里，失败还静默降级，排查时只有一行 WARN；
-    //   3. 全局数据的生命周期挂在单策略上，每个策略启动都可能触发一次网络阻塞。
-    // 现在读不到就明确告警并禁用做空，刷新动作交给定时任务。
-    auto& financeDB = FinanceDB::instance();
-    DEBUG_INFO("[SignalNode:{}] margin: FinanceDB initialized={}", _id,
-               financeDB.isInitialized());
-
-    if (!financeDB.isInitialized()) {
-        auto db_path = _server->GetConfig().GetDatabasePath();
-        if (!financeDB.init(db_path + "/finance", "finance.db")) {
-            WARN("[SignalNode:{}] 无法初始化 FinanceDB，禁用做空。"
-                 "请确认 {} 是否可写", _id, db_path + "/finance/finance.db");
-            _allowShort = false;
-            return;
-        }
-    }
-
-    auto result = financeDB.queryMarginStocks();
-    size_t total = result.contains("data") && result["data"].is_array()
-                   ? result["data"].size() : 0;
-    DEBUG_INFO("[SignalNode:{}] margin: {} rows in table", _id, total);
-
-    if (total == 0) {
-        WARN("[SignalNode:{}] margin_stock 为空，禁用做空（策略将退化为纯做多）。"
-             "名单由 Server::RefreshMarginStockList 每周六日终刷新；"
-             "如需立即生效请手工执行 tools/fetch_shortable_stocks.py 并导入 FinanceDB",
-             _id);
-        _allowShort = false;
-        return;
-    }
-
-    for (const auto& sym : _pools) {
-        String symStr = get_symbol(sym);
-        bool isMargin = financeDB.isMarginStock(symStr);
-        DEBUG_INFO("[SignalNode:{}] margin: {} isMarginStock={}", _id, symStr, isMargin);
-        if (isMargin) {
-            _shortableSymbols.insert(sym);
-        }
-    }
-
-    if (_shortableSymbols.empty()) {
-        WARN("[SignalNode:{}] 标的池 {} 只中无一可做空（margin_stock 共 {} 只），"
-             "本策略不会有空头仓位", _id, _pools.size(), total);
-    } else {
-        INFO("[SignalNode:{}] 标的池中可做空 {}/{}（margin_stock 共 {} 只）",
-             _id, _shortableSymbols.size(), _pools.size(), total);
-    }
 }
 
 NodeProcessResult SignalNode::Process(const String& strategy, DataContext& context)
@@ -204,52 +132,10 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     //     }
     // }
 
-    // 如果不允许做空，过滤无持仓标的的 SELL 信号
-    Map<symbol_t, int64_t> heldSymbols;
-    if (_server->GetRunningMode() == RuningType::Backtest) {
-        auto* exchangeMgr = _server->GetExchangeManager();
-        for (const auto& symbol : _pools) {
-            auto* histExchange = dynamic_cast<HistorySimulationBase*>(exchangeMgr->ResolveExchange(symbol));
-            if (histExchange) {
-                auto cnt = histExchange->GetPositionQuantity(symbol);
-                if (cnt != 0) {
-                    heldSymbols[symbol] = cnt;
-                }
-            }
-        }
-    } else {
-        auto* broker = _server->GetBrokerSubSystem();
-        auto* capital = broker->GetStrategyCapital(strategy);
-        for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
-            if (pos._quantity != 0) {
-                heldSymbols[symbol] = pos._quantity;
-            }
-        }
-    }
-    if (!_allowShort) {
-        // 不允许做空：过滤所有无持仓标的的 SELL 信号
-        for (auto it = sells.begin(); it != sells.end(); ++it) {
-            if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                it->second = TradeAction::HOLD;
-            }
-        }
-    } else {
-        // 允许做空：只允许对可做空标的（融资融券标的）开空仓
-        for (auto it = sells.begin(); it != sells.end(); ++it) {
-            if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                // 无持仓 + SELL = 尝试开空，检查是否可做空
-                if (!_shortableSymbols.count(it->first)) {
-                    it->second = TradeAction::HOLD;
-                }
-            }
-        }
-    }
-    // 如果已经持仓,不再追加买入
-    for (auto& item: buys) {
-        if (item.second == TradeAction::BUY && heldSymbols.count(item.first)) {
-            item.second = TradeAction::HOLD;
-        }
-    }
+    // 持仓读取 + 做空门控 + 已持仓不再加仓（基类统一处理）
+    Map<symbol_t, int64_t> heldSymbols = loadPositions(strategy);
+    applyShortableFilter(sells, heldSymbols);
+    applyNoAddOnPosition(buys, heldSymbols);
     // for (auto it = buys.begin(); it != buys.end(); ++it) {
     //     if (it->second == TradeAction::BUY) INFO("[SignalNode] {} BUY signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
     // }
@@ -276,33 +162,7 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     }
 
     // 将信号数据写入 context，供 debug 节点使用
-    // 信号值：1=买入，-1=卖出，0=持有
-    for (auto& symbol : _pools) {
-        String key = get_symbol(symbol) + ".signal";
-        int signalValue = 0;  // 默认持有
-        if (decisions.count(symbol)) {
-            if (decisions[symbol] == TradeAction::BUY) {
-                signalValue = 1;
-            } else if (decisions[symbol] == TradeAction::SELL) {
-                signalValue = -1;
-            }
-        }
-        // 检查是否已存在，存在则追加，否则创建新向量
-        if (context.exist(key)) {
-            context.add(key, (double)signalValue);
-        } else {
-            // 首次写入，预填充 warmup 占位符
-            // warmup 期间 SignalNode 被跳过，但 QuoteInputNode 仍然写入了时间
-            // 需要预填充 warmup 个 0 值，使数据长度与时间序列对齐
-            int warmup = context.GetWarmupEpochs();
-            Vector<double> signalVec;
-            if (warmup > 0) {
-                signalVec.assign(warmup, 0.0);  // warmup 期间信号为 0（持有）
-            }
-            signalVec.push_back((double)signalValue);
-            context.set(key, std::move(signalVec));
-        }
-    }
+    writeSignals(context, decisions);
 
     // ── DuckDB node_io 日志（仅实盘模式）──
     NODE_IO_LOG("signal", _id,
@@ -358,14 +218,4 @@ SignalNode::~SignalNode() {
 
 const nlohmann::json SignalNode::getParams() {
     return {"buy", "sell", "allowShort"};
-}
-
-Map<String, ArgType> SignalNode::out_elements() {
-    Map<String, ArgType> elems;
-    // 输出信号数据，格式为 "{symbol}.signal"
-    for (auto& symbol : _pools) {
-        // 信号是整数时间序列
-        elems[get_symbol(symbol) + ".signal"] = ArgType::Integer_TimeSeries;
-    }
-    return elems;
 }

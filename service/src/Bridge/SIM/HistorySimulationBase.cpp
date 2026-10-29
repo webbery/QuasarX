@@ -133,7 +133,55 @@ bool HistorySimulationBase::OrderReport(BacktestContext* context, order_id id, c
     // 更新持仓（使用上下文私有持仓）
     const auto& order = orderCtx->_order;
     auto delta = (order._side == 0) ? report._quantity : -report._quantity;
-    context->adjustPosition(orderCtx->_order._symbol, delta, report._price);
+
+    // 信用动作判定：优先用委托自带的 _creditType（ImmediateTiming 按持仓打标），
+    // 委托没带类型时按持仓与策略两融配置兜底推断。
+    //   只有 ShortSell 允许开出负仓 —— 普通卖单在无持仓时仍然被拒绝，
+    //   现有多头回测的行为完全不变。
+    double marginRatio = 1.0;
+    bool strategyAllowShort = false;
+    if (_server) {
+        if (auto* broker = _server->GetBrokerSubSystem()) {
+            if (auto* capital = broker->GetStrategyCapital(context->getStrategyName())) {
+                const auto& cfg = capital->getMarginConfig();
+                marginRatio = cfg._initialMarginRatio;
+                strategyAllowShort = cfg._allowShort;
+            }
+        }
+    }
+
+    CreditAction credit = CreditAction::None;
+    switch (order._creditType) {
+    case CreditOrderType::ShortSell:
+        credit = CreditAction::ShortSell;
+        break;
+    case CreditOrderType::CoverShort:
+        credit = CreditAction::ShortCover;
+        break;
+    case CreditOrderType::MarginBuy:
+        credit = CreditAction::MarginBuy;
+        break;
+    default:
+        break;
+    }
+    if (credit == CreditAction::None) {
+        int64_t pos = context->getPosition(order._symbol);
+        if (order._side == 1) {
+            // 卖出：无多仓且策略允许做空 → 融券卖出
+            if (pos <= 0 && strategyAllowShort) {
+                credit = CreditAction::ShortSell;
+            }
+        } else {
+            // 买入：持空仓 → 买券还券；否则按保证金比例判定是否融资买入
+            if (pos < 0) {
+                credit = CreditAction::ShortCover;
+            } else if (marginRatio < 1.0) {
+                credit = CreditAction::MarginBuy;
+            }
+        }
+    }
+
+    context->adjustPosition(orderCtx->_order._symbol, delta, report._price, credit, marginRatio);
 
     orderCtx->_success.store(true);
     orderCtx->_flag.store(true);

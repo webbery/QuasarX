@@ -46,7 +46,15 @@ public:
     
     /// @brief 调整持仓（通用：delta > 0 买入，delta < 0 卖出）
     /// 成交时自动从 CapitalPool 扣/加资金
-    void adjustPosition(symbol_t symbol, int delta, double price);
+    ///
+    /// credit：信用成交类型。
+    ///   ShortSell —— 允许在无多仓时开出负仓（融券卖出）。只有显式的融券委托
+    ///                能产生负仓，普通卖单在无持仓时仍被拒绝（保持既有只做多行为）。
+    ///   MarginBuy —— 资金占用按保证金比例计，其余部分记为借入现金
+    ///                （与 StrategyCapitalImpl::recordFill 的口径一致）。
+    ///   CoverShort —— 买券还券，减少在借股数。
+    void adjustPosition(symbol_t symbol, int delta, double price,
+                        CreditAction credit = CreditAction::None, double marginRatio = 1.0);
 
     // 资金管理（委托给 CapitalPool）
     void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }

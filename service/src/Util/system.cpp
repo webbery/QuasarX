@@ -693,7 +693,7 @@ symbol_t to_symbol(const String& code, const ContractInfo& security) {
 
 symbol_t null_symbol()
 {
-    symbol_t sym;
+    static symbol_t sym;
     memset(&sym, 0, sizeof(symbol_t));
     return sym;
 }

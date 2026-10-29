@@ -179,11 +179,13 @@ def main():
     parser.add_argument("--config", help="服务配置文件，读 server.db_path")
     parser.add_argument("--db-path", help="直接指定 db_path，覆盖 --config")
     parser.add_argument("--symbols",
-                        default="sz.900001,sz.900013,sz.900014,sz.900020,sz.900021",
+                        default="sz.900001,sz.900013,sz.900014,sz.900020,sz.900021,"
+                                "sz.900101,sz.900102",
                         help="内部格式标的，逗号分隔"
                              "（默认覆盖 test_credit 的 sz.900001、"
                              "test_formula_math 的 L4/L6 与 "
-                             "test_shortable 各自的可做空标的；"
+                             "test_shortable 各自的可做空标的、"
+                             "test_strategy 配对交易的两条腿 sz.900101/sz.900102；"
                              "池内其余标的不在名单里，即对照组）")
     parser.add_argument("--list", action="store_true", help="列出可用步骤后退出")
     args = parser.parse_args()

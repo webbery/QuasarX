@@ -33,6 +33,18 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     order._price = price;
     order._volume = signal.GetQuantity();
     auto run_id = context.getBacktestRunId();
+
+    // 策略的两融配置：决定本次委托是不是信用委托（融资买入 / 融券卖出 / 买券还券）。
+    // 信用类型写进 Order._creditType，由回测成交链路（HistorySimulationBase::OrderReport）
+    // 读它来决定是否允许开出负仓、以及是否回写融资余额/在借股数。
+    double marginRatio = 1.0;
+    bool allowShort = false;
+    if (auto* capital = broker->GetStrategyCapital(strategy)) {
+        const auto& cfg = capital->getMarginConfig();
+        marginRatio = cfg._initialMarginRatio;
+        allowShort = cfg._allowShort;
+    }
+
     switch (signal.GetAction()) {
     case TradeAction::BUY:
         order._side = 0;
@@ -45,6 +57,14 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
                 pos = histExchange->GetPositionQuantity(symbol);
             }
             order._flag = (pos < 0) ? 1 : 0;
+            // 信用类型：持空仓 → 买券还券；否则按保证金比例判定是否融资买入
+            if (pos < 0) {
+                order._creditType = CreditOrderType::CoverShort;
+            } else if (marginRatio < 1.0) {
+                order._creditType = CreditOrderType::MarginBuy;
+            } else {
+                order._creditType = CreditOrderType::None;
+            }
         }
         broker->Buy(run_id, strategy, symbol, order, [symbol, this, signalTime](const TradeReport& report) {
             auto sock = Server::GetSocket();
@@ -69,6 +89,9 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
                 pos = histExchange->GetPositionQuantity(symbol);
             }
             order._flag = (pos > 0) ? 1 : 0;
+            // 信用类型：无多仓且策略允许做空 → 融券卖出；否则是普通平多
+            order._creditType = (pos <= 0 && allowShort) ? CreditOrderType::ShortSell
+                                                         : CreditOrderType::None;
         }
         broker->Sell(run_id, strategy, symbol, order, [symbol, this, signalTime](const TradeReport& report) {
             auto sock = Server::GetSocket();

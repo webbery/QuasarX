@@ -14,6 +14,7 @@
 
 import csv
 import json
+import math
 import shutil
 import sys
 import numpy as np
@@ -28,7 +29,7 @@ from tool import _DATA_DIR as SERVICE_DATA_DIR
 from strategy_builder import (StrategyBuilder, input_node, function_node,
                               formula_node, debug_node, signal_node,
                               portfolio_node, execution_node, cusum_node,
-                              emd_node)
+                              emd_node, pair_trading_strategy)
 
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
@@ -82,6 +83,210 @@ def gen_anomaly(n_bars=200, anomaly_bar=100, seed=42):
             ret = np.random.normal(0.0005, 0.01)
             prices.append(round(prices[-1] * (1 + ret), 2))
     return prices
+
+
+# ───────────────────────── 配对交易数据集 ─────────────────────────
+#
+# 分子腿 A 走带噪声的随机游走；分母腿 B = A / β · (1 + ε)，ε 是小噪声。
+# 于是价差 s_t = A_t - (α + β·B_t) 在 0 附近平稳，β 的滚动 OLS 估计也稳定在真值附近。
+#
+# 中段给 A 加一个温和上冲（外生偏离）：z 越过 entryZ 触发入场，随后 A 回到基准
+# 路径、z 回到 exitZ 以内触发出场。偏离幅度控制在 stopZ 以内，否则入场当根就被
+# 止损打掉。
+#
+# 两只标的必须在 margin_stock 名单里（prepare.py 预灌），否则空头腿会被
+# 做空门控降级为 HOLD，配对仓位根本建不起来。
+PAIR_SYMBOL_A = "sz.900101"   # 分子腿（价差 = P_A - β·P_B 的 A）
+PAIR_SYMBOL_B = "sz.900102"   # 分母腿
+PAIR_N_BARS = 200
+PAIR_TRUE_BETA = 1.25         # A 对 B 的真实对冲系数
+PAIR_A_BASE = 100.0
+PAIR_A_VOL = 0.004            # A 的日波动
+PAIR_EPS_VOL = 0.0015         # B 相对 A/β 的噪声
+PAIR_EXC_START = 80           # 偏离起始 bar
+PAIR_EXC_RAMP_UP = 4          # 上冲段长度
+PAIR_EXC_HOLD = 16            # 平台段长度
+PAIR_EXC_RAMP_DOWN = 6        # 回落段长度
+PAIR_EXC_AMPLITUDE = 0.0026   # 平台偏离幅度（相对 A 的比例）
+PAIR_SEED = 20261029
+
+PAIR_BETA_WINDOW = 30         # 价差节点 window
+PAIR_Z_WINDOW = 40            # ZScore 窗口
+PAIR_ENTRY_Z = 2.0
+PAIR_EXIT_Z = 0.5
+PAIR_STOP_Z = 3.5
+
+
+def gen_pair_legs(n_bars=PAIR_N_BARS, seed=PAIR_SEED):
+    """生成配对的两条腿收盘价序列 (A, B)。
+
+    关键点：偏离只加在 A 上，B 走基准路径。若两边一起动，A = α + β·B 的关系
+    根本没变，价差不动 —— 那样就构造不出可触发的偏离。
+    """
+    rng = np.random.default_rng(seed)
+
+    # 基准路径：A 走带噪声的随机游走
+    rets = rng.normal(0.0, PAIR_A_VOL, n_bars)
+    base = PAIR_A_BASE * np.cumprod(1.0 + rets)
+
+    # 偏离段（梯形：上冲 → 平台 → 回落），只作用在 A 上
+    peak_start = PAIR_EXC_START + PAIR_EXC_RAMP_UP
+    peak_end = peak_start + PAIR_EXC_HOLD
+    exc_end = peak_end + PAIR_EXC_RAMP_DOWN
+    excursion = np.zeros(n_bars)
+    for t in range(PAIR_EXC_START, exc_end):
+        if t < peak_start:
+            ramp = (t - PAIR_EXC_START) / float(PAIR_EXC_RAMP_UP)
+        elif t < peak_end:
+            ramp = 1.0
+        else:
+            ramp = (exc_end - t) / float(PAIR_EXC_RAMP_DOWN)
+        excursion[t] = PAIR_EXC_AMPLITUDE * ramp
+    a = base * (1.0 + excursion)
+
+    # B = 基准路径 / β · (1 + ε)
+    eps = rng.normal(0.0, PAIR_EPS_VOL, n_bars)
+    b = base / PAIR_TRUE_BETA * (1.0 + eps)
+
+    return ([round(float(x), 4) for x in a], [round(float(x), 4) for x in b])
+
+
+def ols(xs, ys):
+    """最小二乘：ys = alpha + beta * xs"""
+    n = len(xs)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    var = sum((x - mean_x) ** 2 for x in xs)
+    if var < 1e-12:
+        raise ValueError("B 价无波动，无法回归")
+    beta = cov / var
+    return beta, mean_y - beta * mean_x
+
+
+def reference_spread(a, b, window, include_current=False):
+    """复刻 SpreadNode 的价差。
+
+    β 用 [t-window, t-1] 的完整窗口估计，再外推到 t（include_current=False，
+    与服务端一致）。include_current=True 时把当根也放进回归窗口 —— 那是
+    in-sample 口径，会把当根残差拉回，测试用它来证明服务端确实做了滞后。
+    窗口未满返回 NaN。
+    """
+    spreads, betas = [], []
+    for t in range(len(a)):
+        lo = t - window
+        hi = t + 1 if include_current else t
+        if lo < 0:
+            spreads.append(float("nan"))
+            betas.append(float("nan"))
+            continue
+        beta, alpha = ols(b[lo:hi], a[lo:hi])
+        spreads.append(a[t] - (alpha + beta * b[t]))
+        betas.append(beta)
+    return spreads, betas
+
+
+def reference_zscore(spreads, window):
+    """复刻 FunctionNode(ZScore)：总体标准差(ddof=0)、含当根、遇 NaN 跳过。
+
+    窗口未满返回 NaN。
+    """
+    buf = []
+    out = []
+    for s in spreads:
+        if math.isnan(s):
+            out.append(float("nan"))
+            continue
+        buf.append(s)
+        if len(buf) > window:
+            buf.pop(0)
+        if len(buf) < window:
+            out.append(float("nan"))
+            continue
+        mean = sum(buf) / len(buf)
+        var = sum((x - mean) ** 2 for x in buf) / len(buf)
+        out.append((s - mean) / math.sqrt(var) if var > 0 else 0.0)
+    return out
+
+
+def pair_spread_strategy():
+    """价差节点测试：Input(A) + Input(B) → Spread → Debug"""
+    return (StrategyBuilder("pair_spread", "配对价差测试",
+                             description="SpreadNode 数值校验",
+                             backtest={"start": "2024-01-01", "end": "2024-12-31"},
+                             source="A_hfq")
+            .input("1", symbol=PAIR_SYMBOL_A)
+            .input("2", symbol=PAIR_SYMBOL_B)
+            .spread("3", method="rolling_regression", window=PAIR_BETA_WINDOW,
+                    symbol_a=PAIR_SYMBOL_A)
+            .debug("4", "debug_pair_spread")
+            .connect("1", "3", prop="close")
+            .connect("2", "3", prop="close")
+            .connect("3", "4")
+            .build())
+
+
+def generate_pair_dataset():
+    """写配对数据集的 CSV、策略 JSON 与参考序列。"""
+    a, b = gen_pair_legs()
+    spreads, betas = reference_spread(a, b, PAIR_BETA_WINDOW)
+    insample_spreads, _ = reference_spread(a, b, PAIR_BETA_WINDOW,
+                                            include_current=True)
+    zs = reference_zscore(spreads, PAIR_Z_WINDOW)
+
+    write_csv(PAIR_SYMBOL_A, a, START_DATE, HFQ_DIR / f"{PAIR_SYMBOL_A}.csv",
+              ORG_DIR / f"{PAIR_SYMBOL_A}.csv")
+    write_csv(PAIR_SYMBOL_B, b, START_DATE, HFQ_DIR / f"{PAIR_SYMBOL_B}.csv",
+              ORG_DIR / f"{PAIR_SYMBOL_B}.csv")
+    print(f"  CSV: {PAIR_SYMBOL_A} / {PAIR_SYMBOL_B} 各 {len(a)} bars")
+
+    spread_strategy = pair_spread_strategy()
+    with open(TEST_DATA_DIR / "pair_spread.json", 'w') as f:
+        json.dump(spread_strategy, f, indent=2, ensure_ascii=False)
+
+    pair_strategy = pair_trading_strategy(
+        "pair_trading", PAIR_SYMBOL_A, PAIR_SYMBOL_B,
+        name="配对交易测试",
+        description="两腿偏离阈值入场、回归出场",
+        capital=200000,
+        backtest={"start": "2024-01-01", "end": "2024-12-31"},
+        source="A_hfq",
+        method="rolling_regression", window=PAIR_BETA_WINDOW,
+        z_window=PAIR_Z_WINDOW, entry_z=PAIR_ENTRY_Z, exit_z=PAIR_EXIT_Z,
+        stop_z=PAIR_STOP_Z, allow_short=True, sizing_method="strength",
+        debug_label="debug_pair")
+    with open(TEST_DATA_DIR / "pair_trading.json", 'w') as f:
+        json.dump(pair_strategy, f, indent=2, ensure_ascii=False)
+
+    valid = [(i, z) for i, z in enumerate(zs) if not math.isnan(z)]
+    entries = [i for i, z in valid if abs(z) >= PAIR_ENTRY_Z]
+    print(f"  z 有效区间: bar {valid[0][0]} .. {valid[-1][0]}")
+    print(f"  z 极值: {max(valid, key=lambda x: abs(x[1]))}")
+    print(f"  |z| >= {PAIR_ENTRY_Z} 的 bar: {entries}（共 {len(entries)} 根）")
+
+    return {
+        "symbol_a": PAIR_SYMBOL_A,
+        "symbol_b": PAIR_SYMBOL_B,
+        "n_bars": len(a),
+        "true_beta": PAIR_TRUE_BETA,
+        "beta_window": PAIR_BETA_WINDOW,
+        "z_window": PAIR_Z_WINDOW,
+        "entry_z": PAIR_ENTRY_Z,
+        "exit_z": PAIR_EXIT_Z,
+        "stop_z": PAIR_STOP_Z,
+        "excursion": {"start": PAIR_EXC_START,
+                      "ramp_up": PAIR_EXC_RAMP_UP, "hold": PAIR_EXC_HOLD,
+                      "ramp_down": PAIR_EXC_RAMP_DOWN,
+                      "amplitude": PAIR_EXC_AMPLITUDE},
+        "entry_bars": entries,
+        "reference": {
+            "spread": spreads,
+            "beta": betas,
+            "z": zs,
+            "insample_spread": insample_spreads,
+        },
+        "strategies": {"spread": "pair_spread", "pair": "pair_trading"},
+    }
 
 
 def write_csv(symbol, prices, start_date, hfq_path, org_path, anomaly_bar=None):
@@ -553,8 +758,17 @@ def main():
             all_strategies[strat_id] = {"dataset": ds_id, "symbol": symbol, "node": node_label}
             print(f"  策略: {fname}")
 
+    # ── 配对交易数据集（两条腿 + 价差/配对策略）──
+    print("\n配对数据集:")
+    pair_summary = generate_pair_dataset()
+    all_strategies["pair_spread"] = {"dataset": "pair", "symbol": PAIR_SYMBOL_A,
+                                     "node": "pair_spread"}
+    all_strategies["pair_trading"] = {"dataset": "pair", "symbol": PAIR_SYMBOL_A,
+                                      "node": "pair"}
+
     summary = {"datasets": {k: {"symbol": v["symbol"], "name": v["name"]} for k, v in datasets.items()},
-               "strategies": all_strategies}
+               "strategies": all_strategies,
+               "pair": pair_summary}
     with open(TEST_DATA_DIR / "test_data_summary.json", 'w') as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     print(f"\n汇总: test_data_summary.json")

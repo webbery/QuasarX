@@ -18,31 +18,58 @@ TradeFees StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) 
     double amount = qty * price;
     TradeFees fees = CalcFees(amount, false);
 
-    // 更新持仓（加权平均成本）
     auto it = _positions.find(symbol);
-    if (it == _positions.end()) {
+    if (it == _positions.end() || it->second._quantity == 0) {
+        // 开多
         StockPosition pos;
         pos._symbol = symbol;
         pos._quantity = qty;
         pos._avgPrice = price;
         pos._totalCost = amount;
         _positions[symbol] = pos;
-    } else {
+        // T+1 控制：记录当日买入
+        _todayBuyQty[symbol] += qty;
+    } else if (it->second._quantity > 0) {
+        // 多头加仓（加权平均成本）
         StockPosition& pos = it->second;
         int64_t newQty = pos._quantity + qty;
         pos._totalCost += amount;
         pos._avgPrice = (newQty != 0) ? (pos._totalCost / newQty) : 0.0;
         pos._quantity = newQty;
-    }
+        // T+1 控制：记录当日买入
+        _todayBuyQty[symbol] += qty;
+    } else {
+        // 买券还券：数量向 0 收敛，剩余空头的成本价不变
+        StockPosition& pos = it->second;
+        int64_t coverQty = std::min(qty, -pos._quantity);
+        pos._quantity += coverQty;
+        if (pos._quantity == 0) {
+            _positions.erase(it);
+        } else {
+            // 保持不变量 _totalCost = _quantity * _avgPrice
+            pos._totalCost = pos._quantity * pos._avgPrice;
+        }
 
-    // T+1 控制：记录当日买入
-    _todayBuyQty[symbol] += qty;
+        // 还券后仍有剩余（coverQty < qty）→ 超出部分转为新开的多头
+        int64_t remain = qty - coverQty;
+        if (remain > 0) {
+            StockPosition np;
+            np._symbol = symbol;
+            np._quantity = remain;
+            np._avgPrice = price;
+            np._totalCost = remain * price;
+            _positions[symbol] = np;
+            _todayBuyQty[symbol] += remain;
+        }
+        // 注意：买券还券不计入 _todayBuyQty —— 买回的股票不是"当日买入的多头"，
+        // 计入会让当日卖出的可用量被算成 0（canSell = 持仓 - 当日买入）。
+    }
 
     INFO("BUY symbol={} qty={} price={} fees={}", symbol, qty, price, fees.total());
     return fees;
 }
 
-StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
+StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price, bool allowShort) {
     SellResult result{};
     if (qty <= 0 || price <= 0.0) {
         WARN("Invalid sell params: qty={}, price={}", qty, price);
@@ -50,23 +77,56 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
     }
     std::lock_guard<std::mutex> lock(_mutex);
 
-    // TODO(融券做空): 这里是空头开仓的阻塞点。
-    //   回测成交链路 HistorySimulationBase::OrderReport → BacktestContext::adjustPosition
-    //   → 本函数，无持仓时直接 return，因此 SignalNode/PortfolioNode 已放行的
-    //   融券卖出信号到此为止，broker 侧不产生任何成交回报。
-    //   通关条件（两件都做完才算接通）：
-    //     1. 加 _allowShort 开关，允许 qty > pos._quantity 时产生负持仓；
-    //        同时让 exchange.h 的 CreditOrderType 真正参与路由
-    //        （目前只有字段声明，全仓无人读取）。
-    //     2. 借券成本模型（年化费率按持仓天数计提），
-    //        否则做空收益系统性虚高。
-    //   对应测试见 service/test/testcases/test_shortable.py 的第二层 TODO。
     auto it = _positions.find(symbol);
-    if (it == _positions.end()) {
-        WARN("No position to sell: {}", symbol);
+    int64_t held = (it == _positions.end()) ? 0 : it->second._quantity;
+
+    if (held == 0) {
+        // ── 无多仓：卖出要么被拒，要么开出空仓 ──
+        if (!allowShort) {
+            WARN("No position to sell: {}", symbol);
+            return result;
+        }
+        // 融券卖出：建立负仓。_avgPrice 记开空均价（正数），
+        // 盈亏口径 getUnrealizedPnL() = qty * (current - avg)：
+        // qty 为负、current 低于 avg 时为正 → 空头盈利符号正确。
+        double amount = qty * price;
+        result.fees = CalcFees(amount, true);
+        result.proceeds = amount - result.fees.total();
+        result.actualQty = qty;
+        result.isShortOpen = true;
+
+        StockPosition pos;
+        pos._symbol = symbol;
+        pos._quantity = -qty;
+        pos._avgPrice = price;
+        pos._totalCost = -qty * price;  // 空头成本为负（卖出所得）
+        pos._isMargin = true;
+        _positions[symbol] = pos;
+
+        INFO("SHORT OPEN symbol={} qty={} price={} fees={}", symbol, qty, price,
+             result.fees.total());
         return result;
     }
 
+    if (held < 0) {
+        // ── 已有空仓：本次卖出是加空 ──
+        StockPosition& pos = it->second;
+        int64_t newQty = pos._quantity - qty;
+        double newAvg = ((-pos._quantity) * pos._avgPrice + qty * price) / ((-newQty));
+        pos._avgPrice = newAvg;
+        pos._quantity = newQty;
+        pos._totalCost = pos._quantity * pos._avgPrice;
+
+        double amount = qty * price;
+        result.fees = CalcFees(amount, true);
+        result.proceeds = amount - result.fees.total();
+        result.actualQty = qty;
+
+        INFO("SHORT ADD symbol={} qty={} price={} avg={}", symbol, qty, price, newAvg);
+        return result;
+    }
+
+    // ── 有多仓：平多（含部分平仓）──
     StockPosition& pos = it->second;
     if (pos._quantity < qty) {
         WARN("Insufficient position: have={} sell={}", pos._quantity, qty);
@@ -97,17 +157,21 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
     pos._quantity -= qty;
     if (pos._quantity == 0) {
         _positions.erase(it);
+    } else {
+        // 保持不变量 _totalCost = _quantity * _avgPrice
+        pos._totalCost = pos._quantity * pos._avgPrice;
     }
 
     INFO("SELL symbol={} qty={} price={} fees={}", symbol, qty, price, result.fees.total());
     return result;
 }
 
-TradeFees StockPositionManager::AdjustPosition(symbol_t symbol, int64_t delta, double price) {
+TradeFees StockPositionManager::AdjustPosition(symbol_t symbol, int64_t delta, double price,
+                                               bool allowShort) {
     if (delta > 0) {
         return Buy(symbol, delta, price);
     } else if (delta < 0) {
-        auto result = Sell(symbol, -delta, price);
+        auto result = Sell(symbol, -delta, price, allowShort);
         return result.fees;
     }
     return TradeFees{};

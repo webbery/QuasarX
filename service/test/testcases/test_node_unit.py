@@ -1027,3 +1027,116 @@ class TestEMDNode:
                 threshold = min(0.15 + idx * 0.15, 0.6)
                 assert relative_mean < threshold, \
                     f"[{dataset_id}] {col} mean/signal ratio {relative_mean:.4f} exceeds threshold {threshold}"
+
+
+# ============================================================
+# L1: Spread 节点测试（配对交易第一层）
+# ============================================================
+
+class TestSpreadNode:
+    """SpreadNode：两腿价差与对冲系数
+
+    Python 黄金标准（generate_node_data.py 的 reference_spread，同一实现）：
+      β 用 [t-W, t-1] 的完整窗口做 OLS，再外推到 t；
+      价差 = P_A - (α + β·P_B)；窗口未满为 NaN。
+
+    为什么要滞后一格：回归线若穿过当根，当根残差会被自己"拉回"，
+    偏离度被系统性压低，入场次数偏少。服务端必须与参考实现同口径。
+    """
+
+    @pytest.fixture(scope="class")
+    def pair(self, summary):
+        return summary["pair"]
+
+    def _spread_frame(self, headers, pair):
+        """跑价差节点测试回测，返回 (DebugNode DataFrame, 两条腿的 symbol)"""
+        strategy_path = TEST_DIR / f"{pair['strategies']['spread']}.json"
+        _run_backtest(strategy_path, headers)
+        df = read_debug_csv(pair["strategies"]["spread"], "debug_pair_spread")
+        return df, pair["symbol_a"], pair["symbol_b"]
+
+    def test_spread_matches_reference(self, headers, pair):
+        """价差与 Python 黄金标准一致（两腿同值）"""
+        df, sym_a, sym_b = self._spread_frame(headers, pair)
+        actual_a = _extract_node_series(df, sym_a, "pair_spread")
+        actual_b = _extract_node_series(df, sym_b, "pair_spread")
+        expected = np.array(pair["reference"]["spread"], dtype=float)
+
+        n = min(len(actual_a), len(expected))
+        assert n > 0, "参考序列为空"
+        act = actual_a.iloc[:n].to_numpy(dtype=float)
+        exp = expected[:n]
+
+        valid = ~np.isnan(exp)
+        assert valid.sum() > 0, "参考序列没有有效值"
+        diff = np.abs(act[valid] - exp[valid])
+        max_diff = float(np.max(diff))
+        assert max_diff < 1e-4, f"价差 max diff {max_diff:.2e} 超过容差 1e-4"
+
+        # 两条腿发布的价差必须完全相同（同一份合成序列）
+        other = actual_b.iloc[:n].to_numpy(dtype=float)
+        same = np.abs(act[valid] - other[valid])
+        assert float(np.max(same)) < 1e-12, "两条腿的价差不一致"
+
+    def test_beta_matches_reference(self, headers, pair):
+        """对冲系数 β 与 Python 黄金标准一致"""
+        df, sym_a, sym_b = self._spread_frame(headers, pair)
+        actual = _extract_node_series(df, sym_a, "pair_beta")
+        expected = np.array(pair["reference"]["beta"], dtype=float)
+
+        n = min(len(actual), len(expected))
+        act = actual.iloc[:n].to_numpy(dtype=float)
+        exp = expected[:n]
+        valid = ~np.isnan(exp)
+        diff = np.abs(act[valid] - exp[valid])
+        max_diff = float(np.max(diff))
+        assert max_diff < 1e-4, f"β max diff {max_diff:.2e} 超过容差 1e-4"
+
+    def test_beta_is_lagged_not_in_sample(self, headers, pair):
+        """回归窗口不含当根：偏离段的价差必须与 in-sample 口径明显不同
+
+        in-sample（含当根）的回归线穿过当根，当根残差被拉回；
+        滞后口径不会。两者在偏离段差异最大，用它证明服务端做了滞后。
+        """
+        df, sym_a, _ = self._spread_frame(headers, pair)
+        actual = _extract_node_series(df, sym_a, "pair_spread")
+        lagged = np.array(pair["reference"]["spread"], dtype=float)
+        insample = np.array(pair["reference"]["insample_spread"], dtype=float)
+
+        n = min(len(actual), len(lagged))
+        act = actual.iloc[:n].to_numpy(dtype=float)
+        lag = lagged[:n]
+        ins = insample[:n]
+
+        gap = np.abs(lag - ins)
+        gap[~np.isfinite(gap)] = 0.0
+        peak = int(np.argmax(gap))
+        assert gap[peak] > 1e-3, \
+            f"滞后与 in-sample 口径的最大差异 {gap[peak]:.2e} 过小，无法区分"
+
+        # 服务端的值必须落在滞后口径上，而不是 in-sample 口径上
+        assert abs(act[peak] - lag[peak]) < 1e-4, \
+            f"bar {peak}: 服务端 {act[peak]:.6f} 不等于滞后参考 {lag[peak]:.6f}"
+        assert abs(act[peak] - ins[peak]) > 1e-3, \
+            f"bar {peak}: 服务端 {act[peak]:.6f} 等于 in-sample 参考 {ins[peak]:.6f}，" \
+            "说明回归窗口包含了当根"
+
+    def test_spread_nan_during_warmup(self, headers, pair):
+        """回归窗口攒满之前价差为 NaN（不算价差，也不产生信号）"""
+        df, sym_a, _ = self._spread_frame(headers, pair)
+        actual = _extract_node_series(df, sym_a, "pair_spread")
+        window = pair["beta_window"]
+
+        for i in range(window):
+            assert pd.isna(actual.iloc[i]), \
+                f"bar {i} 应为 NaN（回归窗口未满），实际 {actual.iloc[i]}"
+        assert not pd.isna(actual.iloc[window]), \
+            f"bar {window} 起应有有效价差，实际 {actual.iloc[window]}"
+
+    def test_leg_direction_published(self, headers, pair):
+        """两条腿的 leg 标记分别为 +1 / -1（分子腿与分母腿）"""
+        df, sym_a, sym_b = self._spread_frame(headers, pair)
+        leg_a = _extract_node_series(df, sym_a, "pair_leg")
+        leg_b = _extract_node_series(df, sym_b, "pair_leg")
+        assert (leg_a == 1).all(), f"分子腿 leg 应恒为 +1，实际取值 {set(leg_a)}"
+        assert (leg_b == -1).all(), f"分母腿 leg 应恒为 -1，实际取值 {set(leg_b)}"
