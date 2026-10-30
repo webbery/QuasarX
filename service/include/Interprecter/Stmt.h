@@ -40,6 +40,7 @@ enum class CrossSectionFuncType {
                     // pct(expr, p) - 截面 p 分位数 (p∈[0,1]，线性插值)
     CS_COUNT,       // cs_count(expr, sign) - 跨标的计数 (>0/<0/==0 的标的数)
     CS_SIZE,        // cs_size() - 返回标的总数
+    CS_MEDIAN_FILL, // cs_median_fill(expr) - 截面中位数填补：NaN → 当日截面中位数
     RAW             // 原始分数透传
 };
 

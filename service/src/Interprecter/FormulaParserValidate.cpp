@@ -31,7 +31,7 @@ const UnorderedSet<String>& builtinFunctionNames() {
         "rolling_topk", "rolling_topk_idx",
         // 截面函数（isCrossSectionFunction）
         "topk", "bottomk", "rank", "zscore", "pct",
-        "cs_count", "cs_size",
+        "cs_count", "cs_size", "cs_median_fill",
     };
     return names;
 }

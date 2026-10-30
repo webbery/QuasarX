@@ -4,8 +4,62 @@
 #include <variant>
 #include <Eigen/Dense>
 
-MA::MA(short count): _count(0), _nextIndex(0), _stepsSinceRecompute(0) {
-    _buffer.resize(count, 0.0);
+namespace {
+
+// 滑动窗口的公共记账（MA / STD 的 skipNaN 模式共用）：
+//   - 窗口按 bar 推进，NaN 也占一格（与 pandas rolling 一致，不像旧路径那样冻结窗口）
+//   - 只统计有效值（isfinite），维护 validCount
+//   - 每满 window 次 push 返回 true，调用方据此用自己的累加器重算
+// onEvict / onAdd 只在有效值上调用，避免 NaN 污染累加器。
+template <typename EvictFn, typename AddFn>
+bool pushSkipNaNBar(std::vector<double>& buffer, int32_t& count, int32_t& nextIndex,
+                    int32_t& stepsSinceRecompute, int32_t& validCount, double value,
+                    EvictFn onEvict, AddFn onAdd) {
+    const int32_t window = static_cast<int32_t>(buffer.size());
+    bool needRecompute = false;
+
+    if (count < window) {
+        buffer[count] = value;
+        if (std::isfinite(value)) {
+            onAdd(value);
+            ++validCount;
+        }
+        ++count;
+    } else {
+        double old = buffer[nextIndex];
+        if (std::isfinite(old)) {
+            onEvict(old);
+            --validCount;
+        }
+        buffer[nextIndex] = value;
+        if (std::isfinite(value)) {
+            onAdd(value);
+            ++validCount;
+        }
+        nextIndex = (nextIndex + 1) % window;
+        if (++stepsSinceRecompute >= window) {
+            needRecompute = true;
+            stepsSinceRecompute = 0;
+        }
+    }
+    return needRecompute;
+}
+
+}  // namespace
+
+MA::MA(int32_t count, bool skipNaN, int32_t minPeriods)
+    : _count(0), _nextIndex(0), _stepsSinceRecompute(0), _skipState(nullptr) {
+    _buffer.resize(std::max<int32_t>(count, 1), 0.0);
+    if (skipNaN) {
+        _skipState = new SkipNaNState();
+        _skipState->_minPeriods = minPeriods > 0 ? minPeriods : count;
+    }
+}
+
+MA::~MA() {
+    if (_skipState) {
+        delete _skipState;
+    }
 }
 
 context_t MA::operator()(const Map<String, context_t>& args) {
@@ -21,6 +75,11 @@ context_t MA::operator()(const Map<String, context_t>& args) {
             value = std::nan("nan");
         }
     }, args.begin()->second);
+
+    if (_skipState) {
+        return applySkipNaN(value);
+    }
+
     if (_count < (int32_t)_buffer.size()) {
         _buffer[_count] = value;
         _sumAcc.add(value);
@@ -41,6 +100,36 @@ context_t MA::operator()(const Map<String, context_t>& args) {
         _stepsSinceRecompute = 0;
     }
     return average();
+}
+
+// pandas rolling(skipna=True) 语义：
+//   - 窗口按 bar 推进（NaN 也占一格，不像旧路径那样冻结窗口）
+//   - 均值只统计窗口内的有效值
+//   - 有效值个数 < min_periods 时输出 NaN
+context_t MA::applySkipNaN(double value) {
+    bool needRecompute = pushSkipNaNBar(
+        _buffer, _count, _nextIndex, _stepsSinceRecompute, _skipState->_validCount, value,
+        [this](double old) { _sumAcc.sub(old); },
+        [this](double v)   { _sumAcc.add(v); }
+    );
+    if (needRecompute) {
+        recomputeValid();
+    }
+    if (_skipState->_validCount < _skipState->_minPeriods || _skipState->_validCount <= 0) {
+        return std::nan("nan");
+    }
+    return _sumAcc.sum() / _skipState->_validCount;
+}
+
+void MA::recomputeValid() {
+    _sumAcc.reset();
+    _skipState->_validCount = 0;
+    for (int32_t i = 0; i < _count; ++i) {
+        if (std::isfinite(_buffer[i])) {
+            _sumAcc.add(_buffer[i]);
+            ++_skipState->_validCount;
+        }
+    }
 }
 
 double MA::average() {
@@ -68,9 +157,21 @@ context_t MACD::operator()(const Map<String, context_t>& args) {
     return 0.;
 }
 
-STD::STD(int32_t count)
-: _window(count), _count(0), _nextIndex(0), _stepsSinceRecompute(0) {
-    _buffer.resize(count, 0.0);
+STD::STD(int32_t count, bool skipNaN, int32_t minPeriods, int32_t ddof)
+: _window(std::max<int32_t>(count, 1)), _count(0), _nextIndex(0), _stepsSinceRecompute(0),
+  _skipState(nullptr) {
+    _buffer.resize(_window, 0.0);
+    if (skipNaN) {
+        _skipState = new SkipNaNState();
+        _skipState->_minPeriods = minPeriods > 0 ? minPeriods : count;
+        _skipState->_ddof = ddof;
+    }
+}
+
+STD::~STD() {
+    if (_skipState) {
+        delete _skipState;
+    }
 }
 
 context_t STD::operator()(const Map<String, context_t>& args) {
@@ -86,6 +187,10 @@ context_t STD::operator()(const Map<String, context_t>& args) {
             value = std::nan("nan");
         }
     }, args.begin()->second);
+
+    if (_skipState) {
+        return applySkipNaN(value);
+    }
 
     // 跳过 NaN 输入，不污染滑动窗口和累加器
     if (std::isnan(value) || std::isinf(value)) {
@@ -130,6 +235,41 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         return 0.0;
     }
 
+    return std::sqrt(variance);
+}
+
+// pandas rolling(skipna=True) 语义：
+//   - 窗口按 bar 推进（NaN 也占一格）
+//   - 均值/标准差只统计窗口内的有效值
+//   - 有效值个数 < min_periods 时输出 NaN
+//   - ddof=1 时用样本标准差（pandas rolling().std() 的默认口径）
+context_t STD::applySkipNaN(double value) {
+    bool needRecompute = pushSkipNaNBar(
+        _buffer, _count, _nextIndex, _stepsSinceRecompute, _skipState->_validCount, value,
+        [this](double old) { _sumAcc.sub(old); _sumSqAcc.sub(old * old); },
+        [this](double v)   { _sumAcc.add(v);   _sumSqAcc.add(v * v); }
+    );
+    if (needRecompute) {
+        _sumAcc.reset();
+        _sumSqAcc.reset();
+        _skipState->_validCount = 0;
+        for (int32_t i = 0; i < _window; ++i) {
+            if (std::isfinite(_buffer[i])) {
+                _sumAcc.add(_buffer[i]);
+                _sumSqAcc.add(_buffer[i] * _buffer[i]);
+                ++_skipState->_validCount;
+            }
+        }
+    }
+
+    if (_skipState->_validCount < _skipState->_minPeriods || _skipState->_validCount - _skipState->_ddof <= 0) {
+        return std::nan("nan");
+    }
+    double mean = _sumAcc.sum() / _skipState->_validCount;
+    double variance = (_sumSqAcc.sum() - _skipState->_validCount * mean * mean) / (_skipState->_validCount - _skipState->_ddof);
+    if (variance <= 0.0) {
+        return 0.0;
+    }
     return std::sqrt(variance);
 }
 

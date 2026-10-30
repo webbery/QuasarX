@@ -63,6 +63,8 @@ private:
         Vector<time_t> statDates;      // 报告期
         Vector<time_t> pubDates;       // 发布日期
         Map<String, Vector<double>> values;  // field -> values
+        // 派生字段（非 DB 列，由节点按报告期算出来），与 values 同长度同顺序
+        Map<String, Vector<double>> derivedValues;
 
         // 区间树索引：按 pub_date 排序，用于 O(log n) 查找
         // key = pub_date, value = 该期数据在 statDates/values 中的索引
@@ -80,6 +82,13 @@ private:
     void writeOutput(DataContext& context, const String& symbol,
                      const Map<String, double>& values);
     void writeForwardFill(DataContext& context, const String& symbol);
+
+    // 派生字段：不是 DB 里的列，由节点按报告期算出来
+    //   profit.revenue_ttm —— 营收 TTM
+    //     年报（12-31）：直接取全年营收
+    //     半年报（06-30）：今年 H1 + 去年全年 − 去年 H1
+    //     其它报告期：沿用上一期有效值（等价 Python 侧 asof_vals 的前向填充）
+    static bool isDerivedField(const String& category, const String& field);
 
     // 获取指定日期之前最新已发布的数据
     bool getLatestPublishedData(const symbol_t& symbol, const String& category,

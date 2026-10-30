@@ -9,7 +9,95 @@
 #include <algorithm>
 #include <limits>
 
+namespace {
+
+// ── 派生字段 ───────────────────────────────────────────────────────────────
+// 派生字段不是 FinanceDB 里的列，由节点按报告期算出来。目前只有一个：
+//   profit.revenue_ttm —— 营收 TTM
+//     MBRevenue 是"年初至今累计"口径：年报 = 全年，半年报 = H1，Q1/Q3 为空。
+//     直接用它算 PS 会在年报/半年报之间产生约 2 倍的锯齿，所以要拼成 TTM：
+//       年报（12-31）：全年营收
+//       半年报（06-30）：今年 H1 + 去年全年 − 去年 H1
+//     拼不出来的报告期（Q1/Q3、缺去年同期）沿用上一期有效 TTM —— 等价于
+//     lab 侧 build_valuation_features.py 里 asof_vals 的"有效值前向填充"，
+//     否则一季报/三季报会把整段 PS 打成 NaN。
+
+bool isDerivedFieldOf(const String& category, const String& field) {
+    return category == "profit" && field == "revenue_ttm";
+}
+
+// "2025-06-30" → (2025, 6, 30)
+bool parseYmd(const String& s, int& year, int& month, int& day) {
+    if (s.size() < 10) return false;
+    try {
+        year = std::stoi(s.substr(0, 4));
+        month = std::stoi(s.substr(5, 2));
+        day = std::stoi(s.substr(8, 2));
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+
+double rowNumber(const nlohmann::json& row, const String& key) {
+    if (!row.contains(key) || row[key].is_null()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    try {
+        return row[key].get<double>();
+    } catch (...) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
+// 报告期 -> 营收（MBRevenue）的查找表。
+// 同一报告期有多条记录（更正/重发）时，取公告日最新的那条。
+Map<String, double> buildRevenueMap(const nlohmann::json& rows) {
+    Map<String, double> revByStatDate;
+    Map<String, time_t> pubByStatDate;
+    for (const auto& row : rows) {
+        String statDateStr = row.value("stat_date", "");
+        if (statDateStr.empty()) continue;
+        double rev = rowNumber(row, "mb_revenue");
+        if (std::isnan(rev)) continue;
+        time_t pubDate = FromStr(row.value("pub_date", ""));
+        auto it = pubByStatDate.find(statDateStr);
+        if (it == pubByStatDate.end() || pubDate >= it->second) {
+            revByStatDate[statDateStr] = rev;
+            pubByStatDate[statDateStr] = pubDate;
+        }
+    }
+    return revByStatDate;
+}
+
+// 某一报告期的营收 TTM；拼不出来（Q1/Q3、缺去年同期）返回 NaN
+double revenueTtmOf(const String& statDateStr, double rev,
+                    const Map<String, double>& revByStatDate) {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    int year = 0, month = 0, day = 0;
+    if (!parseYmd(statDateStr, year, month, day)) return nan;
+
+    if (month == 12 && day == 31) {
+        return rev;                       // 年报：本身就是全年
+    }
+    if (month == 6 && day == 30) {
+        // 半年报：今年 H1 + 去年全年 − 去年 H1
+        auto fy = revByStatDate.find(fmt::format("{}-12-31", year - 1));
+        auto same = revByStatDate.find(fmt::format("{}-06-30", year - 1));
+        if (fy != revByStatDate.end() && same != revByStatDate.end() && !std::isnan(rev)) {
+            return rev + fy->second - same->second;
+        }
+    }
+    return nan;
+}
+
+}  // namespace
+
 FundamentalNode::FundamentalNode(Server* server) : _server(server) {}
+
+bool FundamentalNode::isDerivedField(const String& category, const String& field) {
+    return isDerivedFieldOf(category, field);
+}
 
 const nlohmann::json FundamentalNode::getParams() {
     return nlohmann::json::parse(R"({
@@ -99,8 +187,8 @@ void FundamentalNode::resolveOutputFields() {
                 // 检查是否是有效的基本面类别
                 if (financeDB.isValidCategory(category)) {
                     const auto& fieldDefs = financeDB.categoryFields(category);
-                    // 验证字段是否存在
-                    bool fieldExists = false;
+                    // 验证字段是否存在（DB 列，或节点自己算的派生字段）
+                    bool fieldExists = isDerivedFieldOf(category, field);
                     for (const auto& [csvCol, dbCol] : fieldDefs) {
                         if (dbCol == field) {
                             fieldExists = true;
@@ -137,13 +225,13 @@ void FundamentalNode::resolveOutputFields() {
                     fields.push_back(dbCol);
                 }
             } else {
-                // 只使用指定的字段（需要检查是否存在）
+                // 只使用指定的字段（DB 列或派生字段）
                 Set<String> validFields;
                 for (const auto& [csvCol, dbCol] : fieldDefs) {
                     validFields.insert(dbCol);
                 }
                 for (const auto& f : _fields) {
-                    if (validFields.count(f) > 0) {
+                    if (validFields.count(f) > 0 || isDerivedFieldOf(category, f)) {
                         fields.push_back(f);
                     } else {
                         WARN("[FundamentalNode:{}] 字段 {} 在类别 {} 中不存在", _id, f, category);
@@ -195,6 +283,23 @@ void FundamentalNode::loadFinanceData() {
             FinanceData data;
             const auto& dataArray = result["data"];
 
+            // DB 列与派生字段分开处理：派生字段不在 query 的返回列里
+            Vector<String> dbFields;
+            bool needRevenueTtm = false;
+            for (const auto& field : fields) {
+                if (isDerivedFieldOf(category, field)) {
+                    needRevenueTtm = true;
+                } else {
+                    dbFields.push_back(field);
+                }
+            }
+
+            // 营收 TTM 需要"报告期 -> 营收"的查找表（去年年报/半年报）
+            Map<String, double> revByStatDate;
+            if (needRevenueTtm) {
+                revByStatDate = buildRevenueMap(dataArray);
+            }
+
             for (const auto& row : dataArray) {
                 // 解析日期
                 String statDateStr = row.value("stat_date", "");
@@ -209,7 +314,7 @@ void FundamentalNode::loadFinanceData() {
                 data.pubDates.push_back(pubDate);
 
                 // 解析字段值
-                for (const auto& field : fields) {
+                for (const auto& field : dbFields) {
                     if (!data.values.count(field)) {
                         data.values[field] = Vector<double>();
                     }
@@ -220,9 +325,33 @@ void FundamentalNode::loadFinanceData() {
                         data.values[field].push_back(std::numeric_limits<double>::quiet_NaN());
                     }
                 }
+
+                // 派生字段：营收 TTM（与上面的 values 同序）
+                if (needRevenueTtm) {
+                    double rev = rowNumber(row, "mb_revenue");
+                    double ttm = revenueTtmOf(statDateStr, rev, revByStatDate);
+                    if (!data.derivedValues.count("revenue_ttm")) {
+                        data.derivedValues["revenue_ttm"] = Vector<double>();
+                    }
+                    data.derivedValues["revenue_ttm"].push_back(ttm);
+                }
             }
 
             if (!data.statDates.empty()) {
+                // 有效值前向填充：Q1/Q3 等拼不出 TTM 的报告期沿用上一期有效值，
+                // 与 Python 侧 asof_vals 的 ffill 一致（否则整段 PS 变 NaN）
+                auto ttmIt = data.derivedValues.find("revenue_ttm");
+                if (ttmIt != data.derivedValues.end()) {
+                    double last = std::numeric_limits<double>::quiet_NaN();
+                    for (auto& v : ttmIt->second) {
+                        if (std::isnan(v)) {
+                            v = last;
+                        } else {
+                            last = v;
+                        }
+                    }
+                }
+
                 // 构建区间树索引：按 pub_date 排序，用于 O(log n) 查找
                 for (int i = 0; i < static_cast<int>(data.pubDates.size()); ++i) {
                     data.pubDateIndex[data.pubDates[i]] = i;
@@ -267,10 +396,18 @@ NodeProcessResult FundamentalNode::Process(const String& strategy, DataContext& 
                     String key = symbolStr + "." + category + "." + field;
                     double value = std::numeric_limits<double>::quiet_NaN();
 
-                    auto fieldIt = data.values.find(field);
-                    if (fieldIt != data.values.end() &&
-                        latestIdx < static_cast<int>(fieldIt->second.size())) {
-                        value = fieldIt->second[latestIdx];
+                    // 派生字段（revenue_ttm）与 DB 列分开存
+                    auto derivedIt = data.derivedValues.find(field);
+                    if (derivedIt != data.derivedValues.end()) {
+                        if (latestIdx < static_cast<int>(derivedIt->second.size())) {
+                            value = derivedIt->second[latestIdx];
+                        }
+                    } else {
+                        auto fieldIt = data.values.find(field);
+                        if (fieldIt != data.values.end() &&
+                            latestIdx < static_cast<int>(fieldIt->second.size())) {
+                            value = fieldIt->second[latestIdx];
+                        }
                     }
 
                     // 写入 context

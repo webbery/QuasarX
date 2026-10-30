@@ -27,7 +27,10 @@ namespace {
 
     static const IntrinsicEntry intrinsic_table[] = {
         {"MA", [] (const nlohmann::json& config) -> ICallable* {
-            return new MA(config.value("_windowBars", 15));
+            int32_t window = config.value("_windowBars", 15);
+            bool skipNaN = config.value("_skipNaN", false);
+            int32_t minPeriods = config.value("_minPeriods", 0);
+            return new MA(window, skipNaN, minPeriods);
         }},
         {"MinMax", [] (const nlohmann::json& config) -> ICallable* {
             return nullptr;
@@ -45,7 +48,11 @@ namespace {
             return nullptr;
         }},
         {"STD", [] (const nlohmann::json& config) -> ICallable* {
-            return new STD(config.value("_windowBars", 15));
+            int32_t window = config.value("_windowBars", 15);
+            bool skipNaN = config.value("_skipNaN", false);
+            int32_t minPeriods = config.value("_minPeriods", 0);
+            int32_t ddof = config.value("_ddof", 0);
+            return new STD(window, skipNaN, minPeriods, ddof);
         }},
         {"Return", [] (const nlohmann::json& config) -> ICallable* {
             return new Return(config.value("_windowBars", 1));
@@ -161,6 +168,19 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     }
     auto callableConfig = config;
     callableConfig["_windowBars"] = windowBars;
+
+    // 解析 skipNaN / minPeriods / ddof（MA / STD 的 pandas 语义扩展）
+    if (config["params"].contains("skipNaN") && config["params"]["skipNaN"].contains("value")) {
+        callableConfig["_skipNaN"] = config["params"]["skipNaN"]["value"].get<bool>();
+    }
+    if (config["params"].contains("minPeriods") && config["params"]["minPeriods"].contains("value")) {
+        const auto& mp = config["params"]["minPeriods"]["value"];
+        callableConfig["_minPeriods"] = mp.is_number_integer() ? mp.get<int32_t>() : static_cast<int32_t>(mp.get<double>());
+    }
+    if (config["params"].contains("ddof") && config["params"]["ddof"].contains("value")) {
+        const auto& d = config["params"]["ddof"]["value"];
+        callableConfig["_ddof"] = d.is_number_integer() ? d.get<int32_t>() : static_cast<int32_t>(d.get<double>());
+    }
 
     // 3. 从上游 QuoteInputNode 提取 symbol 集合（BFS 遍历）
     Set<String> symbolSet;

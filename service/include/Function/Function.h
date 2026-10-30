@@ -5,20 +5,41 @@
 #include <deque>
 #include <utility>
 
+// skipNaN 模式的状态（MA / STD 共用）：
+//   - _minPeriods: 窗口内至少需要多少个有效值才输出
+//   - _ddof:       自由度调整（STD 用，MA 忽略）
+//   - _validCount: 窗口内的有效值个数
+// 只在 skipNaN=true 时动态分配，旧路径（skipNaN=false）不占用额外内存。
+struct SkipNaNState {
+    int32_t _minPeriods = 0;
+    int32_t _ddof = 0;
+    int32_t _validCount = 0;
+};
+
 class MA : public ICallable {
 public:
-    MA(short count);
+    /**
+     * @param count      窗口长度（bars）
+     * @param skipNaN    true = pandas 语义：窗口按 bar 推进，NaN 不计入统计量
+     *                   （false 时保持旧行为：NaN 会污染累加器）
+     * @param minPeriods 窗口内至少需要多少个有效值才输出；<=0 表示默认（等于窗口长度）
+     */
+    MA(int32_t count, bool skipNaN = false, int32_t minPeriods = 0);
+    ~MA();
     virtual context_t operator()(const Map<String, context_t>& args);
 
 private:
     double average();
     void recomputeSum();
+    context_t applySkipNaN(double value);  // pandas 语义：按 bar 推进窗口、跳过 NaN
+    void recomputeValid();                 // skipNaN 模式：只重算有效值
 private:
     int32_t _count;
     int32_t _nextIndex;
     int32_t _stepsSinceRecompute; // 定期重算计数器，防止滑动窗口 compensation 漂移
     KahanAccumulator _sumAcc;  // Kahan 补偿求和，降低累积误差
     std::vector<double> _buffer;
+    SkipNaNState* _skipState;  // 只在 skipNaN=true 时分配
 };
 
 class EMA: public ICallable {
@@ -43,10 +64,18 @@ public:
 
 class STD: public ICallable {
 public:
-    STD(int32_t count);
+    /**
+     * @param count      窗口长度（bars）
+     * @param skipNaN    true = pandas 语义：窗口按 bar 推进，NaN 不计入统计量
+     * @param minPeriods 窗口内至少需要多少个有效值才输出；<=0 表示默认（等于窗口长度）
+     * @param ddof       0 = 总体标准差（旧行为），1 = 样本标准差（pandas rolling().std()）
+     */
+    STD(int32_t count, bool skipNaN = false, int32_t minPeriods = 0, int32_t ddof = 0);
+    ~STD();
     virtual context_t operator()(const Map<String, context_t>& args);
 
 private:
+    context_t applySkipNaN(double value);  // pandas 语义：按 bar 推进窗口、跳过 NaN
     int32_t _window;
     int32_t _count;
     int32_t _nextIndex;
@@ -54,6 +83,7 @@ private:
     KahanAccumulator _sumAcc;    // Kahan 补偿求和
     KahanAccumulator _sumSqAcc;  // Kahan 补偿平方和
     std::vector<double> _buffer;
+    SkipNaNState* _skipState;  // 只在 skipNaN=true 时分配
 };
 
 /**

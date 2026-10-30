@@ -19,6 +19,7 @@
 #define INTRINSIC_PERCENTILE "pct"
 #define INTRINSIC_CS_COUNT  "cs_count"
 #define INTRINSIC_CS_SIZE   "cs_size"
+#define INTRINSIC_CS_MEDIAN_FILL "cs_median_fill"
 
 // 声明命名空间中的外部符号
 extern bool check_bool(const context_t& feature);
@@ -142,7 +143,8 @@ CrossSectionFuncType FormulaParser::getFuncType(const String& name) {
         {INTRINSIC_ZSCORE, CrossSectionFuncType::ZSCORE},
         {INTRINSIC_PERCENTILE, CrossSectionFuncType::PERCENTILE},
         {INTRINSIC_CS_COUNT, CrossSectionFuncType::CS_COUNT},
-        {INTRINSIC_CS_SIZE, CrossSectionFuncType::CS_SIZE}
+        {INTRINSIC_CS_SIZE, CrossSectionFuncType::CS_SIZE},
+        {INTRINSIC_CS_MEDIAN_FILL, CrossSectionFuncType::CS_MEDIAN_FILL}
     };
 
     auto it = typeMap.find(name);
@@ -158,6 +160,7 @@ bool FormulaParser::isCrossSectionFunction(const String& funName) {
         INTRINSIC_PERCENTILE,
         INTRINSIC_CS_COUNT,
         INTRINSIC_CS_SIZE,
+        INTRINSIC_CS_MEDIAN_FILL,
     };
     return crossFuncs.count(funName);
 }
@@ -316,6 +319,7 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         case CrossSectionFuncType::TOPK:
         case CrossSectionFuncType::BOTTOMK:
         case CrossSectionFuncType::CS_COUNT:
+        case CrossSectionFuncType::CS_MEDIAN_FILL:
             // 计算表达式值
             {
                 context_t val = evalNode(symbol, *node.exprAst, context);
@@ -535,6 +539,32 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         double sz = static_cast<double>(symbols.size());
         for (auto& [sym, score] : scores) {
             node.outputs[sym] = sz;
+        }
+        break;
+    }
+
+    case CrossSectionFuncType::CS_MEDIAN_FILL: {
+        // cs_median_fill(expr): 截面中位数填补
+        //   expr 有效 → 原样返回；expr 为 NaN → 当日截面中位数。
+        // 中位数口径与 pct(expr, 0.5) 一致（线性插值、跳过 NaN），
+        // 等价 pandas DataFrame.median(axis=1, skipna=True)。
+        auto split = splitValidScores(scores);
+        auto sorted = split.valid;
+        std::stable_sort(sorted.begin(), sorted.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+
+        int n = static_cast<int>(sorted.size());
+        double median = std::numeric_limits<double>::quiet_NaN();
+        if (n > 0) {
+            double pos = 0.5 * (n - 1);
+            size_t lo = static_cast<size_t>(std::floor(pos));
+            size_t hi = static_cast<size_t>(std::ceil(pos));
+            double frac = pos - static_cast<double>(lo);
+            median = sorted[lo].second + frac * (sorted[hi].second - sorted[lo].second);
+        }
+        // 全截面都缺失时保持 NaN（无法填补）
+        for (auto& [sym, score] : scores) {
+            node.outputs[sym] = std::isnan(score) ? median : score;
         }
         break;
     }
