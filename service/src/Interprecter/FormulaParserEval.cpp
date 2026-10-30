@@ -250,23 +250,21 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
 }
 
 context_t FormulaParser::evalOrExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    auto left = evalNode(symbol, *ast.nodes[0], context);
-    if (statement::check_bool(left)) return true;
-
-    for (size_t i = 1; i < ast.nodes.size(); i += 2) {
-        auto right = evalNode(symbol, *ast.nodes[i], context);
-        if (statement::check_bool(right)) return true;
+    // 短路求值：从左到右，遇到第一个 true 立即返回
+    // 注意：optimize_ast 后 AST 是扁平结构 OrExpr[a, b, c]，不是 OrExpr[a, 'or', b, 'or', c]
+    for (size_t i = 0; i < ast.nodes.size(); i++) {
+        auto operand = evalNode(symbol, *ast.nodes[i], context);
+        if (statement::check_bool(operand)) return true;
     }
     return false;
 }
 
 context_t FormulaParser::evalAndExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    auto left = evalNode(symbol, *ast.nodes[0], context);
-    if (statement::check_bool(left) == false) return false;
-
-    for (size_t i = 1; i < ast.nodes.size(); i += 2) {
-        auto right = evalNode(symbol, *ast.nodes[i], context);
-        if (statement::check_bool(right) == false) return false;
+    // 短路求值：从左到右，遇到第一个 false 立即返回
+    // 注意：optimize_ast 后 AST 是扁平结构 AndExpr[a, b, c]，不是 AndExpr[a, 'and', b, 'and', c]
+    for (size_t i = 0; i < ast.nodes.size(); i++) {
+        auto operand = evalNode(symbol, *ast.nodes[i], context);
+        if (statement::check_bool(operand) == false) return false;
     }
     return true;
 }

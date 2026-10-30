@@ -47,7 +47,10 @@ String grammar = R"(
         #   [0] / [1]     多列输出的列索引 —— 读 {symbol}.{var}_{N}
         # 合成一条规则的话，解析器看到 [0] 无法判断是「往回 0 根」还是「第 0 列」，
         # 只能运行期探测 key 是否存在才能区分，验证侧就再也对不上求值侧的语义了。
-        Trailer         <- '.' Identifier / '(' Arguments? ')' / TimeIndex / ColumnIndex
+        #
+        # 注意：原来的 `'.' Identifier` 已删除。带点变量名（如 profit.roe_avg）
+        # 现在由 Identifier 规则直接支持（见下方），不再作为 Trailer 处理。
+        Trailer         <- '(' Arguments? ')' / TimeIndex / ColumnIndex
         TimeIndex       <- '[' < 't' '-' [0-9]+ > ']' / '[' < 't' > ']'
         ColumnIndex     <- '[' < [0-9]+ > ']'
 
@@ -68,10 +71,16 @@ String grammar = R"(
         ListExpr        <- '[' Expression (',' Expression)* ']'
 
         # 布尔字面量（支持大小写）
+        # %word 指令让 peglib 在匹配这些字面量后自动检查词边界，
+        # 避免 true_value 被误解析为 true + _value
         BoolLiteral     <- < 'true' > / < 'false' > / < 'True' > / < 'False' >
 
-        # 标识符和数字（排除关键字）
-        Identifier      <- !('not' / 'and' / 'or' / 'true' / 'false' / 'True' / 'False') < [a-zA-Z_][a-zA-Z_0-9]* >
+        # 标识符和数字
+        # Identifier 现在支持带点变量名（如 profit.roe_avg、grp.score），
+        # 用于引用 FundamentalNode 和 EMDNode 等发布的带点 context key。
+        # %word 指令让 peglib 在匹配关键字（not/and/or/true/false）后自动检查
+        # 词边界，避免 notes 被误解析为 not + es、order_flow 被误解析为 or + der_flow
+        Identifier      <- < [a-zA-Z_][a-zA-Z_0-9]* ('.' [a-zA-Z_][a-zA-Z_0-9]*)* >
         Number          <- < '-'? [0-9]+ ('.' [0-9-9]+)? >
         String          <- < '"' [^"]* '"' > / < "'" [^']* "'" >
 
@@ -82,6 +91,7 @@ String grammar = R"(
 
         # 语句分隔符
         EOL             <- ';' [ \t\r\n]* / !.
+        %word           <- [a-zA-Z_0-9]
         %whitespace     <- [ \t]*
     )";
 

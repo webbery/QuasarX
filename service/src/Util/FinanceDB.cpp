@@ -400,7 +400,10 @@ nlohmann::json FinanceDB::query(const String& category,
         sql += fmt::format("{} stat_date <= '{}'", has_where ? " AND" : " WHERE", end_date);
     }
 
-    sql += fmt::format(" ORDER BY stat_date ASC LIMIT {}", limit);
+    // 用 DESC + LIMIT 取最新的 N 条记录（修复：原来 ASC 会取最老的 N 条）
+    // 但调用方（如 FundamentalNode）期望数据按时间顺序排列（旧→新），
+    // 所以查询后需要反转结果
+    sql += fmt::format(" ORDER BY stat_date DESC LIMIT {}", limit);
 
     std::lock_guard<std::recursive_mutex> lock(mtx());
     duckdb_result res;
@@ -419,19 +422,20 @@ nlohmann::json FinanceDB::query(const String& category,
     result["count"] = static_cast<int>(row_count);
 
     nlohmann::json::array_t data;
-    for (idx_t i = 0; i < row_count; i++) {
+    // 从后往前遍历，实现反转（DESC 查询结果 → ASC 返回给调用方）
+    for (idx_t i = row_count; i > 0; i--) {
         nlohmann::json row;
-        int64_t sym_encoded = duckdb_value_int64(&res, 0, i);
+        int64_t sym_encoded = duckdb_value_int64(&res, 0, i - 1);
         row["code"] = decodeSymbol(sym_encoded);
-        row["stat_date"] = duckdb_value_varchar(&res, 1, i);
-        row["pub_date"] = duckdb_value_varchar(&res, 2, i);
+        row["stat_date"] = duckdb_value_varchar(&res, 1, i - 1);
+        row["pub_date"] = duckdb_value_varchar(&res, 2, i - 1);
 
         for (size_t fi = 0; fi < field_map.size(); fi++) {
             const auto& [csv_col, db_col] = field_map[fi];
-            if (duckdb_value_is_null(&res, static_cast<idx_t>(3 + fi), i)) {
+            if (duckdb_value_is_null(&res, static_cast<idx_t>(3 + fi), i - 1)) {
                 row[db_col] = nullptr;
             } else {
-                row[db_col] = duckdb_value_double(&res, static_cast<idx_t>(3 + fi), i);
+                row[db_col] = duckdb_value_double(&res, static_cast<idx_t>(3 + fi), i - 1);
             }
         }
         data.push_back(std::move(row));

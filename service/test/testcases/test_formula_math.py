@@ -1764,3 +1764,272 @@ class TestCrossSectionPercentile:
             assert np.allclose(got, expected, atol=PCT_TOLERANCE), (
                 f"[{symbol}] pct(close, 0.5) 期望中位数 {expected}, 实际 {got[:3]}"
             )
+
+
+# ============================================================
+# 带点变量名（category.field）
+# ============================================================
+# 公式语法原本只认 `[a-zA-Z_][a-zA-Z_0-9]*` 这种不带点的标识符，但服务端有多个
+# 节点发布的 context key 天然带点：
+#   FundamentalNode: `{symbol}.{category}.{field}`  → 短名 `profit.roe_avg`
+#   EMDNode:         `{symbol}.{label}.nimf_0`      → 短名 `{label}.nimf_0`
+# 下游公式要引用它们就得写 `profit.roe_avg[t]`。语法不支持时这类引用的两种坏表现：
+#   1. 校验期报 `Unknown variable 'profit'`（点号后整段被当成另一个标识符）
+#   2. 运行期更糟：点号后的成员名被静默丢弃，退化成读 `sz.xxx.profit`
+#
+# 本节复用 PCT 那套常数价数据（无噪声 → 期望值完全确定），覆盖：
+#   1. 带点标签的 FormulaNode 输出 → 下游用带点名引用
+#   2. 带点名进截面函数
+#   3. FundamentalNode 的真实场景：profit.roe_avg[t]
+#   4. 负例：不存在的带点名必须仍在 Init 阶段报错，且报的是完整名字
+#   5. 关键字前缀的标识符（order_flow / notes / true_value）
+# ============================================================
+
+# 每个标的的 roe_avg（profit 类别），阈值 0.20 → 命中 900020 / 900021 / 900026
+DOTTED_ROE_BY_SYMBOL = {
+    "sz.900020": 0.30,
+    "sz.900021": 0.25,
+    "sz.900022": 0.20,   # 恰好等于阈值，不满足严格大于
+    "sz.900023": 0.10,
+    "sz.900024": 0.05,
+    "sz.900025": 0.15,
+    "sz.900026": 0.35,
+}
+DOTTED_ROE_EXPECTED = {"sz.900020", "sz.900021", "sz.900026"}
+
+# close >= 40 的标的（常数价，无噪声）
+DOTTED_CLOSE_40_EXPECTED = {"sz.900024", "sz.900025", "sz.900026"}
+
+# profit 类别的 CSV 表头，列序与 FinanceDB::CATEGORY_DEFS["profit"].field_map 对应
+DOTTED_PROFIT_HEADER = (
+    "code,pubDate,statDate,roeAvg,npMargin,gpMargin,netProfit,epsTTM,"
+    "MBRevenue,totalShare,liqaShare"
+)
+# 财报必须在回测开始（2024-01-01）之前发布，否则按 pub_date 前视时全是 NaN
+DOTTED_FUND_PUB_DATE = "2023-10-30"
+DOTTED_FUND_STAT_DATE = "2023-09-30"
+
+
+def _build_dotted_label_strategy(strategy_id, label, buy_expr):
+    """Input → FormulaNode(label 带点) → SignalNode → DebugNode
+
+    FormulaNode 的 label 直接拼进 context key：`{symbol}.{label}`，
+    label 带点 → 发布出去的 key 带点 → 下游必须用带点名引用。
+    """
+    return (StrategyBuilder(
+                strategy_id,
+                f"带点变量名测试_{strategy_id}",
+                description="公式变量名支持点号",
+                capital=100000,
+                backtest={
+                    "start": PCT_START.strftime("%Y-%m-%d"),
+                    "end": (PCT_START + timedelta(days=PCT_N_BARS * 2)).strftime("%Y-%m-%d"),
+                },
+                source="A_hfq")
+            .input("1", symbol=PCT_SYMBOLS, label="行情", fields=("close",))
+            .formula("2", "close", label=label)
+            .signal("3", PCT_SYMBOLS, label="信号", buy=buy_expr, sell="false")
+            .debug("4", "debug_signal")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .build())
+
+
+def _build_fundamental_strategy(strategy_id, buy_expr):
+    """Input → FundamentalNode → SignalNode → DebugNode
+
+    FundamentalNode 读 params 的方式和其它节点不一样：它直接读裸值，不读
+    {"value":..., "type":...} 信封（见 FundamentalNode::Init）。
+    """
+    builder = (StrategyBuilder(
+                   strategy_id,
+                   f"基本面字段测试_{strategy_id}",
+                   description="FundamentalNode 输出的 category.field 引用",
+                   capital=100000,
+                   backtest={
+                       "start": PCT_START.strftime("%Y-%m-%d"),
+                       "end": (PCT_START + timedelta(days=PCT_N_BARS * 2)).strftime("%Y-%m-%d"),
+                   },
+                   source="A_hfq")
+               .input("1", symbol=PCT_SYMBOLS, label="行情", fields=("close",)))
+    builder.add({
+        "id": "2", "type": "custom", "position": {"x": 0, "y": 0},
+        "data": {
+            "label": "fund", "nodeType": "fundamental",
+            "params": {"categories": "", "fields": "", "lookback": 8, "alignMode": "latest"},
+        },
+    })
+    (builder.signal("3", PCT_SYMBOLS, label="信号", buy=buy_expr, sell="false")
+            .debug("4", "debug_signal")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4"))
+    return builder.build()
+
+
+def _import_fundamental_data(headers):
+    """导入 7 个标的的 profit 类基本面数据
+
+    先删同名标的的旧行，保证重复运行不会累积重复记录。
+    """
+    for symbol in PCT_SYMBOLS:
+        requests.delete(f"{BASE_URL}/finance/data",
+                        json={"category": "profit", "code": symbol},
+                        headers=headers, verify=VERIFY_SSL, timeout=30)
+
+    lines = [DOTTED_PROFIT_HEADER]
+    for symbol in PCT_SYMBOLS:
+        roe = DOTTED_ROE_BY_SYMBOL[symbol]
+        lines.append(
+            f"{symbol},{DOTTED_FUND_PUB_DATE},{DOTTED_FUND_STAT_DATE},"
+            f"{roe},0.20,0.30,1000000,1.5,,100000,100000"
+        )
+    resp = requests.post(f"{BASE_URL}/finance/data",
+                         json={"action": "import", "category": "profit", "data": lines},
+                         headers=headers, verify=VERIFY_SSL, timeout=60)
+    assert resp.status_code == 200, f"导入基本面数据失败: {resp.text[:300]}"
+    assert resp.json()["imported_rows"] == len(PCT_SYMBOLS), (
+        f"基本面导入行数不对: {resp.text[:200]}"
+    )
+
+
+def _cleanup_fundamental_data(headers):
+    for symbol in PCT_SYMBOLS:
+        try:
+            requests.delete(f"{BASE_URL}/finance/data",
+                            json={"category": "profit", "code": symbol},
+                            headers=headers, verify=VERIFY_SSL, timeout=30)
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def fundamental_headers(pct_headers):
+    """导入基本面数据 → 测试结束清理"""
+    _import_fundamental_data(pct_headers)
+    yield pct_headers
+    _cleanup_fundamental_data(pct_headers)
+
+
+class TestDottedVariableName:
+    """带点名的变量引用"""
+
+    def test_dotted_label_reference(self, pct_headers):
+        """带点标签的 FormulaNode 输出，下游用带点名引用
+
+        FormulaNode(label="grp.score") → context key `{symbol}.grp.score`
+        SignalNode: buy = "grp.score[t] >= 40" → 期望命中 close>=40 的 3 个标的
+        """
+        sid = "dotted_label_ref"
+        strategy = _build_dotted_label_strategy(sid, "grp.score", "grp.score[t] >= 40")
+        _run_backtest(strategy, pct_headers)
+
+        buy = _symbols_with_signal(sid, 1)
+        missing = DOTTED_CLOSE_40_EXPECTED - buy
+        assert not missing, (
+            f"带点变量名: 缺 {missing}，实际 BUY={buy}。"
+            f"若一个都没有，说明 'grp.score' 没被当成变量名。"
+        )
+
+    def test_dotted_name_in_cross_section_function(self, pct_headers):
+        """带点名进截面函数
+
+        buy = "topk(grp.score, 3)" → 期望命中价格最高的 3 个标的
+        （900021/900022 并列 20，不进 top-3，结果无歧义）
+        """
+        sid = "dotted_topk"
+        strategy = _build_dotted_label_strategy(sid, "grp.score", "topk(grp.score, 3)")
+        _run_backtest(strategy, pct_headers)
+
+        buy = _symbols_with_signal(sid, 1)
+        expected = {"sz.900024", "sz.900025", "sz.900026"}
+        missing = expected - buy
+        assert not missing, (
+            f"带点名 + 截面函数: 缺 {missing}，实际 BUY={buy}"
+        )
+
+    def test_fundamental_field_reference(self, fundamental_headers):
+        """FundamentalNode 的真实场景：profit.roe_avg[t]
+
+        FundamentalNode 发布 `{symbol}.profit.roe_avg`
+        SignalNode: buy = "profit.roe_avg[t] > 0.20"
+        → 期望命中 roe_avg > 0.20 的 3 个标的
+        """
+        sid = "dotted_fundamental"
+        strategy = _build_fundamental_strategy(sid, "profit.roe_avg[t] > 0.20")
+        _run_backtest(strategy, fundamental_headers)
+
+        buy = _symbols_with_signal(sid, 1)
+        missing = DOTTED_ROE_EXPECTED - buy
+        assert not missing, (
+            f"FundamentalNode 字段引用: 缺 {missing}，实际 BUY={buy}。"
+            f"若一个都没有，说明 'profit.roe_avg' 没被当成变量名。"
+        )
+        assert "sz.900022" not in buy, (
+            f"FundamentalNode 字段引用: sz.900022 (roe=0.20) 不满足严格大于，不该 BUY，"
+            f"实际 BUY={buy}"
+        )
+
+    def test_unknown_dotted_variable_rejected(self, pct_headers):
+        """负例：不存在的带点名必须在 Init 阶段报错，且报的是完整名字
+
+        没有这条负例的话，「带点名一律放行」也能让上面的用例变绿。
+        """
+        sid = "dotted_unknown"
+        strategy = _build_dotted_label_strategy(sid, "grp.score", "grp.nope[t] >= 40")
+        resp = requests.post(f"{BASE_URL}/backtest",
+                             json={"script": json.dumps(strategy), "validate": False},
+                             headers=pct_headers, verify=VERIFY_SSL, timeout=600)
+        assert resp.status_code != 200, (
+            f"未知带点变量名应当让策略初始化失败，实际 HTTP {resp.status_code}"
+        )
+        body = resp.text
+        assert "Unknown variable" in body, (
+            f"期望 Unknown variable 报错，实际: {body[:300]}"
+        )
+        assert "grp.nope" in body, (
+            f"报错应指出完整的变量名 'grp.nope'，实际: {body[:300]}"
+        )
+
+
+class TestKeywordPrefixIdentifier:
+    """关键字前缀的标识符 —— 语法加词边界后才是合法变量名"""
+
+    def test_identifier_starting_with_or(self, pct_headers):
+        """order_flow：旧语法里 'or' 前缀让 Identifier 直接匹配失败"""
+        sid = "kw_prefix_or"
+        strategy = _build_dotted_label_strategy(sid, "order_flow", "order_flow[t] >= 40")
+        _run_backtest(strategy, pct_headers)
+
+        buy = _symbols_with_signal(sid, 1)
+        missing = DOTTED_CLOSE_40_EXPECTED - buy
+        assert not missing, (
+            f"order_flow: 缺 {missing}，实际 BUY={buy}。"
+            f"若解析失败，说明 'or' 前缀仍被当成关键字。"
+        )
+
+    def test_identifier_starting_with_not(self, pct_headers):
+        """notes：旧语法里 'not' 被当成前缀运算符，'notes' 被拆成 not + es"""
+        sid = "kw_prefix_not"
+        strategy = _build_dotted_label_strategy(sid, "notes", "notes[t] >= 40")
+        _run_backtest(strategy, pct_headers)
+
+        buy = _symbols_with_signal(sid, 1)
+        missing = DOTTED_CLOSE_40_EXPECTED - buy
+        assert not missing, (
+            f"notes: 缺 {missing}，实际 BUY={buy}。"
+            f"若被解析成 'not es'，求值结果与预期完全不同。"
+        )
+
+    def test_identifier_starting_with_true(self, pct_headers):
+        """true_value：旧语法里 BoolLiteral 会吃掉 'true' 前缀"""
+        sid = "kw_prefix_true"
+        strategy = _build_dotted_label_strategy(sid, "true_value", "true_value[t] >= 40")
+        _run_backtest(strategy, pct_headers)
+
+        buy = _symbols_with_signal(sid, 1)
+        missing = DOTTED_CLOSE_40_EXPECTED - buy
+        assert not missing, (
+            f"true_value: 缺 {missing}，实际 BUY={buy}"
+        )
