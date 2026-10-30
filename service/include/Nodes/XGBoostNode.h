@@ -43,6 +43,7 @@ public:
     virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
     virtual Map<String, ArgType> out_elements() override;
     virtual void UpdateLabel(const String& label) override;
+    virtual Set<String> getRequiredFeatures() override;
 
     const Vector<String>& featureKeys() const { return _feature_keys; }
     const Map<String, Vector<String>>& resolvedFeatures() const { return _resolved_features; }

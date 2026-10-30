@@ -519,7 +519,7 @@ run_id_t HistorySimulationBase::createBacktestContext(
             }
 
             context->setCurIndex(symbol, startIndex);
-            INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
+            DEBUG_INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
 
             if (_backtestStartTime != 0) {
                 size_t off = data.size() - startIndex;  // 默认：start 之后无数据 → 全程不交易
@@ -577,7 +577,7 @@ run_id_t HistorySimulationBase::createBacktestContext(
 
     _backtestContexts.emplace(runId, std::move(context));
 
-    INFO("Created backtest context: runId={}, strategy={}, symbols={}, initialCapital={}",
+    DEBUG_INFO("Created backtest context: runId={}, strategy={}, symbols={}, initialCapital={}",
          runId, strategy_name, symbols.size(), initial_capital);
 
     return runId;

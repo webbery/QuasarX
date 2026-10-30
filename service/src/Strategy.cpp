@@ -36,6 +36,7 @@
 #include "Nodes/XGBoostNode.h"
 #include "Nodes/BreakoutNode.h"
 #include "Nodes/CacheFeatureNode.h"
+#include "Nodes/FundamentalNode.h"
 #include "std_header.h"
 #include "Util/system.h"
 
@@ -63,6 +64,7 @@ namespace {
             {"xgboost", StrategyNodeType::XGBoost},
             {"breakout", StrategyNodeType::Breakout},
             {"cache_feature", StrategyNodeType::CacheFeature},
+            {"fundamental", StrategyNodeType::Fundamental},
         };
         return m;
     }
@@ -210,6 +212,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::CacheFeature:
             nodeInstance = generate_node<CacheFeatureNode>(node["id"]);
+            break;
+        case StrategyNodeType::Fundamental:
+            nodeInstance = generate_node<FundamentalNode>(node["id"], server);
             break;
         default:
             WARN("Unknown node type: {}", node_type);

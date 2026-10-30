@@ -77,6 +77,7 @@ enum class StrategyNodeType {
     FactorCombine,  // 多因子合成节点
     Breakout,   // 包络突破状态机节点
     CacheFeature,   // 缓存特征节点（快速回测模式）
+    Fundamental,    // 基本面数据节点（从 FinanceDB 读取财务指标）
 };
 
 struct AgentStrategyInfo;

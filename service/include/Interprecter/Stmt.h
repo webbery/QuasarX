@@ -120,6 +120,12 @@ public:
      */
     Map<symbol_t, double> computeNumeric(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
 
+    /**
+     * @brief 获取表达式中使用的所有变量名（Identifier）
+     * 用于上游数据源节点（如 FundamentalNode）动态推断需要加载的数据
+     */
+    Set<String> getIdentifiers();
+
 public:
     context_t evalNumber(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalBoolLiteral(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
@@ -215,6 +221,9 @@ private:
 
     // 从表达式提取截面函数并建图（递归）
     std::string extractAndBuildGraph(const peg::Ast& node, int& counter);
+
+    // 递归遍历 AST，提取所有 Identifier 名称
+    void extractIdentifiers(const peg::Ast& ast, Set<String>& out);
 
 private:
     peg::parser _parser;

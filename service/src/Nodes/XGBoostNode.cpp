@@ -594,6 +594,11 @@ Map<String, ArgType> XGBoostNode::out_elements() {
     return _outputs;
 }
 
+Set<String> XGBoostNode::getRequiredFeatures() {
+    // 返回模型需要的特征名列表
+    return Set<String>(_feature_keys.begin(), _feature_keys.end());
+}
+
 void XGBoostNode::UpdateLabel(const String& label) {
     if (_label != label) {
         Map<String, ArgType> new_outputs;

@@ -38,6 +38,35 @@ Set<symbol_t> QNode::discoverUpstreamSymbols() {
     return symbols;
 }
 
+Set<QNode*> QNode::discoverDownstreamNodes() {
+    Set<QNode*> downstream;
+    Set<QNode*> visited;
+    Vector<QNode*> queue;
+
+    // 从当前节点的所有直接后继开始 BFS
+    for (auto& item : _outs) {
+        queue.push_back(item.second);
+    }
+
+    while (!queue.empty()) {
+        QNode* current = queue.back();
+        queue.pop_back();
+
+        if (visited.count(current)) continue;
+        visited.insert(current);
+        downstream.insert(current);
+
+        // 继续遍历当前节点的后继
+        for (auto& item : current->outs()) {
+            if (!visited.count(item.second)) {
+                queue.push_back(item.second);
+            }
+        }
+    }
+
+    return downstream;
+}
+
 Map<String, ArgType> QNode::out_elements() {
     Map<String, ArgType> elems;
     return elems;

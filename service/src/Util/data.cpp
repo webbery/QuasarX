@@ -866,8 +866,6 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
             *out_dates = std::move(dates);
         }
 
-        INFO("[LoadHistoryDataWithFreq] Loaded {} bars from DuckDB for {} ({})",
-             bars.size(), symbol_str, table);
         return result;
 
     } catch (const std::exception& e) {

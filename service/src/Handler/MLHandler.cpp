@@ -268,12 +268,12 @@ void collectXGBoostFeatures(
                     matched.push_back(shortName);
                 }
             }
-            INFO("[MLCollect] XGBoost upstream node#{} matched {}/{} keys: [{}]",
-                 id, matched.size(), elements.size(), fmt::join(matched, ", "));
+            // INFO("[MLCollect] XGBoost upstream node#{} matched {}/{} keys: [{}]",
+            //      id, matched.size(), elements.size(), fmt::join(matched, ", "));
         }
     }
-    INFO("[MLCollect] Total features collected: {} entries: [{}]",
-         outFeatureNames.size(), fmt::join(outFeatureNames, ", "));
+    // INFO("[MLCollect] Total features collected: {} entries: [{}]",
+    //      outFeatureNames.size(), fmt::join(outFeatureNames, ", "));
 }
 
 }  // namespace

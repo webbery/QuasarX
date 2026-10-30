@@ -15,6 +15,7 @@ public:
 
     virtual bool Init(const nlohmann::json& config) override;
     virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
+    virtual Set<String> getRequiredFeatures() override;
 
     bool ParseBuyExpression(const String& expression);
     bool ParseSellExpression(const String& expression);

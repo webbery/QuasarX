@@ -597,3 +597,23 @@ List<Pair<symbol_t, TradeAction>> FormulaParser::envokeMixedCase(const Vector<sy
 
     return decisions;
 }
+
+Set<String> FormulaParser::getIdentifiers() {
+    Set<String> identifiers;
+    if (_ast) {
+        extractIdentifiers(*_ast, identifiers);
+    }
+    return identifiers;
+}
+
+void FormulaParser::extractIdentifiers(const peg::Ast& ast, Set<String>& out) {
+    // 如果是 Identifier 节点，添加到集合
+    if (ast.name == "Identifier") {
+        out.insert(String(ast.token));
+    }
+
+    // 递归遍历所有子节点
+    for (const auto& child : ast.nodes) {
+        extractIdentifiers(*child, out);
+    }
+}

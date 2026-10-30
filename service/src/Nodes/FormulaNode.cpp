@@ -96,3 +96,11 @@ Map<String, ArgType> FormulaNode::out_elements() {
     }
     return elems;
 }
+
+Set<String> FormulaNode::getRequiredFeatures() {
+    // 从表达式 AST 中提取所有 Identifier
+    if (_parser) {
+        return _parser->getIdentifiers();
+    }
+    return {};
+}

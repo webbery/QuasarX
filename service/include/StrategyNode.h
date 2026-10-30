@@ -95,7 +95,7 @@ public:
     virtual Map<String, ArgType> out_elements();
 
     virtual void UpdateLabel(const String& label) {}
-    
+
     void setID(const uint32_t name){ _id = name; }
 
     size_t in_degree() const { return _ins.size(); }
@@ -108,6 +108,22 @@ public:
 
     // BFS 遍历所有上游节点，找到 QuoteInputNode 并提取其 symbol 集合
     Set<symbol_t> discoverUpstreamSymbols();
+
+    // BFS 遍历所有下游节点（后继节点）
+    Set<QNode*> discoverDownstreamNodes();
+
+    /**
+     * @brief 返回本节点使用的所有特征名（用于上游数据源节点动态加载）
+     * 
+     * 特征名格式约定：
+     *   - 行情数据: "close", "open", "high", "low", "volume"
+     *   - 基本面: "profit.roe_avg", "growth.yoy_ni" (category.field)
+     *   - 技术指标: "ma_5", "rsi_14" (label 或 feature name)
+     * 
+     * 默认实现返回空集合，子类按需覆盖。
+     * 返回的特征名用于上游数据源节点（如 FundamentalNode）动态推断需要加载的数据。
+     */
+    virtual Set<String> getRequiredFeatures() { return {}; }
 
 protected:
     // 从连接图解析所有输入映射: dataName → contextKey
