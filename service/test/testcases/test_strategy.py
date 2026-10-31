@@ -4,6 +4,7 @@ from pathlib import Path
 from tool import (
     check_response, BASE_URL, VERIFY_SSL, DEBUG_DIR,
     api_run_strategy, api_stop_strategy, api_cleanup_strategy,
+    ensure_script_models,
 )
 import pytest
 import json
@@ -300,17 +301,37 @@ class TestStrategy:
         kwargs = self._auth_kwargs(auth_token)
 
         no_reply = ['ml.json']
-        skip_scripts = ['ml.json', 'ETF_Momentum.json']  # 跳过不需要验证的策略
+        # ETF_Momentum.json 依赖 5m ETF 数据，stock_hist_sim 模式不生成，跳过验证
+        skip_scripts = ['ETF_Momentum.json']
         script_dir = './script'
-        for item_name in os.listdir(script_dir):
+        # 目录里除了策略 JSON 还混着 .py / .csv / .png，必须按后缀过滤：
+        # 直接 json.load 一个非 JSON 文件会抛 JSONDecodeError/UnicodeDecodeError，
+        # 且 os.listdir 的返回顺序不保证稳定（ext4 dir_index 按哈希排序）。
+        script_files = sorted(
+            f for f in os.listdir(script_dir) if f.lower().endswith('.json')
+        )
+        assert script_files, f"{script_dir} 下没有可回测的策略 JSON"
+
+        for item_name in script_files:
             if item_name in skip_scripts:
                 continue
 
             item_path = os.path.join(script_dir, item_name)
             print('run script:', item_name)
             script = self.load_script(item_path)
-            if len(script) < 2:
-                return
+            if 'nodes' not in script:
+                print(f'skip non-strategy json: {item_name}')
+                continue
+
+            # 模型节点按 {db_path}/models/<modelFile> 解析，文件缺失会让 InitStrategy
+            # 直接 500（例如 ml.json 引用的 production/test_xgb_business-XGBoost.json）。
+            # 这里按需补齐仓库内置模型，已存在的文件不覆盖。
+            model_states = ensure_script_models(script, item_name)
+            missing = sorted(p for p, s in model_states.items() if s == 'missing')
+            assert not missing, (
+                f"{item_name} 引用的模型在服务端 models/ 下不存在，测试侧也没有种子模型: "
+                f"{missing}（可先 multipart deploy 对应策略，或补充 tool.MODEL_SEEDS）"
+            )
 
             script_json = json.dumps(script, ensure_ascii=False)
             headers = {'Authorization': auth_token} if auth_token else {}
@@ -324,6 +345,9 @@ class TestStrategy:
             data = check_response(response)
             assert isinstance(data, object)
             if item_name in no_reply:
+                # 买卖点由外部模型决定（ml.json），不做数量断言；
+                # 但回测必须跑出 summary——模型缺失时这里是 500，check_response 会先失败。
+                assert data.get('summary'), f"{item_name} 回测未产出 summary: {list(data)}"
                 continue
 
             assert 'buy' in data

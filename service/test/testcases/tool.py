@@ -74,6 +74,71 @@ def _resolve_data_dir() -> Path:
 _DATA_DIR = _resolve_data_dir()
 DEBUG_DIR = _DATA_DIR / "debug"
 CSV_DATA_DIR = _DATA_DIR / "A_hfq"
+MODELS_DIR = _DATA_DIR / "models"
+
+# 仓库内置模型产物 → 服务端逻辑模型路径（{db_path}/models/<logical>）。
+# 服务端的 models/ 是运行期产物：正常流程由 multipart deploy 写入，直接打 /backtest 不会生成。
+# 批量回测前用这张表把缺失的模型补齐，否则模型节点 Init 会直接失败（HTTP 500）。
+# 值 = (本地模型文件, 本地 meta 文件或 None)，均在 testcases/ai_test_data/ 下。
+_AI_DATA_DIR = Path(__file__).parent / "ai_test_data"
+MODEL_SEEDS = {
+    # ml.json 的 XGBoost 节点引用 test_xgb_business 部署时写入的模型；
+    # 该模型即 generate_xgb_trivial.py 产出的 1 树 trivial 模型。
+    "production/test_xgb_business-XGBoost.json": (
+        "xgb_trivial_model.json",
+        "xgb_trivial_meta.json",
+    ),
+}
+
+
+def ensure_script_models(script: dict, name: str = "") -> dict:
+    """确保策略 JSON 引用的模型文件已就绪（{db_path}/models/<modelFile>）
+
+    模型节点（XGBoostNode / OnnxInferenceNode）按 {db_path}/models/<modelFile> 解析，
+    文件缺失时 InitStrategy 直接失败（HTTP 500），不会退化成「无模型」跑完。
+
+    只补仓库里已有种子的模型（MODEL_SEEDS），已存在的文件绝不覆盖——正常 deploy
+    流程写入的模型不能被测试侧覆盖成 trivial 模型。
+
+    返回 {logical_path: "present" | "seeded" | "missing"}，调用方据此决定跳过还是失败。
+    """
+    states: dict = {}
+    for node in script.get("nodes") or []:
+        params = (node.get("data") or {}).get("params") or {}
+        raw = params.get("modelFile")
+        if not raw:
+            continue
+        logical = raw if isinstance(raw, str) else (raw.get("value") or "")
+        if not logical:
+            continue
+        if logical in states:  # 同一模型被多个节点引用：只处理一次
+            continue
+
+        target = MODELS_DIR / logical
+        if target.exists():
+            states[logical] = "present"
+            continue
+
+        seed_model, seed_meta = MODEL_SEEDS.get(logical, (None, None))
+        source = _AI_DATA_DIR / seed_model if seed_model else None
+        if source is None or not source.exists():
+            print(f"[ensure_script_models] {name}: 缺少模型 {logical}，"
+                  f"服务端应位于 {target}，测试侧无种子文件")
+            states[logical] = "missing"
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+        # meta 可选（XGBoostNode 仅当模型本身没有 feature_names 时才读），
+        # 命名必须是 <model>.meta.json（与 XGBoostNode 的解析规则一致）
+        if seed_meta and target.suffix == ".json":
+            meta_source = _AI_DATA_DIR / seed_meta
+            meta_target = target.with_name(target.name[:-len(".json")] + ".meta.json")
+            if meta_source.exists() and not meta_target.exists():
+                meta_target.write_bytes(meta_source.read_bytes())
+        print(f"[ensure_script_models] {name}: 已补齐模型 {logical} -> {target}")
+        states[logical] = "seeded"
+    return states
 
 
 def _resolve_scripts_dir() -> Path:

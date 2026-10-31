@@ -30,6 +30,7 @@
         "test_signal_vmd",
         "test_capacity_scan",
         "test_hmm",
+        "test_ledger",
         "test_shortable",
         "test_provenance",
         "test_stability",
@@ -46,8 +47,7 @@
         "test_sectorquote",
         "test_tick_record",
         "test_data",
-        "test_decision",
-        "test_ledger"
+        "test_decision"
       ]
     },
     "hx": {
