@@ -664,7 +664,27 @@ void FlowSubsystem::ComputeBacktestMetrics(
     flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns_std, 0.95);
     flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns_std, 0.95);
 
-    // 凸性 VaR 附加（使用 CUSUM 资产收益率，与 drift_ratio 数据源一致）
+    // === 零成交自检 ===
+    // 零成交 → 组合日收益恒为 0 → VAR/ES/EWMA/自适应 VaR/组合口径凸性 全是 0。
+    // 这些 0 表示"没交易"而不是"没风险"，必须在指标层显式暴露，
+    // 否则下游（前端、测试、日报）会把"零成交"误读成"零风险"。
+    if (btContext) {
+        const size_t fillCount = btContext->getFillCount();
+        flow._collections[StatisticIndicator::TradeCount] = static_cast<float>(fillCount);
+        flow._collections[StatisticIndicator::ZeroTrade]  = fillCount == 0 ? 1.0f : 0.0f;
+        if (fillCount == 0) {
+            WARN("[Backtest] strategy='{}' 零成交：0 fills，{} 个组合收益点。"
+                 " VAR/ES/EWMA/adaptive_var/var_convexity_portfolio 全部为 0 —— "
+                 "这是「无交易」而非「无风险」，请检查资金分配（capital 是否真正落进账本）与信号触发。",
+                 strategy, daily_returns_std.size());
+        }
+    }
+
+    // === 凸性 VaR：组合口径 / 资产口径分别计算 ===
+    // 两条序列口径不同，必须各算一次、各存一个字段，禁止跨序列比较：
+    //   - 组合口径 daily_returns_std：与 VAR/ES/EWMA_VaR/adaptive_var 同源
+    //   - 资产口径 cusum_returns    ：与 cusum_drift_ratio/excess_kurtosis 同源
+    // 漂移与峰度统一取资产口径（CUSUM 在标的价格上运行），此处只切换收益序列。
     {
         const auto& cusum = btContext ? btContext->getCUSUMDetector()
                                        : CUSUMDetector{};
@@ -675,13 +695,20 @@ void FlowSubsystem::ComputeBacktestMetrics(
         } else {
             cusum_returns = daily_returns_std;
         }
-        auto cv = compute_convexity_var(cusum_returns, cusum);
-        flow._collections[StatisticIndicator::VaRConvexity] =
-            static_cast<float>(cv.var_convexity);
+
+        // 资产口径
+        const auto cv_asset = compute_convexity_var(cusum_returns, cusum);
+        flow._collections[StatisticIndicator::VaRConvexityAsset] =
+            static_cast<float>(cv_asset.var_convexity);
         flow._collections[StatisticIndicator::CUSUMDriftRatio] =
-            static_cast<float>(cv.drift_ratio);
+            static_cast<float>(cv_asset.drift_ratio);
         flow._collections[StatisticIndicator::ExcessKurtosis] =
-            static_cast<float>(cv.kurtosis);
+            static_cast<float>(cv_asset.kurtosis);
+
+        // 组合口径：与 VAR 完全同一条序列，恒有 var_convexity_portfolio >= VAR
+        const auto cv_portfolio = compute_convexity_var(daily_returns_std, cusum);
+        flow._collections[StatisticIndicator::VaRConvexityPortfolio] =
+            static_cast<float>(cv_portfolio.var_convexity);
     }
 
     // 平均盈亏比（前端策略类型推断用）

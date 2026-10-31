@@ -38,7 +38,7 @@ TEST_SYMBOL = "sz.900001"
 RISK_FIELDS = [
     "id", "name", "type",
     "var_95", "max_drawdown", "sharpe_ratio", "win_rate",
-    "var_convexity", "cusum_drift_ratio", "excess_kurtosis",
+    "var_convexity_portfolio", "cusum_drift_ratio", "excess_kurtosis",
     "avg_win_loss_ratio", "cusum_signal", "cusum_triggered",
     "information_ratio",
 ]

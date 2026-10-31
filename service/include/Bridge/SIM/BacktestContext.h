@@ -238,6 +238,13 @@ public:
     const CUSUMDetector& getCUSUMDetector() const noexcept { return _cusum_detector; }
     const Vector<double>& getCUSUMReturns() const noexcept { return _cusum_returns; }
 
+    // === 成交计数（零成交自检）===
+    /// @brief 记一笔成交（由 HistorySimulationBase::OrderReport 调用，是回测唯一成交落点）
+    /// @note 回测里"零成交"会让组合日收益恒为 0，进而使 VAR/ES/EWMA/自适应 VaR/凸性
+    ///       全部为 0。这些 0 表示"没交易"而不是"没风险"，必须在指标层显式标记。
+    void recordFill(size_t n = 1) noexcept { _fillCount.fetch_add(n, std::memory_order_relaxed); }
+    size_t getFillCount() const noexcept { return _fillCount.load(std::memory_order_relaxed); }
+
 private:
     run_id_t _runId;                    // 回测运行 ID
     String _strategy_name;              // 策略名称
@@ -308,6 +315,9 @@ private:
     CUSUMDetector _cusum_detector;
     Vector<double> _cusum_returns;      // 用于自适应校准的返回值缓存
     bool _cusum_calibrated = false;     // 是否已完成 mu/sigma 校准
+
+    // === 成交计数 ===
+    std::atomic<size_t> _fillCount{0};  // OrderReport 累计成交笔数（零成交自检用）
 
     // === 持仓事件（分红/送股等被动事件）===
     Map<symbol_t, Vector<std::unique_ptr<IPositionEvent>>> _positionEvents;

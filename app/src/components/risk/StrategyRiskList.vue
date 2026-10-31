@@ -56,7 +56,7 @@
           <td class="col-var">
             <div class="var-cell">
               <span class="var-value">{{ (row.var_95 || 0).toFixed(2) }}%</span>
-              <div class="var-bar" v-if="row.var_convexity > row.var_95">
+              <div class="var-bar" v-if="row.var_convexity_portfolio > row.var_95">
                 <div class="var-base" :style="{ width: varBasePercent(row) + '%' }" title="基础 VaR"></div>
                 <div class="var-convexity" :style="{ width: varConvexityPercent(row) + '%' }" title="凸性附加"></div>
               </div>
@@ -187,12 +187,12 @@ function healthClass(level: string): string {
 
 // VaR 分解百分比
 function varBasePercent(row: StrategyRiskItem): number {
-  if (!row.var_convexity || row.var_convexity <= 0) return 100
-  return Math.round((row.var_95 / row.var_convexity) * 100)
+  if (!row.var_convexity_portfolio || row.var_convexity_portfolio <= 0) return 100
+  return Math.round((row.var_95 / row.var_convexity_portfolio) * 100)
 }
 
 function varConvexityPercent(row: StrategyRiskItem): number {
-  if (!row.var_convexity || row.var_convexity <= row.var_95) return 0
+  if (!row.var_convexity_portfolio || row.var_convexity_portfolio <= row.var_95) return 0
   return 100 - varBasePercent(row)
 }
 

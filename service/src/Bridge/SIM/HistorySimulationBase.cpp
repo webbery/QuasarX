@@ -183,6 +183,9 @@ bool HistorySimulationBase::OrderReport(BacktestContext* context, order_id id, c
 
     context->adjustPosition(orderCtx->_order._symbol, delta, report._price, credit, marginRatio);
 
+    // 成交计数：回测里唯一的成交落点（零成交自检依赖它，见 ComputeBacktestMetrics）
+    context->recordFill();
+
     orderCtx->_success.store(true);
     orderCtx->_flag.store(true);
 

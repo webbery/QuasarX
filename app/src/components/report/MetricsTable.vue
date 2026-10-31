@@ -114,9 +114,17 @@ const metricGroupsDef: MetricGroupDef[] = [
   },
   {
     title: '凸性 VaR',
-    tooltip: '考虑分布尾部凸性效应的 VaR 调整。凸性附加 = α × drift_ratio × (EWMA_VaR - VaR_base)',
+    tooltip: '凸性附加 = α × drift_ratio × (EWMA_VaR − VaR_base)。组合口径用策略日收益，标的(资产)口径用标的日收益，两者不可跨序列比较',
     keys: [
-      'var_convexity', 'cusum_drift_ratio', 'excess_kurtosis', 'avg_win_loss_ratio',
+      'var_convexity_portfolio', 'var_convexity_asset',
+      'cusum_drift_ratio', 'excess_kurtosis', 'avg_win_loss_ratio',
+    ],
+  },
+  {
+    title: '回测有效性',
+    tooltip: '零成交时组合日收益恒为 0，VAR/ES/EWMA/凸性(组合) 全部为 0 —— 这是"无交易"而非"无风险"',
+    keys: [
+      'trade_count', 'zero_trade',
     ],
   },
 ]
@@ -176,11 +184,15 @@ const metricNameMap: Record<string, string> = {
   cusum_consensus_triggered: '系统性风险',
   adaptive_var: '自适应 VaR',
   ewma_var: 'EWMA VaR',
-  // 凸性 VaR
-  var_convexity: '凸性 VaR',
+  // 凸性 VaR（两种口径）
+  var_convexity_portfolio: '凸性 VaR（组合口径）',
+  var_convexity_asset: '凸性 VaR（标的口径）',
   cusum_drift_ratio: 'CUSUM 漂移率',
   excess_kurtosis: '超额峰度',
   avg_win_loss_ratio: '平均盈亏比',
+  // 回测有效性自检
+  trade_count: '成交笔数',
+  zero_trade: '零成交',
 }
 
 // === 格式化 ===
@@ -197,8 +209,12 @@ function formatMetricValue(key: string, value: number | null | undefined): strin
     return value === 0 ? '标准' : 'Block'
   }
   // 整数类型
-  if (key === 'boot_block_size' || key === 'boot_n_simulations' || key === 'num_trades') {
+  if (key === 'boot_block_size' || key === 'boot_n_simulations' || key === 'num_trades' || key === 'trade_count') {
     return Math.round(value).toString()
+  }
+  // 零成交标记：显式提示"风险指标不可解释"
+  if (key === 'zero_trade') {
+    return value > 0.5 ? '⚠ 是（零成交，风险指标不可解释）' : '否'
   }
   // 自相关系数（保留4位小数）
   if (key === 'boot_autocorrelation') {

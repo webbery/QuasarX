@@ -82,7 +82,7 @@ async function fetchStrategies() {
         informationRatio: item.information_ratio || 0,
         maxDrawdown: item.max_drawdown || 0,
         var_95: item.var_95 || 0,
-        var_convexity: item.var_convexity || 0,
+        var_convexity_portfolio: item.var_convexity_portfolio || 0,
         winRate: item.win_rate || 0,
         cusumSignal: item.cusum_signal || 0,
         cusumTriggered: item.cusum_triggered || false,

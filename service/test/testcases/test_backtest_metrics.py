@@ -154,24 +154,24 @@ def compute_r_squared(values: List[float]) -> float:
 
 
 def compute_var(daily_returns: List[float], confidence: float = 0.95) -> float:
-    """VaR (历史模拟法)"""
+    """VaR (历史模拟法)，非负——与 C++ compute_var 的截断一致"""
     if not daily_returns:
         return 0.0
     sorted_returns = sorted(daily_returns)
     index = int((1 - confidence) * len(sorted_returns))
     index = min(index, len(sorted_returns) - 1)
-    return -sorted_returns[index]
+    return max(0.0, -sorted_returns[index])
 
 
 def compute_cvar(daily_returns: List[float], confidence: float = 0.95) -> float:
-    """CVaR / ES (尾部平均损失)"""
+    """CVaR / ES (尾部平均损失)，非负——与 C++ compute_cvar 的截断一致"""
     if not daily_returns:
         return 0.0
     sorted_returns = sorted(daily_returns)
     index = int((1 - confidence) * len(sorted_returns))
     index = min(index, len(sorted_returns) - 1)
     tail = sorted_returns[:index + 1]
-    return -sum(tail) / len(tail) if tail else 0.0
+    return max(0.0, -sum(tail) / len(tail)) if tail else 0.0
 
 
 # ============================================================

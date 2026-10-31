@@ -42,7 +42,8 @@ void StrategyRiskHandler::get(const httplib::Request& req, httplib::Response& re
         item["max_drawdown"] = metrics.max_drawdown;
         item["sharpe_ratio"] = metrics.sharpe_ratio;
         item["win_rate"] = metrics.win_rate;
-        item["var_convexity"] = metrics.var_convexity;
+        // 组合口径：本端点只有持仓序列，没有独立资产收益序列，故只输出 portfolio 口径
+        item["var_convexity_portfolio"] = metrics.var_convexity_portfolio;
         item["cusum_drift_ratio"] = metrics.cusum_drift_ratio;
         item["excess_kurtosis"] = metrics.excess_kurtosis;
         item["avg_win_loss_ratio"] = metrics.avg_win_loss_ratio;
@@ -108,7 +109,7 @@ StrategyRiskHandler::RiskMetrics StrategyRiskHandler::ComputeRiskMetrics(
     auto cusumResult = detector.detect_batch(returns);
 
     auto cv = compute_convexity_var(returns, detector);
-    m.var_convexity = cv.var_convexity;
+    m.var_convexity_portfolio = cv.var_convexity;
     m.cusum_drift_ratio = cv.drift_ratio;
     m.excess_kurtosis = cv.kurtosis;
 

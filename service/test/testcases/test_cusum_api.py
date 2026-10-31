@@ -210,13 +210,48 @@ def compute_ewma_var_ref(returns: List[float], confidence: float = 0.95, decay: 
 
 
 def compute_var_ref(returns: List[float], confidence: float = 0.95) -> float:
-    """历史模拟法 VaR"""
+    """历史模拟法 VaR（非负，与 C++ compute_var 一致）
+
+    分位数收益为正时（单边上涨标的）表示"最差 5% 仍然盈利"，
+    这不是风险，C++ 侧统一截断到 0，参考实现必须同步。
+    """
     if not returns:
         return 0.0
     sorted_returns = sorted(returns)
     index = int((1 - confidence) * len(sorted_returns))
     index = min(index, len(sorted_returns) - 1)
-    return -sorted_returns[index]
+    return max(0.0, -sorted_returns[index])
+
+
+def excess_kurtosis_ref(returns: List[float]) -> float:
+    """超额峰度（镜像 C++ compute_excess_kurtosis，ddof=0）"""
+    n = len(returns)
+    if n < 4:
+        return 0.0
+    mean = sum(returns) / n
+    var = sum((r - mean) ** 2 for r in returns) / n
+    if var < 1e-20:
+        return 0.0
+    m4 = sum((r - mean) ** 4 for r in returns) / n
+    return m4 / (var * var) - 3.0
+
+
+def alpha_from_kurtosis(kurtosis: float) -> float:
+    """α = 1 + clamp(κ/3, -0.5, 1.0)，镜像 C++ compute_convexity_var"""
+    return 1.0 + max(-0.5, min(1.0, kurtosis / 3.0))
+
+
+def expected_convexity_var(returns: List[float], drift_ratio: float,
+                           confidence: float = 0.95, ewma_decay: float = 0.94) -> float:
+    """凸性 VaR 期望值（镜像 C++ compute_convexity_var）
+
+    注意：`returns` 必须与调用方比对的口径一致（组合日收益 或 标的日收益）。
+    """
+    var_base = compute_var_ref(returns, confidence)
+    var_ewma = compute_ewma_var_ref(returns, confidence, ewma_decay)
+    alpha = alpha_from_kurtosis(excess_kurtosis_ref(returns))
+    gap = max(var_ewma - var_base, 0.0)
+    return var_base + alpha * drift_ratio * gap
 
 
 def compute_adaptive_var_ref(returns: List[float], detector: CUSUMDetectorRef,
@@ -303,11 +338,9 @@ def load_test_cases_summary() -> Dict:
 # 回测 API 交互（复用 test_backtest_metrics.py 的模式）
 # ============================================================
 
-def run_backtest_via_api(strategy_json_path: str, token: str) -> Dict:
-    """通过 API 执行回测并获取指标"""
+def run_backtest_script(strategy: Dict, token: str) -> Dict:
+    """直接提交策略 dict 回测（不落盘），用于构造零成交等边界场景"""
     headers = {"Authorization": token}
-    with open(strategy_json_path, 'r') as f:
-        strategy = json.load(f)
     strategy_str = json.dumps(strategy, ensure_ascii=False)
     resp = requests.post(
         f"{BASE_URL}/backtest",
@@ -318,6 +351,32 @@ def run_backtest_via_api(strategy_json_path: str, token: str) -> Dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def run_backtest_via_api(strategy_json_path: str, token: str) -> Dict:
+    """通过 API 执行回测并获取指标"""
+    with open(strategy_json_path, 'r') as f:
+        strategy = json.load(f)
+    return run_backtest_script(strategy, token)
+
+
+def build_no_trade_strategy(name: str = "test_zero_trade_selfcheck") -> Dict:
+    """基于 up_trend 策略图构造一个永不买入/卖出的策略（零成交自检用）
+
+    保留完整的 Input/Signal/Portfolio/Execution 四节点图，
+    只把 buy/sell 信号置为 false —— 图能正常跑完，但不会产生任何成交。
+    """
+    with open(METRIC_TEST_DIR / "up_trend_strategy.json", 'r') as f:
+        strategy = json.load(f)
+    strategy["id"] = name
+    strategy["name"] = f"零成交自检_{name}"
+    for node in strategy.get("nodes", []):
+        params = node.get("data", {}).get("params", {})
+        if "buy" in params:
+            params["buy"]["value"] = "false"
+        if "sell" in params:
+            params["sell"]["value"] = "false"
+    return strategy
 
 
 # ============================================================
@@ -342,12 +401,14 @@ class TestCUSUMStandardCases:
         self.token = get_auth_token()
         self.cases = load_test_cases_summary()
 
+    def _run_cpp_backtest_full(self, case_id: str) -> Dict:
+        """运行 C++ 回测并返回完整响应（features + daily_returns + summary）"""
+        strategy_path = METRIC_TEST_DIR / f"{case_id}_strategy.json"
+        return run_backtest_via_api(str(strategy_path), self.token)
+
     def _run_cpp_backtest(self, case_id: str) -> Dict:
         """运行 C++ 回测并提取 features"""
-        case = self.cases[case_id]
-        strategy_path = METRIC_TEST_DIR / f"{case_id}_strategy.json"
-        result = run_backtest_via_api(str(strategy_path), self.token)
-        return result.get("features", {})
+        return self._run_cpp_backtest_full(case_id).get("features", {})
 
     def _compute_python_cusum(self, symbol: str) -> Tuple[CUSUMDetectorRef, List[float]]:
         """从 CSV 读取价格，Python 计算 CUSUM
@@ -379,8 +440,9 @@ class TestCUSUMStandardCases:
 
     def test_up_trend_cusum(self):
         """单边上涨场景：CUSUM 应检测到正向漂移"""
-        cpp_features = self._run_cpp_backtest("up_trend")
-        
+        cpp = self._run_cpp_backtest_full("up_trend")
+        cpp_features = cpp.get("features", {})
+
         # Python 计算
         symbol = self.cases["up_trend"]["symbol"]
         detector, returns = self._compute_python_cusum(symbol)
@@ -398,13 +460,17 @@ class TestCUSUMStandardCases:
             assert abs_err < 1e-5, \
                 f"max_drift 绝对误差过大: C++={cpp_max_drift:.6f}, Python={py_max_drift:.6f}, abs_err={abs_err:.6f}"
 
-        # 验证自适应 VaR
+        # 自适应 VaR：C++ 用「组合日收益」序列，detector 的压力状态来自标的收益，
+        # 参考实现必须用同一条组合收益序列复算（用资产收益会得到不同的 VaR）。
         cpp_adaptive_var = cpp_features.get("adaptive_var", 0)
-        py_adaptive_var = compute_adaptive_var_ref(returns, detector)
-        if py_adaptive_var > 1e-10:
-            rel_err = abs(cpp_adaptive_var - py_adaptive_var) / py_adaptive_var
-            assert rel_err < self.REL_TOLERANCE, \
-                f"adaptive_var 差异过大: C++={cpp_adaptive_var:.6f}, Python={py_adaptive_var:.6f}, rel_err={rel_err:.4f}"
+        portfolio_returns = cpp.get("daily_returns") or []
+        if portfolio_returns:
+            py_adaptive_var = compute_adaptive_var_ref(portfolio_returns, detector)
+            if py_adaptive_var > 1e-10:
+                rel_err = abs(cpp_adaptive_var - py_adaptive_var) / py_adaptive_var
+                assert rel_err < self.REL_TOLERANCE, \
+                    f"adaptive_var 差异过大: C++={cpp_adaptive_var:.6f}, " \
+                    f"Python={py_adaptive_var:.6f}(组合口径), rel_err={rel_err:.4f}"
 
     def test_down_trend_cusum(self):
         """单边下跌场景：CUSUM 应检测到负向漂移"""
@@ -468,27 +534,92 @@ class TestCUSUMStandardCases:
         assert abs_err < 0.5, \
             f"excess_kurtosis 差异过大: C++={cpp_kurtosis:.4f}, Python={py_kurtosis:.4f}, abs_err={abs_err:.4f}"
 
-    def test_convexity_var(self):
-        """凸性 VaR：var_convexity >= var_base（当 EWMA > 历史时）"""
-        cpp_features = self._run_cpp_backtest("up_trend")
+    def test_convexity_var_portfolio(self):
+        """组合口径凸性 VaR：必须与 VAR 同源（策略日收益），且恒 >= VAR"""
+        cpp = self._run_cpp_backtest_full("up_trend")
+        cpp_features = cpp.get("features", {})
+
+        # 旧字段已删除，只保留两个显式口径
+        assert "var_convexity" not in cpp_features, \
+            "旧字段 var_convexity 应已删除，请使用 var_convexity_portfolio / var_convexity_asset"
+
+        if cpp_features.get("zero_trade"):
+            pytest.skip("本次回测零成交（资金未分配/信号未触发），组合口径风险指标不可解释")
+
+        portfolio_returns = cpp.get("daily_returns") or []
+        assert len(portfolio_returns) >= 2, "缺少组合日收益序列，无法验证组合口径"
 
         var_base = cpp_features.get("VAR", 0)
-        var_convexity = cpp_features.get("var_convexity", 0)
-        ewma_var = cpp_features.get("ewma_var", 0)
+        var_convexity = cpp_features.get("var_convexity_portfolio")
         drift_ratio = cpp_features.get("cusum_drift_ratio", 0)
 
+        assert var_convexity is not None, "features 缺少 var_convexity_portfolio"
+        # VaR / 凸性 VaR 不应为负
+        assert var_base >= 0.0, f"VAR 不应为负: {var_base}"
+        assert var_convexity >= 0.0, f"var_convexity_portfolio 不应为负: {var_convexity}"
         # 凸性 VaR 应 >= 基础 VaR（附加非负）
         assert var_convexity >= var_base - 1e-6, \
-            f"var_convexity({var_convexity:.6f}) 应 >= var_base({var_base:.6f})"
-
-        # drift_ratio 在 [0, 1] 范围
+            f"var_convexity_portfolio({var_convexity:.6f}) 应 >= VAR({var_base:.6f})"
         assert 0 <= drift_ratio <= 1.0 + 1e-6, \
             f"cusum_drift_ratio({drift_ratio:.4f}) 应在 [0, 1] 范围"
 
-        # 如果 drift_ratio ≈ 0 或 ewma ≈ base，convexity ≈ base
-        if drift_ratio < 0.01 or abs(ewma_var - var_base) < 1e-8:
-            assert abs(var_convexity - var_base) < 1e-5, \
-                f"无漂移时 convexity 应 ≈ base: convexity={var_convexity:.6f}, base={var_base:.6f}"
+        # 与 Python 参考实现一致：VAR 用的是同一条组合日收益序列
+        expected_var = compute_var_ref(portfolio_returns)
+        assert abs(var_base - expected_var) < 1e-6, \
+            f"VAR 与组合日收益参考值不一致: C++={var_base:.6f}, Python={expected_var:.6f}"
+
+        expected = expected_convexity_var(portfolio_returns, drift_ratio)
+        assert abs(var_convexity - expected) < 1e-6, \
+            f"var_convexity_portfolio 与参考公式不一致: C++={var_convexity:.6f}, " \
+            f"Python={expected:.6f}"
+
+    def test_convexity_var_asset(self):
+        """资产口径凸性 VaR：由标的日收益 + CUSUM 漂移推出，与组合收益无关"""
+        cpp = self._run_cpp_backtest_full("up_trend")
+        cpp_features = cpp.get("features", {})
+
+        symbol = self.cases["up_trend"]["symbol"]
+        asset_returns = compute_returns_from_prices(load_prices_from_csv(symbol))
+
+        drift_ratio = cpp_features.get("cusum_drift_ratio", 0)
+        var_convexity_asset = cpp_features.get("var_convexity_asset")
+
+        assert var_convexity_asset is not None, "features 缺少 var_convexity_asset"
+        assert var_convexity_asset >= 0.0, f"var_convexity_asset 不应为负: {var_convexity_asset}"
+        assert 0 <= drift_ratio <= 1.0 + 1e-6
+
+        # 基准同样来自资产收益，凸性不低于基准
+        var_base_asset = compute_var_ref(asset_returns)
+        assert var_convexity_asset >= var_base_asset - 1e-6, \
+            f"var_convexity_asset({var_convexity_asset:.6f}) 应 >= 资产 VaR({var_base_asset:.6f})"
+
+        # 用资产收益复算凸性公式：drift 与峰度均来自资产序列
+        expected = expected_convexity_var(asset_returns, drift_ratio)
+        assert abs(var_convexity_asset - expected) < 1e-6, \
+            f"var_convexity_asset 与参考公式不一致: C++={var_convexity_asset:.6f}, " \
+            f"Python={expected:.6f}"
+
+    def test_zero_trade_selfcheck(self):
+        """零成交自检：无成交时指标层必须显式标记，不能把“没交易”伪装成“没风险”"""
+        result = run_backtest_script(build_no_trade_strategy(), self.token)
+        cpp_features = result.get("features", {})
+
+        # 零成交标记必须存在于指标层
+        assert "trade_count" in cpp_features, "features 缺少 trade_count"
+        assert "zero_trade" in cpp_features, "features 缺少 zero_trade"
+        assert cpp_features["trade_count"] == 0, \
+            f"未交易的策略成交笔数应为 0，实际 {cpp_features['trade_count']}"
+        assert cpp_features["zero_trade"] == 1, \
+            f"未交易的策略 zero_trade 应为 1，实际 {cpp_features['zero_trade']}"
+
+        # 组合口径指标恒为 0（这些 0 由 zero_trade 解释）
+        assert abs(cpp_features.get("VAR", 0)) < 1e-12, \
+            f"零成交时 VAR 应为 0，实际 {cpp_features.get('VAR')}"
+        assert abs(cpp_features.get("var_convexity_portfolio", 0)) < 1e-12, \
+            f"零成交时组合口径凸性应为 0，实际 {cpp_features.get('var_convexity_portfolio')}"
+
+        # 资产口径与是否成交无关：仍基于标的日收益（若漂移为 0 则为 0，故只校验非负）
+        assert cpp_features.get("var_convexity_asset", 0) >= 0.0
 
     def test_avg_win_loss_ratio(self):
         """平均盈亏比：应为正数且合理"""

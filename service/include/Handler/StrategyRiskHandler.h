@@ -20,7 +20,7 @@ class Server;
  *   - max_drawdown: 最大回撤
  *   - sharpe_ratio: 夏普比率
  *   - win_rate: 胜率
- *   - var_convexity: 凸性调整后 VaR
+ *   - var_convexity_portfolio: 凸性调整后 VaR（组合口径；实盘持仓序列没有资产口径可言）
  *   - cusum_drift_ratio: CUSUM 归一化漂移
  *   - cusum_signal: CUSUM 信号（-1/0/1）
  *   - cusum_triggered: 是否刚触发变点
@@ -42,7 +42,7 @@ private:
         double max_drawdown = 0.0;
         double sharpe_ratio = 0.0;
         double win_rate = 0.0;
-        double var_convexity = 0.0;
+        double var_convexity_portfolio = 0.0;
         double cusum_drift_ratio = 0.0;
         double excess_kurtosis = 0.0;
         double avg_win_loss_ratio = 0.0;

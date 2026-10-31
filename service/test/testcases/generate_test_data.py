@@ -488,11 +488,13 @@ def compute_expected_metrics_from_csv(csv_path, initial_capital=500000.0):
     # R²
     r_squared = compute_r_squared(values)
 
-    # VaR / CVaR
+    # VaR / CVaR（与 C++ compute_var/compute_cvar 一致：损失度量截断到非负）
+    # 单边上涨样本的分位数收益为正，表示"最差 5% 仍然盈利"，不是风险
     sorted_returns = sorted(daily_returns)
     var_index = int(0.05 * len(sorted_returns))
-    var_95 = -sorted_returns[var_index] if var_index < len(sorted_returns) else 0.0
-    cvar_95 = -sum(sorted_returns[:var_index+1]) / (var_index + 1) if var_index < len(sorted_returns) else 0.0
+    var_95 = max(0.0, -sorted_returns[var_index]) if var_index < len(sorted_returns) else 0.0
+    cvar_95 = max(0.0, -sum(sorted_returns[:var_index+1]) / (var_index + 1)) \
+        if var_index < len(sorted_returns) else 0.0
 
     return {
         "total_return": round(total_return, 6),

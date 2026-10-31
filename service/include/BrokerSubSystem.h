@@ -103,11 +103,16 @@ enum class StatisticIndicator: char {
   AdaptiveVaR,           // 自适应 VaR（95% 或 99%）
   EWMA_VaR,              // EWMA VaR（用于对比）
 
-  // 凸性 VaR 附加（VaRBase 复用已有 VaR 枚举）
-  VaRConvexity,          // 凸性调整后 VaR = VaR + α × drift_ratio × (EWMA_VaR - VaR)
-  CUSUMDriftRatio,       // 当前归一化漂移 |S+-S-|/h（实时，0~1）
-  ExcessKurtosis,        // 超额峰度（驱动 α 自动推断）
+  // 凸性 VaR（两种口径必须分开存储，禁止跨序列比较）
+  VaRConvexityPortfolio, // 组合口径：策略日收益 → 与 VaR/ES/EWMA_VaR 同源
+  VaRConvexityAsset,     // 资产口径：标的日收益 → 与 CUSUM/峰度同源
+  CUSUMDriftRatio,       // 当前归一化漂移 |S+-S-|/h（实时，0~1，资产口径）
+  ExcessKurtosis,        // 超额峰度（驱动 α 自动推断，资产口径）
   AvgWinLossRatio,       // 平均盈亏比（前端策略类型推断用）
+
+  // 回测有效性自检
+  TradeCount,            // 成交笔数（OrderReport 累计，0 表示全程无成交）
+  ZeroTrade,             // 零成交标记：1 = 零成交，风险指标为 0 属"无交易"而非"无风险"
 };
 
 class ICommission {

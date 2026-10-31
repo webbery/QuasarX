@@ -28,7 +28,7 @@ export interface StrategyRiskItem {
   riskLevel: RiskLevel
   riskScore: number          // 0-100，用于排序
   var_95: number            // 95% VaR
-  var_convexity: number     // 凸性调整后 VaR
+  var_convexity_portfolio: number // 凸性调整后 VaR（组合口径：基于策略日收益）
   maxDrawdown: number       // 最大回撤
   sharpeRatio: number       // 夏普比率
   informationRatio: number  // 信息比率 IR

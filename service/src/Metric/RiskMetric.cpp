@@ -23,7 +23,10 @@ float compute_var(const std::vector<double>& returns, double confidence_level) {
         index = sorted_returns.size() - 1;
     }
 
-    return static_cast<float>(-sorted_returns[index]);
+    // VaR 是"损失"度量，必须非负：当样本的分位数收益为正（例如单边上涨标的），
+    // -quantile 会是负数，那不是风险而是"最差情况下依然盈利"。截断到 0，
+    // 否则下游（凸性 VaR、自适应 VaR、前端 VaR 分解）会得到负风险值。
+    return std::max(0.0f, static_cast<float>(-sorted_returns[index]));
 }
 
 float compute_cvar(const std::vector<double>& returns, double confidence_level) {
@@ -54,7 +57,8 @@ float compute_cvar(const std::vector<double>& returns, double confidence_level) 
         return 0.0f;
     }
 
-    return static_cast<float>(-sum / count);
+    // 与 compute_var 一致：尾部平均收益为正时表示"最差 5% 仍然盈利"，截断到 0
+    return std::max(0.0f, static_cast<float>(-sum / count));
 }
 
 // ============================================================
@@ -178,7 +182,7 @@ ConvexityVaRResult compute_convexity_var(
     ConvexityVaRResult result;
     if (returns.empty()) return result;
 
-    // ① 历史模拟法 VaR（基准）
+    // ① 历史模拟法 VaR（基准，compute_var 已保证非负）
     double var_base = compute_var(returns, confidence);
 
     // ② EWMA VaR（对近期分布变化更敏感）
@@ -198,6 +202,8 @@ ConvexityVaRResult compute_convexity_var(
     result.drift_ratio = drift_ratio;
 
     // ⑤ 凸性附加：只在 EWMA > 历史时加（风险被低估）
+    // 由于 var_base ≥ 0、alpha ∈ [0.5, 2]、drift_ratio ∈ [0, 1]、gap ≥ 0，
+    // 恒有 var_convexity ≥ var_base ≥ 0 —— 可作为不变量断言。
     double gap = std::max(var_ewma - var_base, 0.0);
     result.var_convexity = var_base + alpha * drift_ratio * gap;
 
