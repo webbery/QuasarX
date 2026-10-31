@@ -353,17 +353,22 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     INFO("[Backtest][RSS] start: {:.1f} MB", rss_start);
 
     // 解析策略资金配置
-    double strategyCapital = 0.0;  // 0 表示自动分配
-    if (script.contains("capital")) {
+    // 缺省 / <=0 都表示「自动分配」：必须在进账本之前换算成具体额度。
+    // LedgerStore::Allocate 会把账户现金直接覆盖成传入值（传 0 就得到一个 0 现金账户），
+    // 之后 PortfolioNode 的买入预算恒为 0 → qty=0 被 `quantity < 100` 丢弃 → 整轮零成交。
+    double strategyCapital = 0.0;
+    if (script.contains("capital") && script["capital"].is_number()) {
         strategyCapital = script["capital"].get<double>();
     }
-    
+    const double effectiveCapital =
+        strategyCapital > 0 ? strategyCapital : BACKTEST_INITIAL_CAPITAL;
+
     // 从资金池分配资金
     auto* broker = _server->GetBrokerSubSystem();
     auto* pool = broker ? broker->GetLedger() : nullptr;
     CapitalScopeGuard capitalGuard;
     if (pool) {
-        if (!pool->Allocate(strategyName, strategyCapital)) {
+        if (!pool->Allocate(strategyName, effectiveCapital)) {
             res.status = 400;
             String msg = R"({"message": "资金分配失败，可用资金不足"})";
             res.set_content(msg.c_str(), "application/json");
@@ -465,7 +470,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     INFO("[Backtest] GetPools returned {} symbols", symbols.size()); fflush(stdout);
 
     // 使用 ExchangeManager 创建多 Exchange 回测上下文
-    double initialCapital = strategyCapital > 0 ? strategyCapital : BACKTEST_INITIAL_CAPITAL;
+    // 必须与上面进账本的额度同源：账本里存的是 effectiveCapital，
+    // 这里再算一次 fallback 会让「账本现金」和「上下文初始资金」分叉。
+    double initialCapital = effectiveCapital;
     INFO("[Backtest] CreateMultiContext (capital={:.0f})...", initialCapital); fflush(stdout);
     run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital,
                                                      /*ownsCapital=*/true);
