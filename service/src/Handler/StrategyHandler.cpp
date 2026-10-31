@@ -16,7 +16,6 @@
 #include "nng/nng.h"
 #include "server.h"
 #include "Bridge/exchange.h"
-#include "Bridge/CapitalPool.h"
 #include "BrokerSubSystem.h"
 #include "StrategySubSystem.h"
 #include "Util/DecisionDB.h"
@@ -54,7 +53,7 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
     auto strategySys = _server->GetStrategySystem();
     auto flow = strategySys->GetFlowSubsystem();
     auto broker = _server->GetBrokerSubSystem();
-    auto capitalPool = broker ? broker->GetCapitalPool() : nullptr;
+    auto ledger = broker ? broker->GetLedger() : nullptr;
 
     // ?include=pools 时附加 symbols 数组（从 QuoteInputNode 提取的标的池）
     // 复用现有 GetPools()，避免前端为获取标的池而缓存/回传完整 scriptJson
@@ -122,11 +121,10 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
             }
 
             // 补充策略资金信息
-            if (capitalPool) {
-                auto capitalInfo = capitalPool->get(name);
-                item["availableCapital"] = capitalInfo.available;     // 可用资金额度
-                item["usedCapital"] = capitalInfo.used();             // 账面资金（市值）
-                item["allocatedCapital"] = capitalInfo.allocated;     // 分配总额
+            if (ledger) {
+                item["availableCapital"] = ledger->GetAvailable(name);   // 可用资金额度
+                item["usedCapital"] = ledger->GetUsed(name);             // 已用资金
+                item["allocatedCapital"] = ledger->GetAllocated(name);   // 分配总额
             } else {
                 item["availableCapital"] = 0.0;
                 item["usedCapital"] = 0.0;
@@ -224,7 +222,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         if (action == "reclaim_all" || action == "reclaim") {
             INFO("[StrategyHandler] reclaim request: action={}", action);
             auto* broker = _server->GetBrokerSubSystem();
-            if (!broker || !broker->GetCapitalPool()) {
+            if (!broker) {
                 WARN("[StrategyHandler] capital pool not available");
                 res.status = 500;
                 res.set_content(R"({"error": "capital pool not available"})", "application/json");
@@ -232,7 +230,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
             nlohmann::json result;
             if (action == "reclaim_all") {
-                broker->GetCapitalPool()->reclaimAll();
+                broker->GetLedger()->ReclaimAll();
                 INFO("[StrategyHandler] reclaimAll done");
                 result["message"] = "all capital reclaimed";
             } else {
@@ -242,7 +240,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
                     res.set_content(R"({"error": "reclaim requires 'name' field"})", "application/json");
                     return;
                 }
-                double reclaimed = broker->GetCapitalPool()->reclaim(name);
+                double reclaimed = broker->GetLedger()->Reclaim(name);
                 INFO("[StrategyHandler] reclaim '{}' done, reclaimed={}", name, reclaimed);
                 result["message"] = "capital reclaimed";
                 result["reclaimed"] = reclaimed;
@@ -268,12 +266,12 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
             return;
         }
         auto* broker = _server->GetBrokerSubSystem();
-        if (!broker || !broker->GetCapitalPool()) {
+        if (!broker) {
             res.status = 500;
             res.set_content(R"({"error": "capital pool not available"})", "application/json");
             return;
         }
-        auto creditState = broker->GetCapitalPool()->getCreditState(name);
+        auto creditState = broker->GetLedger()->GetCreditState(name);
         nlohmann::json result;
         result["name"] = name;
         result["borrowed_cash"] = creditState.borrowedCash;

@@ -32,6 +32,7 @@
         "test_hmm",
         "test_shortable",
         "test_provenance",
+        "test_stability",
         "test_credit"
       ]
     },
@@ -45,14 +46,18 @@
         "test_sectorquote",
         "test_tick_record",
         "test_data",
-        "test_decision"
+        "test_decision",
+        "test_ledger"
       ]
     },
     "hx": {
       "label": "华鑫实盘仿真模式",
       "config": "hx.json",
       "description": "华鑫真实交易接口（需配置账号密码）",
-      "requires_input": ["username", "passwd"],
+      "requires_input": [
+        "username",
+        "passwd"
+      ],
       "tests": [
         "test_user",
         "test_order",

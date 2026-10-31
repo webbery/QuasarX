@@ -207,6 +207,7 @@ struct OrderContext {
   TradeInfo _trades;
   // 订单元数据
   uint32_t _strategy_hash = 0;      // 策略名称的哈希值
+  String _strategy_name;            // 策略名称
   run_id_t _backtest_run_id = 0;    // 回测运行ID，0表示非回测
   uint8_t _running_type : 2;        // RuningType枚举：0=Backtest,1=Simualtion,2=Real
   uint8_t _reserved : 6;            // 保留位
@@ -235,6 +236,7 @@ struct OrderContext {
   // 设置策略信息
   void SetStrategyInfo(const String& strategy_name, run_id_t backtest_id, RuningType run_type) {
     _strategy_hash = std::hash<String>{}(strategy_name);
+    _strategy_name = strategy_name;
     _backtest_run_id = backtest_id;
     _running_type = static_cast<uint8_t>(run_type);
   }

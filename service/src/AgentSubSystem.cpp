@@ -1590,7 +1590,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             // 申请额度按策略自身配置的资金（JSON "capital"），而不是写死 1,000,000：
             // 写死会在资金池被其他活跃策略占用一部分时必然分配失败，日终回放
             // 全程 0 预算（买单全部 qty=0 被丢弃，只剩 HOLD）。
-            // 策略未配置资金时传 0，交给 CapitalPool 按剩余资金自动均分。
+            // 策略未配置资金时传 0，交给账本按剩余资金自动均分。
             runId = simExchange->createBacktestContext(strategy, symbols, flow._capital,
                                                        String(), String(), forceReload);
             BacktestContext* btContext = simExchange->getBacktestContext(runId);
@@ -1772,18 +1772,13 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
             // 历史兼容：此分支原会在 getAvailableCapital<=0 时用 flow._capital 覆写 _capital，
             // 导致 PortfolioNode 第二天仍按 ¥1,000,000 算仓位，忽略 Broker 真实剩余。
-            // 修复：DataContext::getAvailableCapital 已优先读取 CapitalPool，此处覆写已无必要
+            // DataContext::getAvailableCapital 优先读取账本，此处不再覆写
             // 且会污染 _capital。保留 INFO 日志用于资金口径对账监控。
             //
-            // 负余额也会照实打出来：2026-10-22 就是 CapitalPool.available = −318.84
+            // 负余额也会照实打出来：2026-10-22 就是账本可用资金 = −318.84
             // 被 `> 0` 判据吞掉、伪装成 0 预算，3 笔买单静默变成 qty=0。
-            INFO("[StartDaily] flow._capital={}, getAvailableCapital={} (CapitalPool authoritative, sign preserved)",
+            INFO("[StartDaily] flow._capital={}, getAvailableCapital={} (ledger authoritative, sign preserved)",
                  flow._capital, context.getAvailableCapital());
-
-            // 持仓账本同步：把 Broker PortfolioSubSystem 的策略持仓灌入
-            // StrategyCapital，让 SignalNode 看到真实持仓、
-            // 不再因 "无持仓" 静默丢弃 SELL 信号，也让已持仓标的的 BUY 能正确去重。
-            _handle->SyncDailyPositionsFromBroker(strategy);
 
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
@@ -1886,15 +1881,13 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     // 计算今日组合市值（broker 持仓 + 今日决策 → 最新收盘价估值）
                     double portfolioValue = 0.0;
                     if (manualTiming) {
-                        auto* portfolio = _handle->GetPortforlioSubSystem();
-                        if (portfolio) {
-                            auto& holdings = portfolio->GetHolding(strategy);
+                        auto* broker = _handle->GetBrokerSubSystem();
+                        if (broker) {
+                            const auto& holdings = broker->GetLedger()->GetPositions(strategy);
                             // 应用今日决策后的持仓
                             Map<symbol_t, int64_t> updatedPositions;
-                            for (const auto& [sym, assets] : holdings) {
-                                int64_t qty = 0;
-                                for (const auto& a : assets) qty += a._quantity;
-                                if (qty > 0) updatedPositions[sym] = qty;
+                            for (const auto& [sym, pos] : holdings) {
+                                if (pos._quantity > 0) updatedPositions[sym] = pos._quantity;
                             }
                             for (const auto& [sym, d] : manualTiming->getDecisions()) {
                                 if (d._action == TradeAction::BUY)
@@ -1939,7 +1932,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         // （SyncDailyPositionsFromBroker 已把 Broker 的分批持仓
                         //   摊成 Position._avgPrice）。
                         Map<symbol_t, double> costPrices;
-                        // 两融敞口：从 CapitalPool 读取（成交回写后持久化，跨进程存活）
+                        // 两融敞口：从账本读取（成交回写后持久化，跨进程存活）
                         StrategyCreditState creditState;
                         if (auto* broker = _handle->GetBrokerSubSystem()) {
                             if (auto* capital = broker->GetStrategyCapital(strategy)) {
@@ -1953,10 +1946,8 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                                     }
                                 }
                             }
-                            // 从 CapitalPool 读取两融敞口
-                            if (auto* pool = broker->GetCapitalPool()) {
-                                creditState = pool->getCreditState(strategy);
-                            }
+                            // 从账本读取两融敞口
+                            creditState = broker->GetLedger()->GetCreditState(strategy);
                         }
 
                         // 收盘价：从 allBars 取最后一根 bar 的 close

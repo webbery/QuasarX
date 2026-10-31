@@ -7,7 +7,6 @@
 #include "BrokerSubSystem.h"
 #include "Bridge/exchange.h"
 #include "Util/log.h"
-#include "PortfolioSubsystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
@@ -511,6 +510,24 @@ ExecutionPlan PortfolioNode::generatePlan(
                          get_symbol(item._symbol), currentQty, _allowShort);
                 }
             }
+        }
+    }
+
+    // 资金闸门：买入总额不应超过账本可用现金 + 本轮卖出回款。
+    // 超了说明预算口径与账本脱节（例如权益重复计入了已花掉的现金）。
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        double buyNotional = 0.0;
+        double sellNotional = 0.0;
+        for (const auto& item : plan._items) {
+            if (item._action == TradeAction::BUY) buyNotional += item._targetValue;
+            else if (item._action == TradeAction::SELL) sellNotional += item._targetValue;
+        }
+        auto* broker = _server->GetBrokerSubSystem();
+        const double cash = broker ? broker->GetLedger()->GetAvailable(strategy) : 0.0;
+        if (buyNotional > cash + sellNotional + 1.0) {
+            STRATEGY_WARN(strategy,
+                          "Plan buy notional {:.0f} exceeds available cash {:.0f} + sell proceeds {:.0f}",
+                          buyNotional, cash, sellNotional);
         }
     }
 

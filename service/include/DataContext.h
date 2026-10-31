@@ -1,6 +1,7 @@
 #pragma once
 #include "std_header.h"
 #include "Util/system.h"
+#include "Util/perf.h"
 #include "Nodes/ExecutionPlan.h"
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/BacktestContext.h"
@@ -170,11 +171,12 @@ public:
     // ── 性能剖析（回测排查用，默认关闭）──
     // DataContext 由策略 worker 线程独占访问（栈局部对象），计数无需原子操作。
     // 关闭时每个原语只多一次 bool 判断；开启时每次调用读两次 steady_clock（~25ns/次）。
-    struct PerfCounter {
-        uint64_t calls = 0;    // 调用次数
-        double totalMs = 0;    // 累计耗时
-        double maxMs = 0;      // 单次最大耗时（识别深拷贝大向量这类尖峰）
-    };
+    //
+    // PerfCounter / PerfScope 已抽到 Util/perf.h 作为通用件（多阶段计算链路共用），
+    // 这里保留别名，既有引用（如 AgentSubSystem.cpp）无需改动。
+    using PerfCounter = ::PerfCounter;
+    using PerfScope = ::PerfScope;
+
     struct PerfStat {
         bool enabled = false;
         PerfCounter get, set, add, exist;
@@ -183,29 +185,6 @@ public:
         uint64_t ops() const { return get.calls + set.calls + add.calls + exist.calls; }
         double totalMs() const { return get.totalMs + set.totalMs + add.totalMs + exist.totalMs; }
         void reset() { get = {}; set = {}; add = {}; exist = {}; }
-    };
-
-    // RAII 计时：未开启时只是一次分支判断，不读时钟
-    class PerfScope {
-    public:
-        PerfScope(bool enabled, PerfCounter& counter)
-            : _counter(enabled ? &counter : nullptr) {
-            if (_counter) _start = std::chrono::steady_clock::now();
-        }
-        ~PerfScope() {
-            if (_counter) {
-                double ms = std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - _start).count();
-                _counter->calls++;
-                _counter->totalMs += ms;
-                if (ms > _counter->maxMs) _counter->maxMs = ms;
-            }
-        }
-        PerfScope(const PerfScope&) = delete;
-        PerfScope& operator=(const PerfScope&) = delete;
-    private:
-        PerfCounter* _counter = nullptr;
-        std::chrono::steady_clock::time_point _start{};
     };
 
     void EnablePerfProfile(bool on) { _perf.enabled = on; }

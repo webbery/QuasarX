@@ -1813,7 +1813,8 @@ SpectrumIndicatorResult computeSpectrumIndicators(
     const Eigen::MatrixXd& ret_matrix,
     const Vector<String>& dates,
     int window_size,
-    int max_clusters)
+    int max_clusters,
+    PerfStages* perf_stages)
 {
     SpectrumIndicatorResult result;
     int n = ret_matrix.rows();
@@ -1844,6 +1845,12 @@ SpectrumIndicatorResult computeSpectrumIndicators(
     result.m_minus.reserve(num_windows);
     result.n_effective.reserve(num_windows);
 
+    // 子阶段打点：计数器在循环外取一次，避免每窗口按名字查 map
+    const bool perf_on = perf_stages != nullptr && perf_stages->enabled();
+    PerfCounter& c_corr    = perf_stages ? perf_stages->stage("spectrum_corr") : sinkCounter();
+    PerfCounter& c_cluster = perf_stages ? perf_stages->stage("spectrum_cluster") : sinkCounter();
+    PerfCounter& c_eigen   = perf_stages ? perf_stages->stage("spectrum_eigen") : sinkCounter();
+
     for (int w_start = 0; w_start < num_windows; ++w_start) {
         int w_end = w_start + window_size;
 
@@ -1859,6 +1866,7 @@ SpectrumIndicatorResult computeSpectrumIndicators(
             // 但为简单起见，这里每窗口重算 (可优化)
             Eigen::MatrixXd full_corr;
             {
+                PerfScope scope(perf_on, c_corr);
                 Eigen::VectorXd means = window_ret.rowwise().mean();
                 Eigen::MatrixXd centered = window_ret.colwise() - means;
                 Eigen::MatrixXd cov = (centered * centered.transpose()) / (window_size - 1);
@@ -1876,7 +1884,11 @@ SpectrumIndicatorResult computeSpectrumIndicators(
             }
 
             // 聚类降维
-            Vector<int> labels = correlationCluster(full_corr, k);
+            Vector<int> labels;
+            {
+                PerfScope scope(perf_on, c_cluster);
+                labels = correlationCluster(full_corr, k);
+            }
 
             // 构建簇代表组合 (等权平均)
             Eigen::MatrixXd cluster_ret = Eigen::MatrixXd::Zero(k, window_size);
@@ -1910,6 +1922,7 @@ SpectrumIndicatorResult computeSpectrumIndicators(
             effective_n = k;
         } else {
             // 无需降维
+            PerfScope scope(perf_on, c_corr);
             Eigen::VectorXd means = window_ret.rowwise().mean();
             Eigen::MatrixXd centered = window_ret.colwise() - means;
             Eigen::MatrixXd cov = (centered * centered.transpose()) / (window_size - 1);
@@ -1928,8 +1941,12 @@ SpectrumIndicatorResult computeSpectrumIndicators(
         }
 
         // 特征值分解
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(corr);
-        Eigen::VectorXd eigenvalues = es.eigenvalues().real();
+        Eigen::VectorXd eigenvalues;
+        {
+            PerfScope scope(perf_on, c_eigen);
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(corr);
+            eigenvalues = es.eigenvalues().real();
+        }
 
         // 降序排序
         std::vector<double> sorted_evals(eigenvalues.data(), eigenvalues.data() + eigenvalues.size());

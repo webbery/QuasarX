@@ -2,7 +2,7 @@
 #include "std_header.h"
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
-#include "Bridge/CapitalPool.h"
+#include "Bridge/LedgerStore.h"
 #include "Metric/CUSUMDetector.h"
 #include <boost/lockfree/queue.hpp>
 #include <atomic>
@@ -45,7 +45,7 @@ public:
     void setPosition(symbol_t symbol, int64_t qty);
     
     /// @brief 调整持仓（通用：delta > 0 买入，delta < 0 卖出）
-    /// 成交时自动从 CapitalPool 扣/加资金
+    /// 成交时自动从账本扣/加资金
     ///
     /// credit：信用成交类型。
     ///   ShortSell —— 允许在无多仓时开出负仓（融券卖出）。只有显式的融券委托
@@ -56,10 +56,10 @@ public:
     void adjustPosition(symbol_t symbol, int delta, double price,
                         CreditAction credit = CreditAction::None, double marginRatio = 1.0);
 
-    // 资金管理（委托给 CapitalPool）
-    void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }
+    // 资金管理（委托给账本）
+    void setLedger(LedgerStore* ledger) { _ledger = ledger; }
     void setStrategyName(const String& name) { _strategyNameForCapital = name; }
-    // 标记本上下文是否为该策略在 CapitalPool 中建立了注册。
+    // 标记本上下文是否为该策略在账本中建立了注册。
     // true 时析构自动归还；由 InitStrategy/长生命周期策略持有的注册必须保持 false，
     // 否则一次回测结束会把策略的资金注册一起注销掉。
     void setCapitalReserved(bool reserved) { _capitalReserved = reserved; }
@@ -189,7 +189,7 @@ public:
     // === 两融信用状态 ===
     /// @brief 获取当前信用状态（融资余额、融券在借数量等）
     const StrategyCreditState& getCreditState() const noexcept { return _creditState; }
-    /// @brief 设置信用状态（从 CapitalPool 恢复时调用）
+    /// @brief 设置信用状态（从账本恢复时调用）
     void setCreditState(const StrategyCreditState& state) noexcept { _creditState = state; }
     /// @brief 应用信用成交（融资买入/融券卖出/买入平空）
     void applyCreditFill(const String& symbol, CreditAction action, int64_t quantity,
@@ -249,11 +249,11 @@ private:
     // 持仓状态（由 StockPositionManager 统一管理）
     StockPositionManager _positionMgr;
 
-    // 资金管理（委托给 CapitalPool，不拥有）
-    CapitalPool* _capitalPool = nullptr;
-    String _strategyNameForCapital;  // 用于 CapitalPool 查询的策略名
+    // 资金管理（委托给账本，不拥有）
+    LedgerStore* _ledger = nullptr;
+    String _strategyNameForCapital;  // 用于账本查询的策略名
     bool _capitalReserved = false;   // true：该策略的资金注册由本上下文建立，析构时归还
-    double _initialCapital = 0.0;    // 策略初始资金（从 CapitalPool 分配）
+    double _initialCapital = 0.0;    // 策略初始资金（从账本分配）
 
     // 当前 Bar 的报价（每个线程私有，无需锁）
     Map<symbol_t, QuoteInfo> _quotes;

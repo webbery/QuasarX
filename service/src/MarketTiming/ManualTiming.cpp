@@ -5,7 +5,7 @@
 #include "server.h"
 #include "Util/string_algorithm.h"
 #include "BrokerSubSystem.h"
-#include "Bridge/CapitalPool.h"
+#include "Bridge/LedgerStore.h"
 #include "Decision.h"
 #include "Util/EodReport.h"
 

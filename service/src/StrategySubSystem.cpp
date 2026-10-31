@@ -8,7 +8,6 @@
 #include <filesystem>
 #include <fstream>
 #include <variant>
-#include "PortfolioSubsystem.h"
 #include "Util/string_algorithm.h"
 #include "Util/DailyDecision.h"
 #include "Util/DecisionDB.h"
@@ -329,12 +328,9 @@ void StrategySubSystem::DeleteStrategy(const String& name) {
     if (_handle) {
         auto* broker = _handle->GetBrokerSubSystem();
         if (broker) {
-            auto* pool = broker->GetCapitalPool();
-            if (pool) {
-                double reclaimed = pool->reclaim(name);
-                if (reclaimed > 0) {
-                    INFO("[StrategySubSystem] Reclaimed {:.0f} capital from deleted strategy '{}'", reclaimed, name);
-                }
+            double reclaimed = broker->GetLedger()->Reclaim(name);
+            if (reclaimed > 0) {
+                INFO("[StrategySubSystem] Reclaimed {:.0f} capital from deleted strategy '{}'", reclaimed, name);
             }
         }
     }
@@ -444,39 +440,25 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
         INFO("[StrategySubSystem] Strategy '{}' shadow mode enabled", to_utf8(strategyName));
     }
 
-    // ── 注册策略资金到 CapitalPool ─────────────────────────────────────
-    // 历史 bug：SetStrategyCapital 只写入 FlowSubsystem._flows[str]._capital，
-    //   未在 BrokerSubSystem._capitalPool 注册 entry，导致：
-    //     1) ManualTiming::SendSummaryEmail 中 pool->hasStrategy() 永远为 false，
-    //        邮件 BUY/SELL/Net 行的 "(X% of capital)" 显示 0.0%
-    //     2) OrderDesk 后续调用 CapitalPool::updateAvailable 时，因 strategy entry 不存在
-    //        静默跳过，资金永远扣不下来
-    //     3) 第二天的 ManualTiming 无法读取"剩余可用资金"参与决策
-    // 修复：此处同步调 pool->allocate 并立即落盘，避免上面 3 个问题。
-    // 设计原则：allocate 内部幂等（hasStrategy 已存在时 _strategies 赋值覆盖 = no-op，
-    //   available 不会被重置回 allocated），所以多次调用安全。
+    // ── 注册策略资金到账本 ───────────────────────────────────────────
+    // 首次加载时按策略配置的 capital 建立账户；已存在则保留账本里的余额，
+    // 不重置为配置值。
     if (script.contains("capital") && script["capital"].is_number()) {
         double scriptCapital = script["capital"].get<double>();
         _agentSystem->SetStrategyCapital(strategyName, scriptCapital);
 
         auto* broker = _handle->GetBrokerSubSystem();
         if (broker) {
-            auto* pool = broker->GetCapitalPool();
-            if (pool && !pool->hasStrategy(strategyName)) {
-                if (pool->allocate(strategyName, scriptCapital)) {
-                    INFO("[StrategySubSystem] CapitalPool registered for '{}': allocated={:.0f}",
-                         to_utf8(strategyName), scriptCapital);
-                } else {
-                    WARN("[StrategySubSystem] CapitalPool allocate failed for '{}' (insufficient funds?)",
-                         to_utf8(strategyName));
-                }
-                // 立即落盘——initCapitalPool 接收的 persistPath 仅用于启动期 load，
-                // 此处必须显式 persist 才能让后续 BrokerSubSystem::Release 之前的
-                // 状态（mid-run 重启场景）也能恢复。
-                broker->PersistCapitalPool();
+            auto* ledger = broker->GetLedger();
+            if (!ledger->HasStrategy(strategyName)) {
+                ledger->Allocate(strategyName, scriptCapital);
+                INFO("[StrategySubSystem] Ledger registered for '{}': allocated={:.0f}",
+                     to_utf8(strategyName), scriptCapital);
+                // 立即落盘，让 mid-run 重启也能恢复
+                broker->PersistLedger();
             }
 
-            // C2：建立统一的策略资金账本（以资金池持久化状态为初值）
+            // 建立策略资金视图
             MarginConfig marginConfig;
             if (script.contains("allowShort") && script["allowShort"].is_boolean()) {
                 marginConfig._allowShort = script["allowShort"].get<bool>();
@@ -786,7 +768,7 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
             time_t todayTs = FromStr(today, "%Y-%m-%d");
             recordDailyPositions(strategy, set, todayTs);
 
-            // 日终执行不再回收资金：该策略的 CapitalPool 注册归 InitStrategy 所有（长生命周期），
+            // 日终执行不再回收资金：该策略的账本注册归 InitStrategy 所有（长生命周期），
             // 回收会注销其注册导致后续 updateAvailable 静默失效、资金永远扣不下来。
             // 若注册确由本次执行的临时上下文建立，BacktestContext 析构时会自动归还。
 

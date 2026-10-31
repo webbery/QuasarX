@@ -290,8 +290,8 @@ symbol_t TickFlowBridge::TickFlowToSymbol(const String& code) {
 // ==================== 资金/持仓 ====================
 
 double TickFlowBridge::GetAvailableFunds(run_id_t run_id) {
-    if (_capitalPool && !_strategyName.empty()) {
-        return _capitalPool->getAvailable(_strategyName);
+    if (_ledger && !_strategyName.empty()) {
+        return _ledger->GetAvailable(_strategyName);
     }
     return 0.0;
 }
@@ -312,19 +312,19 @@ order_id TickFlowBridge::AddOrder(run_id_t run_id, const symbol_t& symbol, Order
 
     INFO("Order (no-op): {} {} @ {:.4f} volume={}", side, symbol_str, order->_order._price, order->_order._volume);
 
-    // 更新模拟持仓并从 CapitalPool 扣/加资金
+    // 更新模拟持仓并从账本扣/加资金
     double price = order->_order._price;
     int64_t qty = order->_order._volume;
     if (order->_order._side == 0) {
         TradeFees fees = _positionMgr.Buy(symbol, qty, price);
-        if (_capitalPool && !_strategyName.empty()) {
+        if (_ledger && !_strategyName.empty()) {
             double amount = qty * price;
-            _capitalPool->updateAvailable(_strategyName, -(amount + fees.total()));
+            _ledger->UpdateAvailable(_strategyName, -(amount + fees.total()));
         }
     } else {
         auto result = _positionMgr.Sell(symbol, qty, price);
-        if (_capitalPool && !_strategyName.empty()) {
-            _capitalPool->updateAvailable(_strategyName, result.proceeds);
+        if (_ledger && !_strategyName.empty()) {
+            _ledger->UpdateAvailable(_strategyName, result.proceeds);
         }
     }
 

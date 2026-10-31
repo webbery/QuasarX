@@ -188,18 +188,18 @@ double DataContext::getAvailableCapital() const
     // 日终/实盘模式：Broker 侧账本是唯一权威口径。
     // 历史口径：日终下 _capital 是策略配置初始值（flow._capital），永不被成交扣减，
     // PortfolioNode 因此按 ¥1,000,000 均分仓位，与 Broker 真实剩余（如 ¥337,637）脱钩。
-    // ManualTiming 邮件已正确显示 CapitalPool 可用资金，此处对齐同一口径。
+    // ManualTiming 邮件已正确显示账本可用资金，此处对齐同一口径。
     //
-    // 2026-10-22 事故：CapitalPool.available 沉淀为 −318.84，被下面的 `> 0` 判据吞掉，
+    // 2026-10-22 事故：账本可用资金沉淀为 −318.84，被下面的 `> 0` 判据吞掉，
     // 继续回退到 _capital = 0，于是 generatePlan() 用 0 定量，3 笔买单全部落成 qty=0
     // 被 `quantity < 100` 静默丢弃，当日可卖的 ¥992,861 完全没参与买入预算。
     //
-    // 修法：一旦池里注册了这个策略，池的返回值就是最终答案，不再看正负。
+    // 修法：一旦账本里注册了这个策略，账本的返回值就是最终答案，不再看正负。
     // 负余额原样冒出来（负的可用资金 = 超额占用），兜底值不能来掩盖它。
     if (auto* broker = _server->GetBrokerSubSystem()) {
-        if (auto* pool = broker->GetCapitalPool()) {
-            if (pool->hasStrategy(_strategy)) {
-                double poolAvail = pool->getAvailable(_strategy);
+        if (auto* ledger = broker->GetLedger()) {
+            if (ledger->HasStrategy(_strategy)) {
+                double poolAvail = ledger->GetAvailable(_strategy);
                 if (poolAvail < 0.0) {
                     WARN("[Capital] strategy '{}' available={} is negative (over-committed); "
                          "reporting as-is so callers see the shortfall instead of a fallback",

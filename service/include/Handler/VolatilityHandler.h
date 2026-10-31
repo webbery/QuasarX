@@ -2,6 +2,7 @@
 #include "HttpHandler.h"
 #include "Util/data.h"
 #include "Util/finance.h"
+#include "Util/perf.h"
 #include "Metric/RiskMetric.h"
 #include "Metric/Drawdown.h"
 #include "Metric/Volatility.h"
@@ -129,7 +130,8 @@ private:
                                      FillMethod fill = FillMethod::None,
                                      int band_window = 20,
                                      BarFreq target_freq = BarFreq::Day,
-                                     int spectrum_window = 60);
+                                     int spectrum_window = 60,
+                                     PerfStages* perf_stages = nullptr);
 
     static VolatilitySingleResult computeSingle(const std::vector<double>& prices,
                                                   const std::vector<double>& volumes,
@@ -141,7 +143,8 @@ private:
         const std::vector<std::string>& symbols,
         const std::vector<std::string>& dates,
         int max_lag = 10,
-        int spectrum_window = 60);
+        int spectrum_window = 60,
+        PerfStages* perf_stages = nullptr);
 
     static std::vector<double> simpleReturns(const std::vector<double>& prices);
     static double skewness(const std::vector<double>& data);

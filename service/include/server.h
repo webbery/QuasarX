@@ -29,7 +29,6 @@ struct StrategyValidationResult {
 
 class Commander;
 class StrategySubSystem;
-class PortfolioSubSystem;
 class ExchangeManager;
 class StrategyPlugin;
 class IStopLoss;
@@ -137,7 +136,6 @@ public:
 
     BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
 
-    PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
     StrategySubSystem* GetStrategySystem() { return _strategySystem; }
 
     RiskSubSystem* GetRiskSubSystem() { return _riskSystem; }
@@ -145,16 +143,6 @@ public:
     ExchangeManager* GetExchangeManager() { return _exchangeMgr; }
 
     double GetFreeRate(time_t t);
-
-    /**
-     * @brief 日终模式下，把 Broker PortfolioSubSystem 中指定策略的持仓同步到
-     *        StrategyCapital，让 SignalNode / PortfolioNode /
-     *        ExecuteNode / ProtectionNode / CapitalRiskManager 看到真实持仓。
-     *
-     * @param strategy 策略名称
-     * @return 同步的持仓条目数（0 表示 PortfolioSubSystem 未注册或无持仓）
-     */
-    int SyncDailyPositionsFromBroker(const String& strategy);
 
     /**
      * @brief Get the previous N day's close price
@@ -284,7 +272,6 @@ private:
     ExchangeManager* _exchangeMgr = nullptr;
 
     StrategySubSystem* _strategySystem;
-    PortfolioSubSystem* _portfolioSystem;
     BrokerSubSystem* _brokerSystem; //
     RiskSubSystem* _riskSystem;
 

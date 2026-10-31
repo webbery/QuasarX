@@ -1,7 +1,7 @@
 #pragma once
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
-#include "Bridge/CapitalPool.h"
+#include "Bridge/LedgerStore.h"
 #include "Util/finance.h"
 #include "httplib.h"
 #include <atomic>
@@ -27,7 +27,7 @@ public:
     void Logout(AccountType t = AccountType::MAIN) override {}
 
     // 资金/持仓（模拟）
-    void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }
+    void setLedger(LedgerStore* ledger) { _ledger = ledger; }
     void setStrategyName(const String& name) { _strategyName = name; }
     double GetAvailableFunds(run_id_t run_id) override;
     AccountAsset GetAsset() override;
@@ -126,7 +126,7 @@ private:
 
     // 模拟持仓
     StockPositionManager _positionMgr;
-    CapitalPool* _capitalPool = nullptr;
+    LedgerStore* _ledger = nullptr;
     String _strategyName;
 
     // Tick历史缓冲区（用于流动性计算）

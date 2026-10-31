@@ -1,5 +1,6 @@
 #pragma once
 #include "std_header.h"
+#include "Util/perf.h"
 #include <Eigen/Dense>
 
 class HolidayCalendar;
@@ -343,11 +344,13 @@ Vector<int> correlationCluster(const Eigen::MatrixXd& corr_matrix, int target_k)
 /// @param dates        日期序列 (长度 T)
 /// @param window_size  滚动窗口大小
 /// @param max_clusters 降维后的最大簇数 (当 n > window_size 时启用聚类)
+/// @param perf_stages  可选：子阶段耗时打点（spectrum_corr / spectrum_cluster / spectrum_eigen）
 SpectrumIndicatorResult computeSpectrumIndicators(
     const Eigen::MatrixXd& ret_matrix,
     const Vector<String>& dates,
     int window_size,
-    int max_clusters = 10);
+    int max_clusters = 10,
+    PerfStages* perf_stages = nullptr);
 
 // ──────────────────────────────────────────────────────────────────────
 // A 股期权行权日规则

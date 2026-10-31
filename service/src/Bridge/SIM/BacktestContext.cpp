@@ -33,9 +33,9 @@ BacktestContext::~BacktestContext() {
         }
         _orderReports.clear();
     }
-    // 归还本上下文建立的 CapitalPool 注册（长生命周期策略的注册不属于本上下文）
-    if (_capitalReserved && _capitalPool) {
-        double reclaimed = _capitalPool->reclaim(_strategyNameForCapital);
+    // 归还本上下文建立的账本注册（长生命周期策略的注册不属于本上下文）
+    if (_capitalReserved && _ledger) {
+        double reclaimed = _ledger->Reclaim(_strategyNameForCapital);
         INFO("[BacktestContext] Reclaimed {:.0f} capital for strategy '{}' (runId={})",
              reclaimed, _strategyNameForCapital, _runId);
     }
@@ -90,8 +90,8 @@ void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price,
     // 调用 StockPositionManager 执行持仓变动，返回费用明细
     TradeFees fees = _positionMgr.AdjustPosition(symbol, delta, price, allowShort);
 
-    // 从 CapitalPool 扣/加资金
-    if (_capitalPool && !_strategyNameForCapital.empty()) {
+    // 从账本扣/加资金
+    if (_ledger && !_strategyNameForCapital.empty()) {
         double amount = std::abs(delta) * price;
         if (delta > 0) {
             // 买入：扣资金 = amount + fees
@@ -99,10 +99,10 @@ void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price,
             double cashOut = (credit == CreditAction::MarginBuy)
                                  ? amount * std::clamp(marginRatio, 0.0, 1.0)
                                  : amount;
-            _capitalPool->updateAvailable(_strategyNameForCapital, -(cashOut + fees.total()));
+            _ledger->UpdateAvailable(_strategyNameForCapital, -(cashOut + fees.total()));
         } else if (delta < 0) {
             // 卖出：加资金 = amount - fees
-            _capitalPool->updateAvailable(_strategyNameForCapital, amount - fees.total());
+            _ledger->UpdateAvailable(_strategyNameForCapital, amount - fees.total());
         }
     }
 
@@ -159,8 +159,8 @@ double BacktestContext::getCapital() const {
 }
 
 double BacktestContext::getAvailableFunds() const {
-    if (_capitalPool && !_strategyNameForCapital.empty()) {
-        return _capitalPool->getAvailable(_strategyNameForCapital);
+    if (_ledger && !_strategyNameForCapital.empty()) {
+        return _ledger->GetAvailable(_strategyNameForCapital);
     }
     return 0.0;
 }
@@ -260,8 +260,8 @@ void BacktestContext::processPositionEvents(time_t barDate, double currentPrice)
 
             PositionEffect fx = _positionMgr.ApplyEvent(symbol, *event, currentPrice);
 
-            if (fx.cashDelta != 0.0 && _capitalPool && !_strategyNameForCapital.empty()) {
-                _capitalPool->updateAvailable(_strategyNameForCapital, fx.cashDelta);
+            if (fx.cashDelta != 0.0 && _ledger && !_strategyNameForCapital.empty()) {
+                _ledger->UpdateAvailable(_strategyNameForCapital, fx.cashDelta);
             }
 
             if (fx.qtyDelta != 0 || fx.cashDelta != 0) {

@@ -1,7 +1,7 @@
 #pragma once
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
-#include "Bridge/CapitalPool.h"
+#include "Bridge/LedgerStore.h"
 
 /**
  * 实盘仿真，任何下单都只记录到数据库，不会真正提交。用于实盘测试环境
@@ -14,7 +14,7 @@ public:
     virtual const char* Name() override { return STOCK_REAL_SIM; }
 
     // 资金/持仓（模拟）
-    void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }
+    void setLedger(LedgerStore* ledger) { _ledger = ledger; }
     void setStrategyName(const String& name) { _strategyName = name; }
     virtual double GetAvailableFunds(run_id_t run_id) override;
     virtual AccountAsset GetAsset() override;
@@ -35,6 +35,6 @@ public:
 
 private:
     StockPositionManager _positionMgr;
-    CapitalPool* _capitalPool = nullptr;
+    LedgerStore* _ledger = nullptr;
     String _strategyName;
 };

@@ -1,7 +1,7 @@
 #include "Util/DecisionSet.h"
 #include "Util/log.h"
 #include "Util/datetime.h"
-#include "Bridge/CapitalPool.h"
+#include "Bridge/LedgerStore.h"
 
 namespace {
 // CostQuote ↔ JSON：map 的 key 是枚举，不能直接 dump，按费用种类名序列化

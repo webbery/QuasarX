@@ -1,7 +1,8 @@
 #pragma once
 #include "std_header.h"
 #include "Bridge/exchange.h"
-#include "Bridge/CapitalPool.h"
+#include "Bridge/LedgerStore.h"
+#include "Bridge/BrokerLedger.h"
 #include "Bridge/StrategyCapital.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
@@ -13,7 +14,6 @@
 #include <shared_mutex>
 #include <thread>
 #include <condition_variable>
-#include "PortfolioSubsystem.h"
 #include "Decision.h"
 #include <boost/lockfree/queue.hpp>
 
@@ -162,32 +162,30 @@ public:
 
     void Release();
     
-    // 资金池访问
-    CapitalPool* GetCapitalPool() { return &_capitalPool; }
-    const CapitalPool* GetCapitalPool() const { return &_capitalPool; }
-    
-    // 策略资金访问（C2 重构：统一的策略资金接口）
+    // 账本访问
+    LedgerStore* GetLedger() { return &_ledger; }
+    const LedgerStore* GetLedger() const { return &_ledger; }
+
+    // 策略资金访问
     StrategyCapital* GetStrategyCapital(const String& strategy);
     const StrategyCapital* GetStrategyCapital(const String& strategy) const;
-    
+
     // 获取所有策略的总持仓（用于全局风控）
     AccountPosition GetAllStrategyPositions() const;
-    
+
     // 创建或获取策略资金实例
-    StrategyCapital* CreateStrategyCapital(const String& strategy, double allocated, 
+    StrategyCapital* CreateStrategyCapital(const String& strategy, double allocated,
                                            const MarginConfig& marginConfig = MarginConfig{});
-    
-    // 从 config.json 初始化资金池
-    // 同时从 DecisionDB 播种决策 id 计数器（见 .cpp 注释：PRIMARY KEY 撞号会覆盖成交记录）
-    void initCapitalPool(double initialCapital, const String& persistPath);
 
-    // 从 DecisionDB 的成交流水重放持仓。进程重启后 PortfolioSubSystem 持仓为空，
-    // 必须在策略开始日终执行前调用，否则已持仓标的会被当成空仓重复建仓。
-    void restoreHoldingsFromDB();
+    // 初始化账本：读取本地账本文件；文件缺失时用成交流水与旧资金池文件重建一次。
+    // 同时从 DecisionDB 播种决策 id 计数器（PRIMARY KEY 撞号会覆盖成交记录）
+    void initLedger(double initialCapital, const String& ledgerPath);
 
-    // 显式持久化 CapitalPool（用 _dbpath + "/capital_pool.json"，与 Release() 保持一致）
-    // StrategySubSystem 在策略初始化时调用，确保资金池条目立即落盘
-    void PersistCapitalPool();
+    // 注册券商账本提供者。未注册时使用本地账本。
+    void SetBrokerLedger(IBrokerLedger* ledger) { _brokerLedger = ledger; }
+
+    // 显式持久化账本（用 _dbpath + "/ledger.json"，与 Release() 保持一致）
+    void PersistLedger();
 
     [[deprecated("使用异步版本 Buy(strategy, symbol, order, callback)")]]
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
@@ -246,11 +244,10 @@ public:
     //   SELL 净收入 = qty × price × (1 - commissionRate - slippageRate)
     //
     // 副作用：
-    //   1) CapitalPool.updateAvailable(strategy, ±netAmount)
-    //   2) _portfolio.GetHolding(strategy)[symbol] FIFO 增减
-    //   3) DecisionDB::markExecuted(decisionId, qty, price) 关联今日决策
-    //   4) DecisionDB::insertDailyPosition(...) UPSERT 持仓快照
-    //   5) PersistCapitalPool() 立即落盘
+    //   1) 账本 ApplyFill：现金、持仓、两融敞口
+    //   2) DecisionDB::markExecuted(decisionId, qty, price) 关联今日决策
+    //   3) DecisionDB::insertDailyPosition(...) UPSERT 持仓快照
+    //   4) PersistLedger() 立即落盘
     //
     // returns: 写入是否成功
     bool RecordManualFill(const String& strategy,
@@ -314,8 +311,6 @@ public:
     // 根据交易记录动态计算净值曲线
     NavResult QueryNav(run_id_t runId, time_t start, time_t end);
 
-    Set<symbol_t> GetPoolSymbols(const String& name);
-
     void ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report);
 
 private:
@@ -326,18 +321,23 @@ private:
 
 private:
     void run();
-    
+
+    // 账本文件缺失时，用成交流水与旧资金池文件重建一次
+    void _rebuildLedgerFromOrderLog(const String& ledgerPath);
+    // 券商账本校验
+    void _syncBrokerLedger(const String& strategy);
+    // 按订单信用类型构造账本成交记录
+    LedgerFill _makeLedgerFill(const String& strategy, symbol_t symbol, int64_t quantity,
+                               double price, time_t when, CreditOrderType creditType);
+
     void flush(MDB_txn* txn, MDB_dbi dbi);
 
     MDB_dbi GetDBI(int portfolid_id, MDB_txn* txn);
 
-    void InitPortfolio(MDB_txn* txn, MDB_dbi);
     void InitHistory(MDB_txn* txn, MDB_dbi);
     void InitPrediction(MDB_txn* txn, MDB_dbi);
 
     nlohmann::json GetHistoryJson();
-    nlohmann::json GetPortfolioJson();
-    nlohmann::json GetBrokers();
     nlohmann::json GetPrediction();
 
     nlohmann::json LoadJson(const String& name, MDB_txn* txn, MDB_dbi);
@@ -347,8 +347,11 @@ private:
 
 private:
     Server* _server;
-    PortfolioSubSystem* _portfolio;
     bool _simulation;
+    // 账户账本：资金 / 持仓 / 两融敞口的唯一权威副本
+    LedgerStore _ledger;
+    // 券商账本提供者，未注册时使用本地账本
+    IBrokerLedger* _brokerLedger = nullptr;
     // 交易记录 - 双层索引：run_id -> symbol -> trades
     ConcurrentMap<run_id_t, std::shared_ptr<RunIdData>> _historyTrades;
 
@@ -370,10 +373,7 @@ private:
     String _dbpath;
     String _modename;
     
-    // 策略级资金池
-    CapitalPool _capitalPool;
-    
-    // 策略级资金实例（C2 重构：统一的策略资金接口）
+    // 策略级资金实例（账本的只读投影）
     Map<String, std::unique_ptr<StrategyCapitalImpl>> _strategyCapitals;
     mutable std::mutex _capitalMutex;
     

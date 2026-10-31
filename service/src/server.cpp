@@ -19,7 +19,6 @@
 #include "Handler/RecordHandler.h"
 #include "Handler/ReplayHandler.h"
 #include "HttpHandler.h"
-#include "PortfolioSubsystem.h"
 #include "StrategyNode.h"
 #include "Util/QuoteDB.h"
 #include "Util/DecisionDB.h"
@@ -233,7 +232,7 @@ std::map<time_t, float> Server::_inter_rates;
 bool Server::_exit = false;
 
 Server::Server():_config(nullptr),
-_strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
+_strategySystem(nullptr), _brokerSystem(nullptr),
 _defaultPortfolio(1), _timer(nullptr)
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
 ,_svr("server.crt", "server.key")
@@ -263,9 +262,6 @@ Server::~Server() {
     if (_brokerSystem) {
         // _broker->Release();
         delete _brokerSystem;
-    }
-    if (_portfolioSystem) {
-        delete _portfolioSystem;
     }
     if (_strategySystem) {
         delete _strategySystem;
@@ -599,11 +595,6 @@ void Server::InitDefault() {
         return;
     }
 
-    _portfolioSystem = new PortfolioSubSystem(this);
-    for (String porfolio: default_config["exchange"]) {
-        _portfolioSystem->GetPortfolio(porfolio);
-    }
-
     _brokerSystem = new BrokerSubSystem(this, use_sim);
     String dbpath = broker["db"];
     if (!std::filesystem::exists(dbpath)) {
@@ -614,17 +605,17 @@ void Server::InitDefault() {
 
     _brokerSystem->Init(broker, exchagnes);
     
-    // 初始化资金池
+    // 初始化账本
     double initialCapital = 1000000;  // 默认 100 万
     if (default_config.contains("capitalRisk") && default_config["capitalRisk"].contains("initialCapital")) {
         initialCapital = default_config["capitalRisk"]["initialCapital"].get<double>();
     }
-    String capitalPersistPath = dbpath + "/capital_pool.json";
-    _brokerSystem->initCapitalPool(initialCapital, capitalPersistPath);
 
-    // 从成交流水恢复持仓：PortfolioSubSystem 的持仓是纯内存的，进程重启会清空。
-    // 不恢复的话，日终决策会把已持仓标的当成空仓重复建仓。
-    _brokerSystem->restoreHoldingsFromDB();
+    // TODO(券商接入)：按 broker["api"] 创建 IBrokerLedger 实现并注册。
+    // 未注册时使用本地账本。
+    // _brokerSystem->SetBrokerLedger(new HXBrokerLedger(...));
+
+    _brokerSystem->initLedger(initialCapital, dbpath + "/ledger.json");
 
     // 初始化风控子系统
     _riskSystem = new RiskSubSystem(this);
@@ -1692,65 +1683,6 @@ void Server::InitHandlers() {
 
     // 关联资金风控 Handler 与 RiskSubSystem 中的 CapitalRiskManager
     // 注意：RiskSubSystem 在 FlowSubsystem 中初始化，需要在 InitDefault 中关联
-}
-
-int Server::SyncDailyPositionsFromBroker(const String& strategy) {
-    auto* portfolioSub = GetPortforlioSubSystem();
-
-    if (!portfolioSub) {
-        WARN("[Server] SyncDailyPositionsFromBroker: PortfolioSubSystem is null, "
-             "SignalNode/PortfolioNode will see empty positions for strategy '{}'", strategy);
-        return 0;
-    }
-
-    auto& holds = portfolioSub->GetHolding(strategy);
-    int synced = 0;
-    Map<symbol_t, Position> capitalPositions;
-    for (const auto& [sym, assets] : holds) {
-        int64_t qty = 0;
-        double costSum = 0.0;
-        for (const auto& a : assets) {
-            int64_t q = static_cast<int64_t>(a._quantity);
-            qty += q;
-            costSum += a._price * static_cast<double>(q);
-        }
-        if (qty <= 0) continue;
-
-        Position p{};
-        p._symbol = sym;
-        p._quantity = qty;
-        p._validQuantity = qty;
-        p._avgPrice = costSum / static_cast<double>(qty);
-
-        capitalPositions[sym] = p;
-        ++synced;
-    }
-
-    // C2：同步到策略资金账本，使 SpendableBudget 的权益口径能看到真实持仓市值
-    if (_brokerSystem) {
-        if (auto* strategyCapital = _brokerSystem->GetStrategyCapital(strategy)) {
-            if (auto* impl = dynamic_cast<StrategyCapitalImpl*>(strategyCapital)) {
-                impl->syncPositions(capitalPositions);
-            }
-        }
-    }
-
-    INFO("[Server] SyncDailyPositionsFromBroker: synced {} position(s) from "
-         "PortfolioSubSystem to StrategyCapital for strategy '{}'",
-         synced, strategy);
-
-    // 对账：资金池显示该策略已投入资金，但持仓同步为 0，说明订单库与资金池口径不一致
-    // （例如成交记录被 decisions.id 撞号覆盖）。继续跑会重复建仓，必须显式失败。
-    if (synced == 0 && _brokerSystem) {
-        double used = _brokerSystem->GetCapitalPool()->getUsed(strategy);
-        if (used > 1.0) {
-            FATAL("[Server] 持仓对账失败：strategy='{}' 资金池已投入 ¥{:.2f}，"
-                  "但从 PortfolioSubSystem 同步到 0 条持仓。订单库与资金池不一致，"
-                  "继续日终执行会重复建仓，请检查 decisions.db 的成交流水后重启。",
-                  strategy, used);
-        }
-    }
-    return synced;
 }
 
 bool Server::IsOpen(symbol_t symbol, time_t t) {

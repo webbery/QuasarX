@@ -292,8 +292,12 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     const std::vector<std::string>& symbols,
     const std::vector<std::string>& dates,
     int max_lag,
-    int spectrum_window)
+    int spectrum_window,
+    PerfStages* perf_stages)
 {
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+
     VolatilityMultiResult result;
 
     // 按 symbols（请求顺序）构建收益率矩阵，跳过无数据的标的
@@ -307,53 +311,61 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     }
     if (n < 2 || min_len < 2) return result;
 
-    // 构建 n x T 收益率矩阵（按 symbols 请求顺序）
+    stages.setValue("multi_n", static_cast<double>(n));
+    stages.setValue("multi_T", static_cast<double>(min_len));
+
+    // 收益率矩阵与标的顺序在后面的两两检验里还要用，不能只留在下面的作用域里
     Eigen::MatrixXd ret_matrix(n, min_len);
     std::vector<std::string> sym_list;
     sym_list.reserve(n);
-    size_t idx = 0;
-    for (const auto& sym : symbols) {
-        auto it = returns_map.find(sym);
-        if (it == returns_map.end()) continue;
-        const auto& rets = it->second;
-        for (size_t t = 0; t < min_len; ++t) {
-            ret_matrix(idx, t) = rets[rets.size() - min_len + t];
+
+    {
+        PERF_SCOPE(stages, "multi_matrix");
+        // 构建 n x T 收益率矩阵（按 symbols 请求顺序）
+        size_t idx = 0;
+        for (const auto& sym : symbols) {
+            auto it = returns_map.find(sym);
+            if (it == returns_map.end()) continue;
+            const auto& rets = it->second;
+            for (size_t t = 0; t < min_len; ++t) {
+                ret_matrix(idx, t) = rets[rets.size() - min_len + t];
+            }
+            sym_list.push_back(sym);
+            ++idx;
         }
-        sym_list.push_back(sym);
-        ++idx;
-    }
 
-    // 去均值（每行减均值）— 标准 Pearson 相关系数
-    Eigen::MatrixXd centered(n, min_len);
-    for (size_t i = 0; i < n; ++i) {
-        centered.row(i) = ret_matrix.row(i).array() - ret_matrix.row(i).mean();
-    }
-
-    // 协方差矩阵：C = (X_centered * X_centered^T) / (T-1)
-    Eigen::MatrixXd cov = (centered * centered.transpose()) / (min_len - 1);
-
-    // 相关系数矩阵：ρ_ij = cov_ij / (σ_i * σ_j)
-    Eigen::VectorXd std_devs(n);
-    for (size_t i = 0; i < n; ++i) {
-        std_devs(i) = std::sqrt(cov(i, i));
-        if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
-    }
-
-    Eigen::MatrixXd corr = cov;
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j < n; ++j) {
-            corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+        // 去均值（每行减均值）— 标准 Pearson 相关系数
+        Eigen::MatrixXd centered(n, min_len);
+        for (size_t i = 0; i < n; ++i) {
+            centered.row(i) = ret_matrix.row(i).array() - ret_matrix.row(i).mean();
         }
-    }
-    corr.diagonal().setOnes();
 
-    // 转换为 std::vector<std::vector<double>>
-    result.covariance_matrix.resize(n, std::vector<double>(n));
-    result.correlation_matrix.resize(n, std::vector<double>(n));
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j < n; ++j) {
-            result.covariance_matrix[i][j] = cov(i, j);
-            result.correlation_matrix[i][j] = corr(i, j);
+        // 协方差矩阵：C = (X_centered * X_centered^T) / (T-1)
+        Eigen::MatrixXd cov = (centered * centered.transpose()) / (min_len - 1);
+
+        // 相关系数矩阵：ρ_ij = cov_ij / (σ_i * σ_j)
+        Eigen::VectorXd std_devs(n);
+        for (size_t i = 0; i < n; ++i) {
+            std_devs(i) = std::sqrt(cov(i, i));
+            if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
+        }
+
+        Eigen::MatrixXd corr = cov;
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+            }
+        }
+        corr.diagonal().setOnes();
+
+        // 转换为 std::vector<std::vector<double>>
+        result.covariance_matrix.resize(n, std::vector<double>(n));
+        result.correlation_matrix.resize(n, std::vector<double>(n));
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                result.covariance_matrix[i][j] = cov(i, j);
+                result.correlation_matrix[i][j] = corr(i, j);
+            }
         }
     }
 
@@ -364,18 +376,22 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     result.num_observations = min_len;
 
     // 真实特征值分解 (对称矩阵使用 SelfAdjointEigenSolver，比 Jacobi 通用分解快)
-    evaluateCovarianceQuality(result.covariance_matrix,
-                              result.eigenvalues,
-                              result.condition_number,
-                              result.is_positive_definite);
+    {
+        PERF_SCOPE(stages, "multi_eigen");
+        evaluateCovarianceQuality(result.covariance_matrix,
+                                  result.eigenvalues,
+                                  result.condition_number,
+                                  result.is_positive_definite);
+    }
 
     // === Marchenko-Pastur 谱指标滚动窗口分析 ===
     // 取 dates 的最后 min_len 个日期与 ret_matrix 对齐（收益率比价格少 1，且多标的对齐到最小长度）
     if (!dates.empty() && min_len <= dates.size()) {
+        PERF_SCOPE(stages, "multi_spectrum");
         size_t date_offset = dates.size() - min_len;
         Vector<String> dates_vec(dates.begin() + date_offset, dates.end());
         result.spectrum_indicators = finance::computeSpectrumIndicators(
-            ret_matrix, dates_vec, spectrum_window);
+            ret_matrix, dates_vec, spectrum_window, 10, &stages);
     }
 
     // === 多资产预测外推 ===
@@ -383,6 +399,8 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     std::vector<ar_model::Forecast> all_forecasts;
     std::vector<std::string> fc_symbols;
     size_t sym_idx = 0;
+    {
+    PERF_SCOPE(stages, "multi_forecast");
     for (const auto& sym : symbols) {
         auto it = returns_map.find(sym);
         if (it == returns_map.end()) continue;
@@ -444,11 +462,18 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
             );
         }
     }
+    }  // multi_forecast
 
     // === 多标的时间序列分析 ===
     // 对所有标的对执行分析 (n*(n-1)/2 对)
     int ts_max_lag = std::min(max_lag, static_cast<int>(min_len / 4));
     if (ts_max_lag < 1) ts_max_lag = 1;
+
+    // 热循环里直接持有计数器引用，避免每次按名字查 map
+    PerfCounter& c_pair_prep = stages.stage("pair_prep");
+    PerfCounter& c_lead_lag  = stages.stage("lead_lag");
+    PerfCounter& c_granger   = stages.stage("granger");
+    const bool perf_on = stages.enabled();
 
     for (size_t i = 0; i < sym_list.size(); ++i) {
         // Eigen row → std::vector<double>
@@ -456,11 +481,15 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
         for (size_t t = 0; t < min_len; ++t) rets_i[t] = ret_matrix(i, t);
 
         for (size_t j = i + 1; j < sym_list.size(); ++j) {
+            auto t_prep = PerfClock::now();
             std::vector<double> rets_j(min_len);
             for (size_t t = 0; t < min_len; ++t) rets_j[t] = ret_matrix(j, t);
+            if (perf_on) c_pair_prep.add(ms_since(t_prep));
 
             // 1. 交叉相关 + 领先滞后
+            auto t_ccf = PerfClock::now();
             auto ccf = finance::crossCorrelation(rets_i, rets_j, ts_max_lag);
+            if (perf_on) c_lead_lag.add(ms_since(t_ccf));
             result.lead_lag_results.push_back({
                 sym_list[i], sym_list[j],
                 ccf.lead_lag,
@@ -469,6 +498,7 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
             });
 
             // 2. 格兰杰因果检验 (y→x 和 x→y 双向)
+            auto t_gr = PerfClock::now();
             int granger_max_lag = std::min(ts_max_lag, 5);
             auto gr_yx = finance::grangerCausalityTest(rets_i, rets_j, granger_max_lag, sym_list[i], sym_list[j]);
             result.granger_results.push_back({
@@ -476,12 +506,15 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
                 gr_yx.f_statistic, gr_yx.p_value, gr_yx.is_significant, gr_yx.optimal_lag
             });
             auto gr_xy = finance::grangerCausalityTest(rets_j, rets_i, granger_max_lag, sym_list[j], sym_list[i]);
+            if (perf_on) c_granger.add(ms_since(t_gr));
             result.granger_results.push_back({
                 sym_list[i], sym_list[j],
                 gr_xy.f_statistic, gr_xy.p_value, gr_xy.is_significant, gr_xy.optimal_lag
             });
         }
     }
+
+    stages.setValue("pairs", static_cast<double>(sym_list.size() * (sym_list.size() - 1) / 2));
 
     return result;
 }
@@ -498,8 +531,12 @@ VolatilityResult VolatilityHandler::compute(
     FillMethod fill,
     int band_window,
     BarFreq target_freq,
-    int spectrum_window)
+    int spectrum_window,
+    PerfStages* perf_stages)
 {
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+
     VolatilityResult result;
     // 注意：result.symbols 在循环中动态收集（跳过数据不足的标的）
 
@@ -525,37 +562,47 @@ VolatilityResult VolatilityHandler::compute(
         Vector<double> prices_vec;
         Vector<double> volumes_vec;
 
+        auto t_symbol = PerfClock::now();
+
         // 检测是否为宏观指标 (格式: country/indicator)
         auto slash = symbol.find('/');
         bool is_macro = (slash != std::string::npos && symbol.size() > slash + 1 && symbol.find('.', slash) == std::string::npos);
 
-        if (is_macro) {
-            // 宏观指标数据
-            if (!FetchMacroData(symbol, db_path, dates, prices_vec)) {
-                WARN("[Volatility] No macro data for {}", symbol);
-                continue;
+        {
+            PERF_SCOPE(stages, "symbol_load");
+            if (is_macro) {
+                // 宏观指标数据
+                if (!FetchMacroData(symbol, db_path, dates, prices_vec)) {
+                    WARN("[Volatility] No macro data for {}", symbol);
+                    continue;
+                }
+                volumes_vec.assign(prices_vec.size(), 0.0);  // 宏观数据无成交量
+            } else {
+                // 股票/ETF行情数据（默认使用 HFQ 后复权）
+                // 将 symbol 字符串转换为 symbol_t 类型
+                symbol_t sym = to_symbol(toInternalSymbol(symbol));
+                auto multi = LoadHistoryDataWithFreq(sym, {"close", "open", "high", "low", "volume", "turnover"},
+                                                      start_date, end_date, target_freq, AdjType::HFQ, &dates, fill);
+                Vector<double> prices = getPriceCol(multi);
+                Vector<double> volumes = getVolumeCol(multi);
+                if (prices.empty()) {
+                    WARN("[Volatility] No data for {}", symbol);
+                    continue;
+                }
+                prices_vec.assign(prices.begin(), prices.end());
+                volumes_vec.assign(volumes.begin(), volumes.end());
+                if (volumes_vec.empty()) volumes_vec.assign(prices_vec.size(), 0.0);
             }
-            volumes_vec.assign(prices_vec.size(), 0.0);  // 宏观数据无成交量
-        } else {
-            // 股票/ETF行情数据（默认使用 HFQ 后复权）
-            // 将 symbol 字符串转换为 symbol_t 类型
-            symbol_t sym = to_symbol(toInternalSymbol(symbol));
-            auto multi = LoadHistoryDataWithFreq(sym, {"close", "open", "high", "low", "volume", "turnover"},
-                                                  start_date, end_date, target_freq, AdjType::HFQ, &dates, fill);
-            Vector<double> prices = getPriceCol(multi);
-            Vector<double> volumes = getVolumeCol(multi);
-            if (prices.empty()) {
-                WARN("[Volatility] No data for {}", symbol);
-                continue;
-            }
-            prices_vec.assign(prices.begin(), prices.end());
-            volumes_vec.assign(volumes.begin(), volumes.end());
-            if (volumes_vec.empty()) volumes_vec.assign(prices_vec.size(), 0.0);
         }
 
-        auto single_result = computeSingle(prices_vec, volumes_vec, windows, band_window);
-        result.single[symbol] = single_result;
-        returns_map[symbol] = simpleReturns(prices_vec);
+        {
+            PERF_SCOPE(stages, "symbol_compute");
+            auto single_result = computeSingle(prices_vec, volumes_vec, windows, band_window);
+            result.single[symbol] = single_result;
+            returns_map[symbol] = simpleReturns(prices_vec);
+        }
+
+        stages.addItem(symbol, ms_since(t_symbol));
 
         // 动态收集成功加载数据的标的（跳过数据不足的）
         result.symbols.push_back(symbol);
@@ -569,8 +616,14 @@ VolatilityResult VolatilityHandler::compute(
         }
     }
 
-    result.dates = common_dates;
-    result.multi = computeMulti(returns_map, symbols, common_dates, 10, spectrum_window);
+    stages.setValue("symbols", static_cast<double>(symbols.size()));
+    stages.setValue("loaded", static_cast<double>(result.symbols.size()));
+
+    {
+        PERF_SCOPE(stages, "compute_multi");
+        result.dates = common_dates;
+        result.multi = computeMulti(returns_map, symbols, common_dates, 10, spectrum_window, &stages);
+    }
 
     return result;
 }
@@ -597,6 +650,9 @@ static nlohmann::json forecastToJson(const ar_model::ForecastResult& fc) {
 // === HTTP Handler (GET 请求) ===
 
 void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res) {
+    // 分段耗时剖析：每个阶段一行汇总，键序固定，便于优化前后 diff
+    PerfStages stages;
+
     try {
         auto db_path = _server->GetConfig().GetDatabasePath();
 
@@ -668,9 +724,10 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             }
         }
 
-        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window, target_freq, spectrum_window);
+        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window, target_freq, spectrum_window, &stages);
 
         // 构建 JSON 响应
+        auto t_json = PerfClock::now();
         nlohmann::json json;
         json["symbols"] = result.symbols;
         json["dates"] = result.dates;
@@ -804,7 +861,13 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
 
         json["multi"] = multi_json;
 
-        res.set_content(json.dump(), "application/json");
+        // json_build: 组装 json 对象；json_dump: 序列化成字符串（n 大时相关矩阵很占时间）
+        stages.stage("json_build").add(ms_since(t_json));
+        auto t_dump = PerfClock::now();
+        auto body = json.dump();
+        stages.stage("json_dump").add(ms_since(t_dump));
+
+        res.set_content(body, "application/json");
         res.status = 200;
     } catch (const std::exception& e) {
         FATAL("[Volatility] Error: {}", e.what());
@@ -812,6 +875,13 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         nlohmann::json err;
         err["error"] = e.what();
         res.set_content(err.dump(), "application/json");
+    }
+
+    // 分段耗时汇总（一行，键序固定，便于优化前后对比）
+    INFO("[Volatility][perf] {}", stages.summary());
+    auto slowest = stages.itemsSummary(5);
+    if (!slowest.empty()) {
+        INFO("[Volatility][perf] slowest symbols: {}", slowest);
     }
 }
 

@@ -363,7 +363,7 @@ void HistorySimulationBase::matchOrders(BacktestContext* context, symbol_t symbo
         double totalCost = commission + stampTax;
 
         double slipDiff = (order._flag == 1) ? 0.0 : (report._trade_amount - (order._volume * order._price));
-        // 资金扣减/增加已在 OrderReport → adjustPosition 中通过 CapitalPool 处理
+        // 资金扣减/增加已在 OrderReport → adjustPosition 中通过账本处理
         // 旧代码的 releaseFunds 是空操作，已移除
 
         // 累加摩擦成本（佣金 + 印花税 + 滑点绝对值）
@@ -428,20 +428,20 @@ run_id_t HistorySimulationBase::createBacktestContext(
     auto context = std::make_unique<BacktestContext>(runId, strategy_name);
     context->setCapital(initial_capital);
 
-    // 设置 CapitalPool 引用（资金统一管理）
+    // 设置账本引用（资金统一管理）
     if (broker) {
-        auto* pool = broker->GetCapitalPool();
-        context->setCapitalPool(pool);
+        auto* pool = broker->GetLedger();
+        context->setLedger(pool);
         context->setStrategyName(strategy_name);
-        // 仅 Backtest/Simulation 在这里注册资金到 CapitalPool：
-        //   - Real 模式资金由券商账户管理，不进 CapitalPool
+        // 仅 Backtest/Simulation 在这里注册资金到账本：
+        //   - Real 模式资金由券商账户管理，不进本地账本
         //   - Shadow 模式只记录日志不下单，无需资金
         //   - BackTestHandler 路径（HTTP /v0/backtest）已 allocate 过，hasStrategy 跳过避免覆盖累积的资金
         auto mode = _server->GetRunningMode();
         if ((mode == RuningType::Backtest || mode == RuningType::Simualtion)
-            && pool && !pool->hasStrategy(strategy_name)) {
+            && pool && !pool->HasStrategy(strategy_name)) {
             // 注册由本次调用建立 → 归属本上下文，析构时自动归还（RAII）
-            if (pool->allocate(strategy_name, initial_capital)) {
+            if (pool->Allocate(strategy_name, initial_capital)) {
                 context->setCapitalReserved(true);
             } else {
                 WARN("[createBacktestContext] Failed to allocate {:.0f} capital for '{}'",

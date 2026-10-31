@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <fstream>
 #include <mutex>
 #include <random>
 #include <shared_mutex>
@@ -11,7 +12,6 @@
 #include "Bridge/SIM/BacktestContext.h"
 #include "Bridge/exchange.h"
 #include "ExchangeManager.h"
-#include "PortfolioSubsystem.h"
 #include "Util/lmdb.h"
 #include "Util/string_algorithm.h"
 #include "Util/DecisionDB.h"
@@ -74,7 +74,6 @@ double StockCommission::GetCommission(symbol_t symbol, int64_t size) {
 
 BrokerSubSystem::BrokerSubSystem(Server* server, bool is_simulation)
     :_thread(nullptr), _exit(false), _order_queue(256), _simulation(is_simulation), _server(server){
-    _portfolio = server->GetPortforlioSubSystem();
 }
 
 bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers) {
@@ -97,13 +96,15 @@ bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType,
   return true;
 }
 
-void BrokerSubSystem::initCapitalPool(double initialCapital, const String& persistPath) {
-    // 尝试从持久化文件加载
-    if (!persistPath.empty() && _capitalPool.load(persistPath)) {
-        INFO("[BrokerSubSystem] CapitalPool loaded from {}", persistPath);
+void BrokerSubSystem::initLedger(double initialCapital, const String& ledgerPath) {
+    _ledger.SetInitialCapital(initialCapital);
+
+    // 账本文件存在时直接加载；不存在时用成交流水与旧资金池文件重建一次。
+    if (_ledger.Load(ledgerPath)) {
+        INFO("[BrokerSubSystem] Ledger loaded from {}", ledgerPath);
     } else {
-        _capitalPool.init(initialCapital);
-        INFO("[BrokerSubSystem] CapitalPool initialized with initialCapital={}", initialCapital);
+        INFO("[BrokerSubSystem] Ledger file not found, rebuilding from order log");
+        _rebuildLedgerFromOrderLog(ledgerPath);
     }
 
     // 播种决策 id 计数器：decisions.id 是 PRIMARY KEY 且 insertDecision 用 INSERT OR REPLACE，
@@ -117,6 +118,56 @@ void BrokerSubSystem::initCapitalPool(double initialCapital, const String& persi
         WARN("[BrokerSubSystem] DecisionDB unavailable — decision ids restart from 0 and may "
              "overwrite historical fills. Check decisions.db before trading.");
     }
+}
+
+// 账本文件缺失时重建一次：用 DecisionDB 的成交流水还原持仓，用旧资金池文件还原现金。
+void BrokerSubSystem::_rebuildLedgerFromOrderLog(const String& ledgerPath) {
+    auto& decisionDB = DecisionDB::instance();
+    if (decisionDB.isInitialized()) {
+        for (const auto& strategy : decisionDB.queryFilledStrategies()) {
+            auto fills = decisionDB.queryExecutedFills(strategy);
+            if (fills.empty()) continue;
+
+            List<LedgerStore::RestoreFill> restoreFills;
+            for (const auto& info : fills) {
+                for (const auto& report : info._reports) {
+                    LedgerStore::RestoreFill rf;
+                    rf._symbol = info._symbol;
+                    rf._quantity = report._quantity;
+                    rf._price = report._price;
+                    rf._isOpen = (report._flag == 0);
+                    rf._time = report._time;
+                    restoreFills.push_back(rf);
+                }
+            }
+            const int positions = _ledger.RestoreFromFills(strategy, restoreFills);
+            INFO("[BrokerSubSystem] Ledger rebuilt for '{}': {} fill(s), {} position(s)",
+                 strategy, restoreFills.size(), positions);
+        }
+    }
+
+    // 旧资金池文件提供现金与分配额度。其信用敞口不再迁移：旧口径把每笔多头开仓
+    // 都记成融资买入，负债并非真实借入。
+    const String legacyPath = _dbpath + "/capital_pool.json";
+    nlohmann::json legacy;
+    if (!legacyPath.empty() && std::filesystem::exists(legacyPath)) {
+        try {
+            std::ifstream ifs(legacyPath);
+            ifs >> legacy;
+            if (legacy.contains("strategies")) {
+                for (const auto& [name, item] : legacy["strategies"].items()) {
+                    // Allocate 设置额度并重置现金，随后用旧文件里的真实余额覆盖
+                    _ledger.Allocate(name, item.value("allocated", 0.0));
+                    _ledger.SetAvailable(name, item.value("available", 0.0));
+                }
+            }
+            INFO("[BrokerSubSystem] Legacy capital pool migrated from {}", legacyPath);
+        } catch (const std::exception& e) {
+            WARN("[BrokerSubSystem] Legacy capital pool migration failed: {}", e.what());
+        }
+    }
+
+    PersistLedger();
 }
 
 StrategyCapital* BrokerSubSystem::GetStrategyCapital(const String& strategy) {
@@ -150,89 +201,67 @@ AccountPosition BrokerSubSystem::GetAllStrategyPositions() const {
     return result;
 }
 
-StrategyCapital* BrokerSubSystem::CreateStrategyCapital(const String& strategy, double allocated, 
+StrategyCapital* BrokerSubSystem::CreateStrategyCapital(const String& strategy, double allocated,
                                                         const MarginConfig& marginConfig) {
     std::lock_guard<std::mutex> lock(_capitalMutex);
-    
+
     // 如果已存在，直接返回
     auto it = _strategyCapitals.find(strategy);
     if (it != _strategyCapitals.end()) {
         return it->second.get();
     }
-    
-    // 以资金池的持久化状态为初值：allocate 只在首次注册时执行，
-    // 进程重启后 available 可能是历史成交扣减后的余额（甚至为负），
-    // 不能简单地用 allocated 重置。
-    double seedAllocated = allocated;
-    double seedAvailable = allocated;
-    if (_capitalPool.hasStrategy(strategy)) {
-        auto info = _capitalPool.get(strategy);
-        seedAllocated = info.allocated;
-        seedAvailable = info.available;
-    }
-    
-    auto capital = std::make_unique<StrategyCapitalImpl>(seedAllocated, marginConfig);
-    capital->setAvailable(seedAvailable);
-    
-    // 成交后把最新可用资金回写资金池并落盘
-    capital->setPersistCallback([this, strategy](double available) {
-        _capitalPool.setAvailable(strategy, available);
-        PersistCapitalPool();
-    });
-    
+
+    // 账本是资金与持仓的唯一来源：这里只建一个只读投影
+    auto capital = std::make_unique<StrategyCapitalImpl>(&_ledger, strategy, allocated, marginConfig);
+
     StrategyCapital* ptr = capital.get();
     _strategyCapitals[strategy] = std::move(capital);
-    
+
     INFO("[BrokerSubSystem] Created StrategyCapital for '{}': allocated={:.2f}, available={:.2f}, "
          "initialMarginRatio={:.2f}",
-         strategy, seedAllocated, seedAvailable, marginConfig._initialMarginRatio);
-    
+         strategy, allocated, _ledger.GetAvailable(strategy), marginConfig._initialMarginRatio);
+
+    // 券商账本校验：只在首次创建时做一次
+    _syncBrokerLedger(strategy);
+
     return ptr;
 }
 
-// 从成交流水（DecisionDB.decisions 中 executed=true 的记录）重放持仓。
-// PortfolioSubSystem 的分批持仓是纯内存结构，进程重启即丢失；而 decisions 表已持久化
-// 每一笔真实成交。启动时按时间正序重放 FIFO，即可还原与实时路径一致的持仓状态。
-void BrokerSubSystem::restoreHoldingsFromDB() {
-    auto& decisionDB = DecisionDB::instance();
-    if (!decisionDB.isInitialized()) {
-        FATAL("[BrokerSubSystem] DecisionDB 未初始化，持仓无法从下单记录恢复。"
-              "为避免重复建仓，请修复 decisions.db 后重启");
+// 拉取券商账本与本地账本比对，不一致时告警
+void BrokerSubSystem::_syncBrokerLedger(const String& strategy) {
+    if (!_brokerLedger || !_brokerLedger->IsConnected()) return;
+
+    BrokerAccount account;
+    if (!_brokerLedger->QueryAccount(account)) {
+        WARN("[BrokerSubSystem] Broker ledger query failed for '{}', using local ledger", strategy);
         return;
     }
 
-    int total = 0;
-    for (const auto& strategy : decisionDB.queryFilledStrategies()) {
-        auto fills = decisionDB.queryExecutedFills(strategy);
-        if (fills.empty()) continue;
+    _ledger.SyncBrokerMirror(strategy, _brokerLedger->Name(), account._cash,
+                             account._borrowedCash, account._borrowedShares, account._positions);
 
-        auto& holds = _portfolio->GetHolding(strategy);
-        holds.clear();  // 幂等：重复调用不会叠加
-
-        int64_t replayed = 0;
-        for (const auto& info : fills) {
-            for (const auto& report : info._reports) {
-                // _flag: 0=开仓 / 1=平仓（与 decision_to_flag 一致）
-                ApplyFillToHolding(holds, info._symbol, report._quantity,
-                                   report._price, report._time, report._flag == 0);
-                ++replayed;
-            }
-        }
-        total += static_cast<int>(holds.size());
-        INFO("[BrokerSubSystem] Holdings restored for '{}': {} fill(s) replayed, {} open position(s)",
-             strategy, replayed, holds.size());
+    const BrokerMirror* mirror = _ledger.GetBrokerMirror(strategy);
+    if (mirror && !mirror->_matched) {
+        WARN("[BrokerSubSystem] Ledger mismatch vs broker '{}' for strategy '{}': "
+             "cash_diff={:.2f}, positions=[{}]",
+             _brokerLedger->Name(), strategy, mirror->_cashDiff,
+             [&]() {
+                 String s;
+                 for (const auto& d : mirror->_positionDiff) {
+                     if (!s.empty()) s += ", ";
+                     s += d;
+                 }
+                 return s;
+             }());
     }
-
-    INFO("[BrokerSubSystem] Holdings restore complete: {} position(s) from order log", total);
 }
 
-void BrokerSubSystem::PersistCapitalPool() {
+void BrokerSubSystem::PersistLedger() {
     if (_dbpath.empty()) {
-        WARN("[BrokerSubSystem] PersistCapitalPool: _dbpath not initialized, skip");
+        WARN("[BrokerSubSystem] PersistLedger: _dbpath not initialized, skip");
         return;
     }
-    String path = _dbpath + "/capital_pool.json";
-    _capitalPool.persist(path);
+    _ledger.Save(_dbpath + "/ledger.json");
 }
 
 void BrokerSubSystem::Release() {
@@ -243,12 +272,8 @@ void BrokerSubSystem::Release() {
   _thread->join();
   delete _thread;
   _thread = nullptr;
-  
-  // 持久化资金池状态（存放在 _dbpath 的父目录，而非 exchange 子目录）
-  if (!_dbpath.empty()) {
-      String capitalPersistPath = _dbpath + "/capital_pool.json";
-      _capitalPool.persist(capitalPersistPath);
-  }
+
+  PersistLedger();
 
   _order_queue.consume_all([](OrderContext* ctx) {
     delete ctx;
@@ -344,17 +369,6 @@ void BrokerSubSystem::CancelOrder(order_id& id, symbol_t symbol, std::function<v
         }
     }
     _order_queue.push(ctx);
-}
-
-void BrokerSubSystem::InitPortfolio(MDB_txn* txn, MDB_dbi dbi) {
-  String portfolioName("portfolio");
-  auto jsn = LoadJson(portfolioName, txn, dbi);
-  if (jsn.empty())
-    return;
-
-  for (auto& item: jsn) {
-    _portfolio->AddPortfolio(item);
-  }
 }
 
 StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
@@ -475,57 +489,6 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   default:
     return "unknown";
   }
-}
-
-nlohmann::json BrokerSubSystem::GetPortfolioJson() {
-  nlohmann::json result;
-  auto allIDs = _portfolio->GetAllPortfolio();
-  for (auto id: allIDs) {
-    auto& portfolio = _portfolio->GetPortfolio(id);
-
-    nlohmann::json port;
-    port["id"] = id;
-    port["pool"] = portfolio._pools;
-    port["principal"] = portfolio._principal;
-    for (auto& item: portfolio._holds) {
-      nlohmann::json hold;
-      hold["symbol"] = get_symbol(item.first);
-      for (auto& asset: item.second) {
-        nlohmann::json data;
-        data["quantity"] = asset._quantity;
-        data["price"] = asset._price;
-        data["time"] = asset._date;
-        hold["asset"] = std::move(data);
-      }
-      // asset["price"] = item._;
-
-      port["hold"].emplace_back(std::move(hold));
-    }
-    result.emplace_back(std::move(port));
-  }
-  return result;
-}
-
-nlohmann::json BrokerSubSystem::GetBrokers() {
-  nlohmann::json result;
-  // 从 PortfolioSubSystem 聚合真实资金数据
-  double totalPrincipal = 0;
-  double totalProfit = 0;
-  nlohmann::json portfolios = nlohmann::json::array();
-  for (const auto& [id, info] : _portfolio->_portfolios) {
-    totalPrincipal += info._principal;
-    totalProfit += info._profit;
-    nlohmann::json p;
-    p["id"] = id;
-    p["principal"] = info._principal;
-    p["profit"] = info._profit;
-    p["pools"] = info._pools;
-    portfolios.emplace_back(std::move(p));
-  }
-  result["totalPrincipal"] = totalPrincipal;
-  result["totalProfit"] = totalProfit;
-  result["portfolios"] = portfolios;
-  return result;
 }
 
 void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
@@ -694,7 +657,6 @@ void BrokerSubSystem::run() {
     // 不同模式使用不同的数据库
     int db_id = 1;
     auto dbi = GetDBI(db_id, _txn);
-    InitPortfolio(_txn, dbi);
     InitHistory(_txn, dbi);
     InitPrediction(_txn, dbi);
 
@@ -759,6 +721,19 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
     // 非回测模式，使用 strategy_hash 作为 key
     if (runId == 0) {
         runId = static_cast<run_id_t>(ctx._strategy_hash);
+    }
+
+    // 成交写入账本（回测的现金由 BacktestContext 管理，不写这里）
+    if (ctx._running_type != static_cast<uint8_t>(RuningType::Backtest) &&
+        !ctx._strategy_name.empty()) {
+        for (const auto& report : ctx._trades._reports) {
+            if (report._status != OrderStatus::OrderSuccess) continue;
+            LedgerFill fill = _makeLedgerFill(ctx._strategy_name, ctx._order._symbol,
+                                              report._quantity, report._price, report._time,
+                                              ctx._order._creditType);
+            _ledger.ApplyFill(ctx._strategy_name, fill);
+        }
+        PersistLedger();
     }
 
     // 获取或创建 RunIdData
@@ -836,14 +811,6 @@ void BrokerSubSystem::flush(MDB_txn* txn, MDB_dbi dbi) {
   if (!history.empty()) {
     SaveJson("history", txn, dbi, history);
   }
-  auto portfolios = GetPortfolioJson();
-  if (!portfolios.empty()) {
-    SaveJson("portfolio", txn, dbi, portfolios);
-  }
-  auto broker = GetBrokers();
-  if (!broker.empty()) {
-    SaveJson("broker", txn, dbi, broker);
-  }
   auto prediction = GetPrediction();
   if (!prediction.empty()) {
     SaveJson(DB_PREDICTION, txn, dbi, prediction);
@@ -896,37 +863,50 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
         break;
       }
     }
-    // 记录（FIFO 复用 ApplyFillToHolding，返回被消耗的成本用于损益）
-    auto& holds = _portfolio->GetHolding(strategy);
-    if (side == 0) {
-      for (auto& info: detail._reports) {
-        ApplyFillToHolding(holds, symbol, info._quantity, info._price, info._time, true);
-      }
-    }
-    else if (side == 1) {
-      double org_princpal = 0;
-      double total_sell = 0;
-      for (auto info: detail._reports) {
-        // 收入按实际平掉的数量计：超卖时 FIFO 只能扣到余额为止，
-        // 若用 info._quantity 会把没平掉的部分也算成卖出收入，虚增收益
-        int64_t applied = 0;
-        org_princpal += ApplyFillToHolding(holds, symbol, info._quantity, info._price, info._time, false, &applied);
-        total_sell += static_cast<double>(applied) * info._price;
-      }
-      // 损益
-      double profit = total_sell - org_princpal;
-      _portfolio->UpdateProfit(strategy, profit);
+    // 记录成交到账本
+    for (auto& info: detail._reports) {
+        LedgerFill fill = _makeLedgerFill(strategy, symbol, info._quantity, info._price,
+                                          info._time, order._creditType);
+        _ledger.ApplyFill(strategy, fill);
     }
     // 设置结束标志
     ctx->_flag.store(true);
     return order_id();
 }
 
+// 按订单的信用类型构造账本成交记录
+LedgerFill BrokerSubSystem::_makeLedgerFill(const String& strategy, symbol_t symbol,
+                                            int64_t quantity, double price, time_t when,
+                                            CreditOrderType creditType) {
+    LedgerFill fill;
+    fill._symbol = symbol;
+    fill._quantity = quantity;
+    fill._price = price;
+    fill._time = when;
+
+    const auto* capital = GetStrategyCapital(strategy);
+    const double marginRatio = capital ? capital->getMarginConfig()._initialMarginRatio : 1.0;
+
+    switch (creditType) {
+        case CreditOrderType::MarginBuy:
+            fill._isMargin = true;
+            fill._marginRatio = marginRatio;
+            break;
+        case CreditOrderType::ShortSell:
+            fill._isShortSell = true;
+            fill._marginRatio = marginRatio;
+            break;
+        case CreditOrderType::CoverShort:
+            fill._isShortCover = true;
+            break;
+        default:
+            fill._marginRatio = 1.0;
+            break;
+    }
+    return fill;
+}
+
 void BrokerSubSystem::ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report) {
-    // if (report._status == OrderStatus::OrderSuccess) {
-    //     auto& holds = _portfolio->GetHolding(strategy);
-    //     auto& history = holds[symbol];
-    // }
 }
 
 order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
@@ -1094,15 +1074,6 @@ std::shared_ptr<RunIdData> BrokerSubSystem::GetAllHistoryTrades(run_id_t run_id)
         result = entry.second;
     });
     return result;
-}
-
-Set<symbol_t> BrokerSubSystem::GetPoolSymbols(const String& name) {
-  Set<symbol_t> result;
-  auto& pool = _portfolio->GetPortfolio(name)._pools;
-  for (auto sym: pool) {
-    result.insert(to_symbol(sym));
-  }
-  return result;
 }
 
 BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
@@ -1472,100 +1443,64 @@ bool BrokerSubSystem::RecordManualFill(const String& strategy,
         return false;
     }
 
-    // 1) 计算净金额（B 口径：qty × price × (1 ± fees)）
-    double gross = static_cast<double>(quantity) * price;
-    double feeRate = commissionRate + slippageRate;
-    bool isBuy = (action == DecisionAction::OpenLong || action == DecisionAction::CloseShort);
-    double netDelta = isBuy ? -(gross * (1.0 + feeRate)) : (gross * (1.0 - feeRate));
-
-    // 2) CapitalPool 资金扣减
-    auto* pool = GetCapitalPool();
-    if (pool && pool->hasStrategy(strategy)) {
-        pool->updateAvailable(strategy, netDelta);
-    } else {
-        WARN("[Broker] RecordManualFill: strategy '{}' not in CapitalPool, skip fund deduction",
-             strategy);
+    // 1) 构造账本成交记录
+    const bool isBuy = (action == DecisionAction::OpenLong || action == DecisionAction::CloseShort);
+    double marginRatio = 1.0;
+    if (auto* capital = GetStrategyCapital(strategy)) {
+        marginRatio = capital->getMarginConfig()._initialMarginRatio;
     }
 
-    // 3) 两融敞口回写（融资买入 / 融券卖出 / 买入平空）
-    // 根据 DecisionAction 映射到 CreditAction，从 StrategyCapital 读取保证金比例。
-    if (pool) {
-        CreditAction creditAction = CreditAction::None;
-        switch (action) {
-            case DecisionAction::OpenLong:
-                // 融资买入：需要检查保证金比例 < 1.0 才算是融资
-                // 这里先标记为 OpenLong，applyCreditFill 内部会检查 marginRatio
-                creditAction = CreditAction::MarginBuy;
-                break;
-            case DecisionAction::OpenShort:
-                creditAction = CreditAction::ShortSell;
-                break;
-            case DecisionAction::CloseShort:
-                creditAction = CreditAction::ShortCover;
-                break;
-            case DecisionAction::CloseLong:
-                // 普通卖出平多，不涉及两融
-                break;
-        }
-        if (creditAction != CreditAction::None) {
-            // 从 StrategyCapital 读取保证金比例
-            double marginRatio = 1.0;
-            if (auto* capital = GetStrategyCapital(strategy)) {
-                marginRatio = capital->getMarginConfig()._initialMarginRatio;
-            }
-            pool->applyCreditFill(strategy, get_symbol(symbol), creditAction,
-                                  quantity, price, marginRatio);
-        }
+    LedgerFill fill;
+    fill._symbol = symbol;
+    fill._quantity = isBuy ? quantity : -quantity;
+    fill._price = price;
+    fill._commissionRate = commissionRate;
+    fill._slippageRate = slippageRate;
+    fill._marginRatio = marginRatio;
+    fill._time = time(nullptr);
+    switch (action) {
+        case DecisionAction::OpenLong:
+            fill._isMargin = marginRatio < 1.0;
+            fill._marginRatio = fill._isMargin ? marginRatio : 1.0;
+            break;
+        case DecisionAction::OpenShort:
+            fill._isShortSell = true;
+            fill._marginRatio = marginRatio;
+            break;
+        case DecisionAction::CloseShort:
+            fill._isShortCover = true;
+            break;
+        case DecisionAction::CloseLong:
+            break;
     }
 
-    // 4) 持仓更新（FIFO，复用共用实现）
-    auto& holds = _portfolio->GetHolding(strategy);
-    bool isOpen = (action == DecisionAction::OpenLong || action == DecisionAction::OpenShort);
-    ApplyFillToHolding(holds, symbol, quantity, price, time(nullptr), isOpen);
+    // 2) 写入账本：现金、持仓、两融敞口
+    const double cashDelta = _ledger.ApplyFill(strategy, fill);
 
-    // 5) DecisionDB 关联已执行
+    // 3) DecisionDB 关联已执行
     if (decisionId > 0) {
         MarkDecisionExecuted(decisionId, quantity, price);
     }
 
-    // 6) DailyPosition UPSERT（当日持仓快照）
-    // 注意：ApplyFillToHolding 可能在平仓后移除该标的，需重新查找而非复用旧引用
-    int64_t netPosition = 0;
-    auto holdIt = holds.find(symbol);
-    if (holdIt != holds.end()) {
-        for (const auto& asset : holdIt->second) {
-            netPosition += asset._quantity;
-        }
-    }
-    // 做空时 netPosition 为负（history 中只有空头持仓时）
-    // 但当前 FIFO 逻辑不区分多空方向，仅记录绝对数量
-    // 对于 OpenLong/CloseLong：netPosition >= 0
-    // 对于 OpenShort/CloseShort：需要额外标记——暂用正数（后续可扩展）
+    // 4) DailyPosition UPSERT（当日持仓快照）
     DailyPositionRecord dp{};
     dp.strategy = strategy;
     dp.symbol = symbol;
     dp.date = TodayMidnight();
-    dp.position = netPosition;
+    dp.position = _ledger.GetQuantity(strategy, symbol);
     dp.close_price = price;
     DecisionDB::instance().insertDailyPosition(dp);
 
-    // 7) 持久化 CapitalPool
-    PersistCapitalPool();
+    // 5) 持久化账本
+    PersistLedger();
 
     INFO("[Broker] RecordManualFill: {} {} {} qty={} price={:.2f} netDelta={:.0f} decisionId={}",
          strategy, isBuy ? "BUY" : "SELL", get_symbol(symbol),
-         quantity, price, netDelta, decisionId);
+         quantity, price, cashDelta, decisionId);
 
     return true;
 }
 
 int64_t BrokerSubSystem::GetHoldingQuantity(const String& strategy, symbol_t symbol) {
-    auto& holds = _portfolio->GetHolding(strategy);
-    auto it = holds.find(symbol);
-    if (it == holds.end()) return 0;
-    int64_t total = 0;
-    for (const auto& asset : it->second) {
-        total += asset._quantity;
-    }
-    return total;
+    return _ledger.GetQuantity(strategy, symbol);
 }

@@ -6,9 +6,7 @@
 #include "Nodes/ProtectionNode.h"
 #include "Util/datetime.h"
 #include "Util/TradingCost.h"
-
-// 前向声明：两融敞口状态（定义在 Bridge/CapitalPool.h）
-struct StrategyCreditState;
+#include "Bridge/LedgerStore.h"
 
 /**
  * @brief 一组决策的唯一权威产物
@@ -20,7 +18,7 @@ struct StrategyCreditState;
  * 存在的意义：把产出决策的地方（ExecuteNode / ManualTiming / ProtectionNode /
  * 资金账本）与消费决策的地方分开。JSON 日报、邮件、SSE、DuckDB decisions、
  * DuckDB daily_positions、EodReport 全部只读这一个对象，各自不再去摸
- * ManualTiming / ProtectionNode / CapitalPool / PortfolioSubSystem 的内部状态。
+ * ManualTiming / ProtectionNode 的内部状态。
  *
  * 统一了此前散在各处的语义：
  *  - 动作只有一套规范表示（TradeAction + flag，与 ExecuteNode 产出的 TradeSignal
@@ -169,7 +167,7 @@ struct DecisionSet {
 
     // ── 两融（信用交易）──
     // 与交易摩擦严格分开：两融是"持仓期按日计提"，交易摩擦是"时点一次付"。
-    // 数据来源：CapitalPool 的 StrategyCreditState（成交回写后持久化，跨进程存活）。
+    // 数据来源：账本的 StrategyCreditState（成交回写后持久化，跨进程存活）。
     // 求值：EvaluateHoldingCost(profile, HoldingCostContext) 按日计提融资利息与融券费。
     struct MarginItem {
         symbol_t _symbol;
@@ -438,7 +436,7 @@ struct DecisionSetBuilder {
  * @param costProfile     费率档案（佣金/印花税/滑点…）；用于对每笔决策求值摩擦成本
  * @param status          状态
  * @param error           失败原因
- * @param creditState     两融敞口（来自 CapitalPool，成交回写后持久化）
+ * @param creditState     两融敞口（来自账本，成交回写后持久化）
  * @param marginRatio     初始保证金比例（1.0 = 全额，0.5 = 50%）
  * @param maintenanceMarginRatio 维持保证金比例
  * @param warningRatio    警戒线（维持担保比例）

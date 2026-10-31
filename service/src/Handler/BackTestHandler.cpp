@@ -35,7 +35,7 @@ public:
     CapitalScopeGuard() = default;
     ~CapitalScopeGuard() {
         if (_owned && _pool) {
-            double reclaimed = _pool->reclaim(_strategy);
+            double reclaimed = _pool->Reclaim(_strategy);
             INFO("[Backtest] Released {:.0f} capital for '{}' (aborted before context creation)",
                  reclaimed, _strategy);
         }
@@ -44,7 +44,7 @@ public:
     CapitalScopeGuard& operator=(const CapitalScopeGuard&) = delete;
 
     // 接管一笔已 allocate 成功的资金注册，作用域退出时归还
-    void arm(CapitalPool* pool, const String& strategy) {
+    void arm(LedgerStore* pool, const String& strategy) {
         _pool = pool;
         _strategy = strategy;
         _owned = true;
@@ -54,7 +54,7 @@ public:
     void dismiss() { _owned = false; }
 
 private:
-    CapitalPool* _pool = nullptr;
+    LedgerStore* _pool = nullptr;
     String _strategy;
     bool _owned = false;
 };
@@ -360,16 +360,16 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     
     // 从资金池分配资金
     auto* broker = _server->GetBrokerSubSystem();
-    auto* pool = broker ? broker->GetCapitalPool() : nullptr;
+    auto* pool = broker ? broker->GetLedger() : nullptr;
     CapitalScopeGuard capitalGuard;
     if (pool) {
-        if (!pool->allocate(strategyName, strategyCapital)) {
+        if (!pool->Allocate(strategyName, strategyCapital)) {
             res.status = 400;
             String msg = R"({"message": "资金分配失败，可用资金不足"})";
             res.set_content(msg.c_str(), "application/json");
             return;
         }
-        strategyCapital = pool->get(strategyName).allocated;
+        strategyCapital = pool->GetAllocated(strategyName);
         capitalGuard.arm(pool, strategyName);
         INFO("[Backtest] Capital allocated to {}: {:.0f}", strategyName, strategyCapital);
     }

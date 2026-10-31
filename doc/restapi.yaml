@@ -2085,26 +2085,157 @@ paths:
                 type: object
   /position:
     get:
-      summary: get position
-      description: 获取持仓信息:1.无任何参数时,获取当前所有持仓 2.获取某只标的的所有持仓细节
+      summary: 获取持仓与账本
+      description: |
+        按 `action` 返回不同视图；不带 `action` 时返回 `positions` + `capital` + `strategies` 全量。
+
+        | action | 返回字段 | 说明 |
+        |--------|----------|------|
+        | （缺省） | positions / capital / strategies | 全量 |
+        | `positions` | positions | 交易所通道（EX_HX）侧持仓；纯行情模式返回空数组 |
+        | `capital` | capital | 全部策略的资金汇总 |
+        | `ledger` | strategies | 每个策略的账本：现金、融资余额、聚合持仓、FIFO 分批、已实现盈亏 |
+        | `credit` | strategies | 每个策略的两融敞口 |
+
+        `ledger` 条目的 `equity = cash + positionValue − borrowedCash`。
+        账本默认返回全部策略，可用 `strategy` 过滤。
       tags:
         - Position
       parameters:
-          - in: query
-            name: id
-            schema:
-              type: string
-            description: 要获取的代码
-            example: 000001
+        - in: query
+          name: action
+          required: false
+          schema:
+            type: string
+            enum: [positions, capital, ledger, credit]
+          description: 视图选择，缺省返回全量
+        - in: query
+          name: strategy
+          required: false
+          schema:
+            type: string
+          description: 仅在 action=ledger / credit 时生效。不传则返回全部策略；指定但不存在返回 404
+          example: CTA_v16_lowturn_ablate5
       responses:
         '200':
-          description: An array of positions
+          description: 持仓与账本
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PositionItem"
+                type: object
+                properties:
+                  positions:
+                    type: array
+                    description: 交易所通道侧持仓（action=positions 或缺省）
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: sh.600176
+                        name:
+                          type: string
+                        price:
+                          type: number
+                          description: 持仓均价
+                        curPrice:
+                          type: number
+                        quantity:
+                          type: integer
+                        valid_quantity:
+                          type: integer
+                  capital:
+                    type: object
+                    description: action=capital 或缺省
+                    properties:
+                      initialCapital:
+                        type: number
+                      totalAllocated:
+                        type: number
+                      totalAvailable:
+                        type: number
+                      activeStrategies:
+                        type: integer
+                  strategies:
+                    type: object
+                    description: action=ledger / credit 或缺省。策略名 → 账本条目
+                    additionalProperties:
+                      type: object
+                      properties:
+                        allocated:
+                          type: number
+                          description: 分配额度
+                        cash:
+                          type: number
+                          description: 自有现金
+                        borrowedCash:
+                          type: number
+                          description: 融资余额（负债）
+                        profit:
+                          type: number
+                          description: 累计已实现盈亏
+                        active:
+                          type: boolean
+                        positionValue:
+                          type: number
+                          description: 持仓市值
+                        equity:
+                          type: number
+                          description: cash + positionValue − borrowedCash
+                        positions:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              symbol:
+                                type: string
+                              quantity:
+                                type: integer
+                                description: 正=多头，负=空头
+                              avgCost:
+                                type: number
+                              currentPrice:
+                                type: number
+                              marketValue:
+                                type: number
+                              isMargin:
+                                type: boolean
+                              marginRatio:
+                                type: number
+                        lots:
+                          type: object
+                          description: FIFO 分批，symbol → 批次数组
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                quantity:
+                                  type: integer
+                                price:
+                                  type: number
+                                date:
+                                  type: integer
+                                  description: Unix 时间戳
+                        credit:
+                          type: object
+                          properties:
+                            borrowedCash:
+                              type: number
+                            borrowedShares:
+                              type: object
+                              additionalProperties:
+                                type: integer
+                            shortAvgPrice:
+                              type: object
+                              additionalProperties:
+                                type: number
+                            financedAmount:
+                              type: object
+                              additionalProperties:
+                                type: number
+        '404':
+          description: 指定 strategy 在账本中不存在
   /analysis/signal:
     get:
       summary: EMD 信号分解分析
