@@ -27,6 +27,11 @@ enum class SpreadMethod {
  *   价差输出 NaN，并返回 Success —— 返回 Skip 会中断整个 epoch，
  *   一条腿停牌就整轮不出决策。
  *   价差序列每根 bar 都追加（含 NaN），下游遇 NaN 可自行跳过而不挪动统计窗口。
+ *
+ * 预热期：
+ *   滚动回归模式下，回归窗口攒满（攒够 W 个有效价格对）之前，价差与 β 都输出 NaN；
+ *   窗口的推进只取决于当根价格是否有效，与"本根算不算得出价差"无关 ——
+ *   两者绑在一起会让窗口永远攒不满。
  */
 class SpreadNode : public QNode {
 public:

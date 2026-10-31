@@ -177,10 +177,13 @@ bool SpreadNode::currentPrices(DataContext& context, double& pa, double& pb) con
 
 /// 滞后窗口 OLS：窗口内容为 t-1 及以前
 bool SpreadNode::estimateBeta(double& alpha, double& beta) const {
-    if (_priceCount < 2) return false;
+    // 窗口必须攒满：β 的口径是 [t-W, t-1] 的完整 W 个观测，
+    // 窗口未满时给不出可信的对冲系数，本根不算价差。
+    // （_priceCount 填满后不再增长，恒等于 _window。）
+    if (_priceCount < _window) return false;
 
-    // 窗口未满时只统计已填入的前 count 个；填满后整圈都有效（顺序对 OLS 无影响）
-    int32_t n = (_priceCount < _window) ? _priceCount : _window;
+    // 环形缓冲填满后整圈都有效（顺序对 OLS 无影响）
+    int32_t n = _window;
 
     double sumA = 0.0, sumB = 0.0;
     for (int32_t i = 0; i < n; ++i) {
@@ -251,7 +254,12 @@ NodeProcessResult SpreadNode::Process(const String& strategy, DataContext& conte
     }
 
     double pa = 0.0, pb = 0.0;
-    bool valid = currentPrices(context, pa, pb);
+    // hasPrices：两腿当根价格有效 → 可以推进滚动窗口
+    // valid    ：本根能否算出价差（滚动回归模式下要求窗口已攒满）
+    // 两者必须分开：窗口推进只取决于价格是否有效，若绑在"价差算得出来"上，
+    // 窗口未满 → 算不出价差 → 不推进窗口 → 窗口永远攒不满（死锁）。
+    bool hasPrices = currentPrices(context, pa, pb);
+    bool valid = hasPrices;
 
     double spread = std::nan("");
     double beta = _fixedBeta;
@@ -264,8 +272,9 @@ NodeProcessResult SpreadNode::Process(const String& strategy, DataContext& conte
                 alpha = a;
                 beta = b;
             } else {
-                // 窗口还没攒够（或 B 价无波动）→ 本根不算价差
+                // 窗口还没攒满（或 B 价无波动）→ 本根不算价差，β 也无从谈起
                 valid = false;
+                beta = std::nan("");
             }
         }
         if (valid) {
@@ -277,7 +286,7 @@ NodeProcessResult SpreadNode::Process(const String& strategy, DataContext& conte
         }
     }
 
-    if (valid) {
+    if (hasPrices) {
         // 有效价格对推进窗口（下一根 bar 才能用它估 β）
         pushPrice(pa, pb);
     }
