@@ -106,6 +106,21 @@
     { type* recorder = new type(this);\
         _handlers[name] = recorder; }
 
+// 路由分发：handler 抛出的异常必须落进 spdlog。
+// httplib 默认只把异常写进 stderr（不进 spdlog 文件），CI 抓的服务日志里看不到，
+// 表现为「路由命中但零日志 + 非 200 响应」，无法定位是哪个脚本。
+// 这里记完日志再原样重抛 —— httplib 后续的 500 + EXCEPTION_WHAT 行为完全不变。
+#define DISPATCH_HANDLER(call) \
+    try {\
+        call;\
+    } catch (const std::exception &e) {\
+        WARN("[HTTP] handler 抛出异常: {} {}", req.path, e.what());\
+        throw;\
+    } catch (...) {\
+        WARN("[HTTP] handler 抛出未知异常: {}", req.path);\
+        throw;\
+    }
+
 #define REGIST_GET(api_name) \
 _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
     INFO("Get " API_VERSION api_name);\
@@ -113,7 +128,7 @@ _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
         return;\
     }\
     res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
-    this->_handlers[api_name]->get(req, res);\
+    DISPATCH_HANDLER(this->_handlers[api_name]->get(req, res))\
 })
 #define REGIST_PUT(api_name) \
 _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
@@ -122,7 +137,7 @@ _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
         return;\
     }\
     res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
-    this->_handlers[api_name]->put(req, res);\
+    DISPATCH_HANDLER(this->_handlers[api_name]->put(req, res))\
 })
 #define REGIST_POST(api_name) \
 _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
@@ -131,7 +146,7 @@ _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Re
         return;\
     }\
     res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
-    this->_handlers[api_name]->post(req, res);\
+    DISPATCH_HANDLER(this->_handlers[api_name]->post(req, res))\
 })
 #define REGIST_DEL(api_name) \
 _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
@@ -140,7 +155,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
         return;\
     }\
     res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
-    this->_handlers[api_name]->del(req, res);\
+    DISPATCH_HANDLER(this->_handlers[api_name]->del(req, res))\
 })
 
 #define API_VERSION  "/v0"

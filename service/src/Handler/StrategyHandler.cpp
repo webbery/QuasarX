@@ -185,6 +185,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         String mpName;
         String errMsg;
         if (!ParseMultipartScript(req, scriptJson, mpName, errMsg)) {
+            WARN("[StrategyHandler] multipart 解析失败: {}", errMsg);
             res.status = 400;
             nlohmann::json err;
             err["message"] = errMsg;

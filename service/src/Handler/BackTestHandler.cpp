@@ -267,6 +267,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         String mpName;
         String errMsg;
         if (!ParseMultipartScript(req, script, mpName, errMsg)) {
+            WARN("[Backtest] multipart 解析失败: {}", errMsg);
             res.status = 400;
             nlohmann::json err;
             err["message"] = errMsg;
@@ -275,8 +276,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
         // 上传模型文件到 production 目录
         String strategyNameForModel = script.value("name", "unknown");
+        // 尽早打出策略身份：下面几条失败路径都直接 return，走不到 Provenance 那行，
+        // 没有这条日志就无法从服务日志判断失败的是哪个脚本。
+        INFO("[Backtest] multipart 解析成功: name='{}' id='{}'",
+             strategyNameForModel, script.value("id", ""));
         String modelErrMsg;
         if (!ValidateXGBoostModelPaths(script, strategyNameForModel, modelErrMsg)) {
+            WARN("[Backtest] XGBoost 模型路径校验失败: {}", modelErrMsg);
             res.status = 400;
             nlohmann::json err;
             err["message"] = modelErrMsg;
@@ -285,6 +291,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
         String dbPath = _server->GetConfig().GetDatabasePath();
         if (!WriteMultipartModelFiles(req, strategyNameForModel, dbPath, modelErrMsg)) {
+            WARN("[Backtest] 模型文件写入失败: {}", modelErrMsg);
             res.status = 500;
             nlohmann::json err;
             err["message"] = modelErrMsg;
@@ -295,6 +302,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         try {
             params = nlohmann::json::parse(req.body);
         } catch (const nlohmann::json::parse_error& e) {
+            WARN("[Backtest] 请求体 JSON 解析失败: {}", e.what());
             res.status = 400;
             res.set_content(R"({"message": "Invalid JSON format"})", "application/json");
             return;
@@ -302,6 +310,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         String strScript = params.value("script", "");
         if (strScript.empty()) {
+            WARN("[Backtest] 请求体缺少 script 字段");
             res.status = 400;
             res.set_content(R"({"message": "Script is empty"})", "application/json");
             return;
@@ -310,6 +319,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         try {
             script = nlohmann::json::parse(strScript);
         } catch (const nlohmann::json::parse_error& e) {
+            WARN("[Backtest] script 字段 JSON 解析失败: {}", e.what());
             res.status = 400;
             String msg = R"({"message": "Script parse error: )" + String(e.what()) + R"("})";
             res.set_content(msg.c_str(), "application/json");
@@ -369,6 +379,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     CapitalScopeGuard capitalGuard;
     if (pool) {
         if (!pool->Allocate(strategyName, effectiveCapital)) {
+            WARN("[Backtest] 资金分配失败: strategy='{}' 需要 {:.0f}，可用资金不足",
+                 strategyName, effectiveCapital);
             res.status = 400;
             String msg = R"({"message": "资金分配失败，可用资金不足"})";
             res.set_content(msg.c_str(), "application/json");
@@ -384,6 +396,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     auto strategySys = _server->GetStrategySystem();
     if (!std::filesystem::exists("scripts")) {
+        WARN("[Backtest] scripts 目录不存在（cwd={}），无法加载策略", std::filesystem::current_path().string());
         res.status = 404;
         res.set_content(R"({"message": "Strategy directory not found."})", "application/json");
         return;
@@ -395,6 +408,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 使用 ExchangeManager 统一协调
     auto exchangeMgr = _server->GetExchangeManager();
     if (!exchangeMgr) {
+        WARN("[Backtest] ExchangeManager 不可用");
         res.status = 400;
         res.set_content(R"({"message": "ExchangeManager not available."})", "application/json");
         return;
@@ -404,6 +418,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     if (useValidate) {
         auto [validateSuccess, validateErrorMsg] = _server->ValidateStrategyConfig(script);
         if (!validateSuccess) {
+            WARN("[Backtest] 策略图验证失败: strategy='{}' {}", strategyName, validateErrorMsg);
             res.status = 400;
             String msg = R"({"message": "策略图验证失败: )" + String(validateErrorMsg) + R"("})";
             res.set_content(msg.c_str(), "application/json");
@@ -488,6 +503,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 启动回测工作线程
     auto* flowSubsystem = strategySys->GetFlowSubsystem();
     if (!flowSubsystem) {
+        WARN("[Backtest] FlowSubsystem 不可用: strategy='{}'", strategyName);
         res.status = 500;
         res.set_content(R"({"message": "FlowSubsystem not available."})", "application/json");
         return;
