@@ -234,10 +234,13 @@ def generate_pair_dataset():
                                             include_current=True)
     zs = reference_zscore(spreads, PAIR_Z_WINDOW)
 
+    # 配对两腿保留 4 位小数：gen_pair_legs 就按 4 位生成，参考序列也基于这批
+    # 4 位数值算出，落盘精度必须与之相同，否则服务端读到的是被截断到 2 位的
+    # 价格，滚动回归结果会与参考值系统性偏离（价差 ~1e-2，β ~3e-3）。
     write_csv(PAIR_SYMBOL_A, a, START_DATE, HFQ_DIR / f"{PAIR_SYMBOL_A}.csv",
-              ORG_DIR / f"{PAIR_SYMBOL_A}.csv")
+              ORG_DIR / f"{PAIR_SYMBOL_A}.csv", precision=4)
     write_csv(PAIR_SYMBOL_B, b, START_DATE, HFQ_DIR / f"{PAIR_SYMBOL_B}.csv",
-              ORG_DIR / f"{PAIR_SYMBOL_B}.csv")
+              ORG_DIR / f"{PAIR_SYMBOL_B}.csv", precision=4)
     print(f"  CSV: {PAIR_SYMBOL_A} / {PAIR_SYMBOL_B} 各 {len(a)} bars")
 
     spread_strategy = pair_spread_strategy()
@@ -289,7 +292,14 @@ def generate_pair_dataset():
     }
 
 
-def write_csv(symbol, prices, start_date, hfq_path, org_path, anomaly_bar=None):
+def write_csv(symbol, prices, start_date, hfq_path, org_path, anomaly_bar=None,
+              precision=2):
+    """写行情 CSV。
+
+    precision 是价格列的落盘小数位。服务端读的是本函数写出的这份文件，
+    而参考序列是按传入的 prices 算出来的 —— 两者的价格精度必须一致，
+    否则服务端的滚动回归会跑在"被截断过的价格"上，与参考值对不上。
+    """
     np.random.seed(42)
     dates = []
     rows_data = []
@@ -310,8 +320,8 @@ def write_csv(symbol, prices, start_date, hfq_path, org_path, anomaly_bar=None):
         volume = 0 if (anomaly_bar is not None and i == anomaly_bar + 1) else int(np.random.uniform(1000000, 5000000))
         turnover = round(volume * close, 2) if close > 0 else 0.0
 
-        rows_data.append([date_str, round(open_price, 2), round(close, 2),
-                          round(high, 2), round(low, 2), volume, turnover])
+        rows_data.append([date_str, round(open_price, precision), round(close, precision),
+                          round(high, precision), round(low, precision), volume, turnover])
         current_date += timedelta(days=1)
 
     # 写 hfq (后复权，连续价格)
