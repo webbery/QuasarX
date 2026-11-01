@@ -19,7 +19,7 @@ import math
 import requests
 import pytest
 from pathlib import Path
-from tool import run_backtest, reclaim_capital
+from tool import run_backtest, reclaim_capital, ensure_script_models
 
 N_RUNS = 10
 FLOAT_TOL = 1e-6
@@ -28,8 +28,17 @@ STRATEGY_PATH = Path(__file__).parent.parent / "script" / "ml.json"
 
 
 def _load_strategy() -> str:
-    with open(STRATEGY_PATH) as f:
-        return json.dumps(json.load(f))
+    script = json.loads(STRATEGY_PATH.read_text(encoding="utf-8"))
+    # ml.json 的 XGBoost 节点引用 production/test_xgb_business-XGBoost.json，
+    # 服务端按 {db_path}/models/<modelFile> 解析，文件缺失时 InitStrategy 直接 500。
+    # 这里自给自足地补齐模型，不依赖 test_strategy.py 先跑过并把模型留在磁盘上。
+    states = ensure_script_models(script, STRATEGY_PATH.name)
+    missing = sorted(p for p, s in states.items() if s == "missing")
+    assert not missing, (
+        f"{STRATEGY_PATH.name} 引用的模型在服务端 models/ 下不存在，测试侧也没有种子模型: "
+        f"{missing}（可先 multipart deploy 对应策略，或补充 tool.MODEL_SEEDS）"
+    )
+    return json.dumps(script)
 
 
 def _run_bt(headers: dict, auth_token: str) -> dict:
