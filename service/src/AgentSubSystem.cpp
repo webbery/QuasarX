@@ -331,44 +331,51 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
 
             uint64_t epoch = 0;
             bool success = true;
-            ResetGraphPerf(flow);
-            context.EnablePerfProfile(true);
-            context.ResetPerfStat();
             auto startTick = std::chrono::high_resolution_clock::now();
-
+            DEBUG_GRAPH_PERF(
+                ResetGraphPerf(flow);
+                context.EnablePerfProfile(true);
+                context.ResetPerfStat();
+            )
             // 使用 stepForward 推进回测时间
             while (flow._running && !Server::IsExit()) {
                 context.SetEpoch(++epoch);
 
                 // 推进回测时间
-                auto dataStart = std::chrono::steady_clock::now();
+                DEBUG_GRAPH_PERF(
+                    auto dataStart = std::chrono::steady_clock::now();
+                )
                 if (btContext && !exchange->stepForward(btContext)) {
                     // 数据用完
                     INFO("Backtest data finished for strategy {}", strategy);
                     break;
                 }
-#ifdef _DEBUG
-                double dataMs = ElapsedMs(dataStart);
-                flow._perf.dataMs += dataMs;
-                flow._perf.epochDataMs.push_back((float)dataMs);
+                DEBUG_GRAPH_PERF(
+                    double dataMs = ElapsedMs(dataStart);
+                    flow._perf.dataMs += dataMs;
+                    flow._perf.epochDataMs.push_back((float)dataMs);
 
-                auto graphStart = std::chrono::steady_clock::now();
+                    auto graphStart = std::chrono::steady_clock::now();
+                )
                 bool ok = RunGraph(strategy, flow, context);
-                double graphMs = ElapsedMs(graphStart);
-                flow._perf.graphMs += graphMs;
-                flow._perf.epochGraphMs.push_back((float)graphMs);
-#endif
+                DEBUG_GRAPH_PERF(
+                    double graphMs = ElapsedMs(graphStart);
+                    flow._perf.graphMs += graphMs;
+                    flow._perf.epochGraphMs.push_back((float)graphMs);
+                )
                 if (!ok) {
                     success = false;
                     break;
                 }
-                if (epoch % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
+                DEBUG_GRAPH_PERF(
+                    if (epoch % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
+                )
             }
-            LogGraphPerf(strategy, flow, context, true);
-
+            DEBUG_GRAPH_PERF(
+                LogGraphPerf(strategy, flow, context, true);
+            )
             auto endTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
-
             if (success) {
                 // 统计指标（封装为独立函数）
                 ExecuteNode* endNode = nullptr;
@@ -478,45 +485,54 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
             }
 
             bool success = true;
-            ResetGraphPerf(flow);
-            context.EnablePerfProfile(true);
-            context.ResetPerfStat();
             auto startTick = std::chrono::high_resolution_clock::now();
-
+            DEBUG_GRAPH_PERF(
+                ResetGraphPerf(flow);
+                context.EnablePerfProfile(true);
+                context.ResetPerfStat();
+            )
             // 使用 exchangeMgr 协调多 Exchange stepForward
             while (flow._running || !Server::IsExit()) {
                 flow._lastHeartbeat = context.Current();
                 context.SetEpoch(++flow._epochCount);
 
                 // 推进 Exchange 的回测时间
-                auto dataStart = std::chrono::steady_clock::now();
+                DEBUG_GRAPH_PERF(
+                    auto dataStart = std::chrono::steady_clock::now();
+                )
                 if (!exchangeMgr->StepAllHistoryExchanges(runId)) {
                     INFO("Backtest data finished for strategy {}, epoch={}", strategy, flow._epochCount);
                     break;
                 }
-#ifdef _DEBUG
-                double dataMs = ElapsedMs(dataStart);
-                flow._perf.dataMs += dataMs;
-                flow._perf.epochDataMs.push_back((float)dataMs);
-                auto graphStart = std::chrono::steady_clock::now();
+                DEBUG_GRAPH_PERF(
+                    double dataMs = ElapsedMs(dataStart);
+                    flow._perf.dataMs += dataMs;
+                    flow._perf.epochDataMs.push_back((float)dataMs);
+                    auto graphStart = std::chrono::steady_clock::now();
+                )
                 bool ok = RunGraph(strategy, flow, context);
-                double graphMs = ElapsedMs(graphStart);
-                flow._perf.graphMs += graphMs;
-                flow._perf.epochGraphMs.push_back((float)graphMs);
-#endif
+                DEBUG_GRAPH_PERF(
+                    double graphMs = ElapsedMs(graphStart);
+                    flow._perf.graphMs += graphMs;
+                    flow._perf.epochGraphMs.push_back((float)graphMs);
+                )
                 if (!ok) {
                     INFO("RunGraph failed at epoch {}", flow._epochCount);
                     success = false;
                     break;
                 }
-                if (flow._epochCount % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
+                DEBUG_GRAPH_PERF(
+                    if (flow._epochCount % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
+                )
             }
-            LogGraphPerf(strategy, flow, context, true);
-
+            DEBUG_GRAPH_PERF(
+                LogGraphPerf(strategy, flow, context, true);
+            )
             auto endTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
-            INFO("[Backtest] Loop exited: epochs={}, duration={:.3f}s, success={}", flow._epochCount, duration.count(), success);
-
+            DEBUG_GRAPH_PERF(
+                INFO("[Backtest] Loop exited: epochs={}, duration={:.3f}s, success={}", flow._epochCount, duration.count(), success);
+            )
             if (success) {
                 // 统计指标（封装为独立函数）
                 ExecuteNode* endNode = nullptr;
@@ -1181,7 +1197,7 @@ FlowSubsystem::BacktestMcPaths FlowSubsystem::GetBacktestMcPaths(const String& s
     return it->second._mcPaths;
 }
 
-#ifdef _DEBUG
+DEBUG_GRAPH_PERF(
 void FlowSubsystem::ResetGraphPerf(StrategyFlowInfo& flow) {
     flow._perf.epochs = 0;
     flow._perf.graphMs = 0;
@@ -1273,7 +1289,7 @@ void FlowSubsystem::LogGraphPerf(const String& strategy, const StrategyFlowInfo&
                        EpochMax(perf.epochDataMs), EpochDrift(perf.epochDataMs));
     INFO("{}", msg);
 }
-#endif
+)
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
     bool shouldSkipEpoch = false;
@@ -1281,9 +1297,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
     bool inWarmup = context.IsInWarmup();
     auto epch = context.GetEpoch();
-#ifdef _DEBUG
-    flow._perf.epochs++;
-#endif
+    DEBUG_GRAPH_PERF(flow._perf.epochs++;)
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         String nodeType = "unknown";
@@ -1303,28 +1317,30 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             if (dynamic_cast<SignalNodeBase*>(node) ||
                 dynamic_cast<ExecuteNode*>(node) ||
                 dynamic_cast<PortfolioNode*>(node)) {
-                if (epch % 50 == 0)
+                if (epch % 50 == 0) {
                     DEBUG_INFO("[RunGraph] Epoch {} warmup: skip {} (id={}, type={})",
                         epch, node->id(), node->id(), nodeType);
+                }
                 continue;
             }
         }
 
         auto nodeStart = std::chrono::steady_clock::now();
         auto result = node->Process(strategy, context);
-        double nodeMs = ElapsedMs(nodeStart);
+        [[maybe_unused]] double nodeMs = ElapsedMs(nodeStart);
 
-#ifdef _DEBUG
-        // 累计节点耗时，供回测结束后的瓶颈分析（mutable：RunGraph 持 const flow 引用）
-        auto& perfStat = flow._perf.nodes[node->id()];
-        perfStat.type = nodeType;
-        perfStat.calls++;
-        perfStat.totalMs += nodeMs;
-        if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
-#endif
-        if (epch % 50 == 0)
+        DEBUG_GRAPH_PERF(
+            // 累计节点耗时，供回测结束后的瓶颈分析（mutable：RunGraph 持 const flow 引用）
+            auto& perfStat = flow._perf.nodes[node->id()];
+            perfStat.type = nodeType;
+            perfStat.calls++;
+            perfStat.totalMs += nodeMs;
+            if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
+        )
+        if (epch % 50 == 0) {
             DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
                        epch, node->id(), nodeType, (int)result, nodeMs);
+        }
 
         switch (result) {
             case NodeProcessResult::Success:
