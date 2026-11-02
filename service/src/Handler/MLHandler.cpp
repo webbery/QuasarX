@@ -482,9 +482,9 @@ CollectPhaseResult runCollectPhase(
     if (!state._featureNames.empty()) {
         auto [filtered, droppedKeys] =
             filterCollectedData(collected, state._featureNames, opt._labelSource, opt._labelShape);
-        INFO("[MLCollect] Filter: collected {} columns, kept {}, dropped {}: [{}]",
-             collected.size(), filtered.size(), droppedKeys.size(),
-             fmt::join(droppedKeys, ", "));
+        // INFO("[MLCollect] Filter: collected {} columns, kept {}, dropped {}: [{}]",
+        //      collected.size(), filtered.size(), droppedKeys.size(),
+        //      fmt::join(droppedKeys, ", "));
         if (opt._verboseLog) {
             Vector<String> ks;
             ks.reserve(filtered.size());

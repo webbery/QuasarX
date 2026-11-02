@@ -50,9 +50,6 @@ protected:
 private:
     /// 读 context 里某 key 的最新值；不存在或非有限返回 false
     static bool readLast(DataContext& context, const String& key, double& out);
-    /// 往 context 追加一个标量
-    static void publish(DataContext& context, const String& symbol, const String& field,
-                         double value);
 
     double _entryZ = 2.0;      // 入场阈值
     double _exitZ = 0.5;       // 出场阈值
@@ -60,8 +57,11 @@ private:
     int32_t _maxHoldBars = 0;  // 最长持有 bar 数（0 = 不启用）
     String _zField = "pair_z"; // 偏离度字段名（上游 FunctionNode 的输出名）
 
-    symbol_t _legA;  // 分子腿（pair_leg = +1）
-    symbol_t _legB;  // 分母腿（pair_leg = -1）
+    // 必须初始化：null_symbol() 是「腿未解析」的哨兵。未初始化时成员是未定义值，
+    // Process() 里 `_legA == null_symbol()` 判不出来 → 解析腿的代码块整个被跳过，
+    // 节点会拿野值当腿，永远读不到 z、永远不出信号。
+    symbol_t _legA = null_symbol();  // 分子腿（pair_leg = +1）
+    symbol_t _legB = null_symbol();  // 分母腿（pair_leg = -1）
 
     // 状态（跨 bar 维护，Prepare 时复位）
     int32_t _barsHeld = 0;   // 持有 bar 数

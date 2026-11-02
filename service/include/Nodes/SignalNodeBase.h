@@ -44,6 +44,14 @@ protected:
     void writeSignals(DataContext& context,
                       const Map<symbol_t, TradeAction>& decisions) const;
 
+    /// 往 context 追加一条标量序列（每根 bar 一条）
+    ///
+    /// 首次写入时预填充 warmup 个占位符：预热期信号节点被跳过，但 QuoteInputNode
+    /// 仍逐 bar 写入时间，不预填充会让这条序列比时间序列短，后续 bar 全部错位。
+    /// 信号层所有输出序列（signal / strength 等）都走这里，保证对齐口径唯一。
+    void publishScalar(DataContext& context, const String& symbol, const String& field,
+                       double value) const;
+
     /// 是否允许对该标的开空仓
     bool canOpenShort(symbol_t symbol) const {
         return _allowShort && _shortableSymbols.count(symbol) > 0;

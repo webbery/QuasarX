@@ -302,6 +302,7 @@ private:
      */
     void NotifyNodesDone(const String& strategy, const List<QNode*>& graph);
 
+#ifdef _DEBUG
     /**
      * @brief 重置策略图耗时剖析统计（回测循环开始前调用）
      */
@@ -313,7 +314,7 @@ private:
      * @note 排名按节点累计耗时降序，并给出 graph vs data 推进的耗时对比
      */
     void LogGraphPerf(const String& strategy, const StrategyFlowInfo& flow, DataContext& context, bool final) const;
-
+#endif
     // RAII 守卫：确保 NotifyNodesDone 在 DataContext 析构前执行。
     // DataContext 是 worker 线程的栈局部变量，节点在 Prepare() 中缓存其裸指针。
     // 若 NotifyNodesDone 在 worker 退出后被调用（如 Stop()），指针已悬空 → 崩溃。
@@ -385,6 +386,7 @@ private:
         // 最近一次节点执行错误信息（RunGraph 中节点返回 Error 时设置）
         mutable String _lastError;
 
+#ifdef _DEBUG
         // ── 策略图耗时剖析（仅用于回测性能瓶颈定位，不参与业务逻辑）──
         // 单个节点累计耗时；RunGraph 每次 Process 后累加
         struct NodePerfStat {
@@ -404,6 +406,7 @@ private:
         };
         // mutable：RunGraph 以 const 引用接收 flow，但需要就地累计耗时
         mutable PerfProfile _perf;
+#endif
     };
 
     Map<String, StrategyFlowInfo> _flows;

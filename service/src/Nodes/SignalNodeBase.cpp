@@ -100,12 +100,31 @@ void SignalNodeBase::applyNoAddOnPosition(List<Pair<symbol_t, TradeAction>>& act
     }
 }
 
+/// 往 context 追加一条标量序列（每根 bar 一条，首次写入预填充 warmup 占位符）
+void SignalNodeBase::publishScalar(DataContext& context, const String& symbol,
+                                   const String& field, double value) const {
+    String key = symbol + "." + field;
+    if (context.exist(key)) {
+        context.add(key, value);
+    } else {
+        // 首次写入，预填充 warmup 占位符
+        // warmup 期间信号节点被跳过，但 QuoteInputNode 仍然写入了时间
+        // 需要预填充 warmup 个 0 值，使数据长度与时间序列对齐
+        int warmup = context.GetWarmupEpochs();
+        Vector<double> series;
+        if (warmup > 0) {
+            series.assign(warmup, 0.0);  // warmup 期间为 0（持有）
+        }
+        series.push_back(value);
+        context.set(key, std::move(series));
+    }
+}
+
 /// 把每个标的的最终动作写进 {symbol}.signal
 void SignalNodeBase::writeSignals(DataContext& context,
                                    const Map<symbol_t, TradeAction>& decisions) const {
     // 信号值：1=买入，-1=卖出，0=持有
     for (auto& symbol : _pools) {
-        String key = get_symbol(symbol) + ".signal";
         int signalValue = 0;  // 默认持有
         if (decisions.count(symbol)) {
             auto& dec = decisions.at(symbol);
@@ -115,21 +134,7 @@ void SignalNodeBase::writeSignals(DataContext& context,
                 signalValue = -1;
             }
         }
-        // 检查是否已存在，存在则追加，否则创建新向量
-        if (context.exist(key)) {
-            context.add(key, (double)signalValue);
-        } else {
-            // 首次写入，预填充 warmup 占位符
-            // warmup 期间信号节点被跳过，但 QuoteInputNode 仍然写入了时间
-            // 需要预填充 warmup 个 0 值，使数据长度与时间序列对齐
-            int warmup = context.GetWarmupEpochs();
-            Vector<double> signalVec;
-            if (warmup > 0) {
-                signalVec.assign(warmup, 0.0);  // warmup 期间信号为 0（持有）
-            }
-            signalVec.push_back((double)signalValue);
-            context.set(key, std::move(signalVec));
-        }
+        publishScalar(context, get_symbol(symbol), "signal", (double)signalValue);
     }
 }
 

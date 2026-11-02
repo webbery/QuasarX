@@ -8,6 +8,8 @@
 #include "Nodes/ProtectionNode.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/DebugNode.h"
+#include "Nodes/SignalNode.h"
+#include "Nodes/SignalNodeBase.h"
 #include "StrategyNode.h"
 #include "Util/log.h"
 #include "Util/DecisionSet.h"
@@ -16,23 +18,17 @@
 #include "Util/QuoteDB.h"
 #include "Util/EodReport.h"
 #include "StrategySubSystem.h"
-#include "json.hpp"
-#include "Bridge/CTP/CTPSymbol.h"
-#include "std_header.h"
-#include "yas/serialize.hpp"
 #include "BrokerSubSystem.h"
-#include "Nodes/SignalNode.h"
-#include "Nodes/ExecuteNode.h"
 #include "MarketTiming/ManualTiming.h"
 #include <exception>
 #include <stdexcept>
 #include <typeinfo>
 #include <thread>
+#include <algorithm>
+#include <chrono>
 #include "RiskSubSystem.h"
 #include "Nodes/ScriptNode.h"
 #include "Nodes/ExecuteNode.h"
-#include "Bridge/SIM/StockHistorySimulation.h"
-#include "Bridge/SIM/HistorySimulationBase.h"
 
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
@@ -40,9 +36,6 @@
 #include "Metric/RiskMetric.h"
 #include "Metric/Covariance.h"
 #include "Metric/MonteCarloSimulator.h"
-
-#include <algorithm>
-#include <chrono>
 
 namespace {
 // 性能剖析辅助：从起始时刻到当前的毫秒数（steady_clock 单调，不受系统时间调整影响）
@@ -354,6 +347,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     INFO("Backtest data finished for strategy {}", strategy);
                     break;
                 }
+#ifdef _DEBUG
                 double dataMs = ElapsedMs(dataStart);
                 flow._perf.dataMs += dataMs;
                 flow._perf.epochDataMs.push_back((float)dataMs);
@@ -363,7 +357,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 double graphMs = ElapsedMs(graphStart);
                 flow._perf.graphMs += graphMs;
                 flow._perf.epochGraphMs.push_back((float)graphMs);
-
+#endif
                 if (!ok) {
                     success = false;
                     break;
@@ -500,16 +494,16 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                     INFO("Backtest data finished for strategy {}, epoch={}", strategy, flow._epochCount);
                     break;
                 }
+#ifdef _DEBUG
                 double dataMs = ElapsedMs(dataStart);
                 flow._perf.dataMs += dataMs;
                 flow._perf.epochDataMs.push_back((float)dataMs);
-
                 auto graphStart = std::chrono::steady_clock::now();
                 bool ok = RunGraph(strategy, flow, context);
                 double graphMs = ElapsedMs(graphStart);
                 flow._perf.graphMs += graphMs;
                 flow._perf.epochGraphMs.push_back((float)graphMs);
-
+#endif
                 if (!ok) {
                     INFO("RunGraph failed at epoch {}", flow._epochCount);
                     success = false;
@@ -1187,6 +1181,7 @@ FlowSubsystem::BacktestMcPaths FlowSubsystem::GetBacktestMcPaths(const String& s
     return it->second._mcPaths;
 }
 
+#ifdef _DEBUG
 void FlowSubsystem::ResetGraphPerf(StrategyFlowInfo& flow) {
     flow._perf.epochs = 0;
     flow._perf.graphMs = 0;
@@ -1278,6 +1273,7 @@ void FlowSubsystem::LogGraphPerf(const String& strategy, const StrategyFlowInfo&
                        EpochMax(perf.epochDataMs), EpochDrift(perf.epochDataMs));
     INFO("{}", msg);
 }
+#endif
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
     bool shouldSkipEpoch = false;
@@ -1285,7 +1281,9 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
     bool inWarmup = context.IsInWarmup();
     auto epch = context.GetEpoch();
+#ifdef _DEBUG
     flow._perf.epochs++;
+#endif
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         String nodeType = "unknown";
@@ -1298,8 +1296,11 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         else nodeType = typeid(*node).name();
 
         // 跳过预热期的信号、执行和投资组合节点
+        // 信号节点按基类 SignalNodeBase 判定：PairNode 继承的是 SignalNodeBase 而非
+        // SignalNode，用 SignalNode 判定会漏掉它 —— 预热期 PairNode 照样执行，
+        // 而它的输出序列没有 warmup 占位符，signal/strength 会与时间序列错位。
         if (inWarmup) {
-            if (dynamic_cast<SignalNode*>(node) ||
+            if (dynamic_cast<SignalNodeBase*>(node) ||
                 dynamic_cast<ExecuteNode*>(node) ||
                 dynamic_cast<PortfolioNode*>(node)) {
                 if (epch % 50 == 0)
@@ -1313,13 +1314,14 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         auto result = node->Process(strategy, context);
         double nodeMs = ElapsedMs(nodeStart);
 
+#ifdef _DEBUG
         // 累计节点耗时，供回测结束后的瓶颈分析（mutable：RunGraph 持 const flow 引用）
         auto& perfStat = flow._perf.nodes[node->id()];
         perfStat.type = nodeType;
         perfStat.calls++;
         perfStat.totalMs += nodeMs;
         if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
-
+#endif
         if (epch % 50 == 0)
             DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
                        epch, node->id(), nodeType, (int)result, nodeMs);

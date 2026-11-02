@@ -60,18 +60,6 @@ bool PairNode::readLast(DataContext& context, const String& key, double& out) {
     return std::isfinite(out);
 }
 
-void PairNode::publish(DataContext& context, const String& symbol, const String& field,
-                       double value) {
-    String key = symbol + "." + field;
-    if (context.exist(key)) {
-        context.add(key, value);
-    } else {
-        Vector<double> ts;
-        ts.push_back(value);
-        context.set(key, ts);
-    }
-}
-
 NodeProcessResult PairNode::Process(const String& strategy, DataContext& context) {
     // ── 解析两条腿 ──
     if (_legA == null_symbol() || _legB == null_symbol()) {
@@ -103,8 +91,8 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
     if (readLast(context, get_symbol(_legA) + ".pair_beta", betaRaw) && betaRaw > 0.0) {
         beta = betaRaw;
     }
-    publish(context, get_symbol(_legA), "strength", 1.0);
-    publish(context, get_symbol(_legB), "strength", beta);
+    publishScalar(context, get_symbol(_legA), "strength", 1.0);
+    publishScalar(context, get_symbol(_legB), "strength", beta);
 
     // ── 当前偏离度 ──
     double z = std::nan("");

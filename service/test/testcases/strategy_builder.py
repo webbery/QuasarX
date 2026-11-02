@@ -470,7 +470,16 @@ def pair_trading_strategy(strategy_id, symbol_a, symbol_b, *, name=None,
     if debug_label:
         builder.debug("8", debug_label)
         builder.connect("5", "8")
-    return builder.build()
+
+    strategy = builder.build()
+    if allow_short:
+        # 策略级两融权限：必须写在根路径 margin.allowShort。
+        # 节点级 allowShort 只放行 SELL 信号，真正的融券卖出还要看账户权限
+        # （StrategySubSystem 读根路径 margin.allowShort → MarginConfig._allowShort，
+        # HistorySimulationBase::OrderReport 靠它把无多仓的卖单打上 ShortSell）。
+        # 少这一段时开空会在持仓层被拒（"No position to sell"），空头腿永远建不起来。
+        strategy["margin"] = {"allowShort": True}
+    return strategy
 
 
 # ----------------------------------------------------------------------

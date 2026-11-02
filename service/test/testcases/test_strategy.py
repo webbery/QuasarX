@@ -877,7 +877,10 @@ class TestPairTradingStrategy:
 
         z > 0 → 分子腿偏贵 → 空分子腿、多分母腿（A=-1, B=+1）
         z < 0 → 反之（A=+1, B=-1）
-        与入场相反的方向即出场腿，此时偏离度已回到均值附近。
+
+        信号出现的 bar 按 |z| 落在哪个区间归类：>= entryZ 是入场、<= exitZ 是出场、
+        两者之间是死区（状态机不应动作）。本数据集 |z| 最大 3.11 < stopZ=3.5，
+        止损出场不会被这条数据触发，所以这里不单独处理。
         """
         import pandas as pd
 
@@ -894,17 +897,24 @@ class TestPairTradingStrategy:
             z = z_ref[i]
             if z != z:  # NaN
                 continue
-            # 与 z 同向的腿是"想持有"的方向：z>0 时想空 A（信号 -1）
-            entry_like = (sig_a[i] == -1 if z > 0 else sig_a[i] == 1)
-            if entry_like:
+            # 入场/出场按 |z| 分区判定。不能按"信号是否与当根 z 同向"来猜：
+            # 持仓期间 z 可能穿到另一侧，此时平仓腿的方向恰好与新的 z 同向，
+            # 按方向猜会把出场误判成反向开仓。
+            az = abs(z)
+            if az >= pair_meta["entry_z"]:
                 entries += 1
-                assert abs(z) >= pair_meta["entry_z"], (
-                    f"bar {i}: 入场时 |z|={abs(z):.3f} 未达 entryZ={pair_meta['entry_z']}")
-            else:
+                # 入场方向由偏离度符号决定：z>0 空分子腿，z<0 多分子腿
+                expect_a = -1 if z > 0 else 1
+                assert sig_a[i] == expect_a and sig_b[i] == -expect_a, (
+                    f"bar {i}: z={z:.3f} 入场方向应为 A={expect_a:+d}/B={-expect_a:+d}，"
+                    f"实际 A={sig_a[i]:+.0f}/B={sig_b[i]:+.0f}")
+            elif az <= pair_meta["exit_z"]:
                 exits += 1
-                assert abs(z) <= pair_meta["exit_z"], (
-                    f"bar {i}: 出场时 |z|={abs(z):.3f} 超过 exitZ={pair_meta['exit_z']}，"
-                    "止损未触发（stopZ）时出场只能由回归条件触发")
+            else:
+                raise AssertionError(
+                    f"bar {i}: |z|={az:.3f} 落在 exitZ({pair_meta['exit_z']})~"
+                    f"entryZ({pair_meta['entry_z']}) 之间，不应产生信号"
+                    f"（A={sig_a[i]:+.0f}, B={sig_b[i]:+.0f}）")
 
         assert entries > 0, "整段回测没有出现过入场信号"
         assert exits > 0, "整段回测没有出现过出场信号"
@@ -918,11 +928,13 @@ class TestPairTradingStrategy:
         sym_a = pair_meta["symbol_a"]
         sym_b = pair_meta["symbol_b"]
 
+        # /v0/backtest 的 buy/sell 每条是 [symbol, time, quantity, price]（与前端
+        # app/src/lib/tools/backtest.ts 的解构口径一致）
         trades = []
-        for item in backtest_result.get("buy", []):
-            trades.append((item["time"], item["symbol"], item["quantity"], +1))
-        for item in backtest_result.get("sell", []):
-            trades.append((item["time"], item["symbol"], item["quantity"], -1))
+        for symbol, ts, qty, _price in backtest_result.get("buy", []):
+            trades.append((ts, symbol, qty, +1))
+        for symbol, ts, qty, _price in backtest_result.get("sell", []):
+            trades.append((ts, symbol, qty, -1))
         trades.sort(key=lambda x: x[0])
 
         position = {sym_a: 0, sym_b: 0}
