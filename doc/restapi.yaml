@@ -2318,12 +2318,24 @@ paths:
     get:
       summary: 波动率与自相关分析
       description: |
-        对指定标的进行波动率分析，包含：
-        - 单标的：滚动波动率、收益率分布、ACF/PACF、波动率包络带、AR(p) 预测
-        - 多标的：协方差矩阵、相关系数矩阵、特征值分解、协方差外推预测
+        对指定标的进行波动率分析，`action` 控制只计算/返回哪个 section：
+        - all（默认）：完整响应，兼容旧客户端
+        - single：单标的滚动波动率、收益率分布、ACF/PACF、包络带、AR(p) 预测
+        - multi：相关/协方差矩阵、特征值分解、条件数
+        - spectrum：Marchenko-Pastur 滚动窗口 m+/m-
+        - forecast：多资产协方差外推
+        - lead_lag：交叉相关 + 格兰杰因果
+        - mp_noise：Marchenko-Pastur 静态噪声谱、资产噪声占比、特征值裁剪去噪
       tags:
         - Analysis
       parameters:
+        - in: query
+          name: action
+          schema:
+            type: string
+            enum: [all, single, multi, spectrum, forecast, lead_lag, mp_noise]
+            default: all
+          description: 只计算指定 section（默认 all 保持旧响应）
         - in: query
           name: symbols
           required: true
@@ -2364,6 +2376,28 @@ paths:
             type: string
             enum: [None, Forward, Backward, Linear, Zero]
           description: 缺失值填充方法
+        - in: query
+          name: spectrum_window
+          schema:
+            type: integer
+            minimum: 5
+            maximum: 500
+            default: 60
+          description: MP 滚动谱指标窗口（仅 spectrum/all）
+        - in: query
+          name: max_clusters
+          schema:
+            type: integer
+            minimum: 2
+            maximum: 100
+            default: 10
+          description: mp_noise 在 n >= T 时聚类降维的目标簇数
+        - in: query
+          name: include_matrix
+          schema:
+            type: boolean
+            default: false
+          description: mp_noise 是否返回原始/去噪相关矩阵
       responses:
         '200':
           description: 波动率分析结果
@@ -2556,13 +2590,20 @@ paths:
 
   /analysis/covariance_diagnostics:
     post:
-      summary: 协方差矩阵质量诊断 (debug 端点)
+      summary: 协方差质量诊断 / Marchenko-Pastur 噪声分析
       description: |
+        `action=covariance_diagnostics`（默认）：
         客户端传入对称 NxN 协方差矩阵，返回真实特征值分解 (Eigen SelfAdjointEigenSolver) + 质量诊断。
-        用于纯算法单元测试和可视化调试，不依赖市场数据。
         - eigenvalues: 降序排列的特征值
         - condition_number: κ = λ_max / λ_min，矩阵接近奇异时返回 1e15
         - is_positive_definite: 最小特征值 > 1e-12
+
+        `action=mp_noise`：
+        传入 `returns`（N×T，优先）或 `correlation_matrix` / `covariance_matrix` + `n_observations`，
+        返回 MP 边界、signal/bulk/below 特征值分类、每个资产的方差分解、特征值裁剪去噪诊断。
+        - returns 输入在 n >= T 时自动聚类降维
+        - correlation/covariance 输入要求 n < n_observations
+        - `include_matrix=true` 时额外返回 correlation / denoised_correlation
       tags:
         - Analysis
       requestBody:
@@ -5436,6 +5477,18 @@ components:
           items:
             type: number
           description: 各资产年化波动率
+        num_observations:
+          type: integer
+          description: 收益率样本数 T
+        spectrum_indicators:
+          type: object
+          description: MP 滚动窗口 m+/m- 指标（action=spectrum/all）
+        time_series_analysis:
+          type: object
+          description: 交叉相关 + 格兰杰因果（action=lead_lag/all）
+        mp_noise:
+          type: object
+          description: MP 静态噪声谱与资产方差分解（action=mp_noise/all）
         multi_forecast:
           $ref: "#/components/schemas/MultiForecast"
 
@@ -5443,6 +5496,9 @@ components:
       type: object
       description: 波动率分析响应
       properties:
+        action:
+          type: string
+          description: 实际执行的 action
         symbols:
           type: array
           items:
@@ -5466,8 +5522,14 @@ components:
 
     CovarianceDiagnosticsRequest:
       type: object
-      required: [covariance_matrix]
+      description: |
+        action=covariance_diagnostics（默认）时使用 covariance_matrix；
+        action=mp_noise 时使用 returns，或 correlation_matrix / covariance_matrix + n_observations。
       properties:
+        action:
+          type: string
+          enum: [covariance_diagnostics, mp_noise]
+          default: covariance_diagnostics
         covariance_matrix:
           type: array
           items:
@@ -5476,10 +5538,40 @@ components:
               type: number
           description: 对称 NxN 协方差矩阵 (N >= 1)
           example: [[2.0, 0.5], [0.5, 1.0]]
+        returns:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: N×T 收益率矩阵（每行一个资产），mp_noise 优先使用
+        correlation_matrix:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: NxN 相关矩阵（mp_noise，要求 N < n_observations）
+        n_observations:
+          type: integer
+          description: 相关/协方差矩阵输入对应的样本数 T
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 资产名称，与矩阵行顺序对齐；默认 asset_0..asset_N-1
+        max_clusters:
+          type: integer
+          default: 10
+          description: mp_noise 在 N >= T 时聚类降维的目标簇数
+        include_matrix:
+          type: boolean
+          default: false
+          description: mp_noise 是否返回 correlation / denoised_correlation
 
     CovarianceDiagnosticsResponse:
       type: object
-      description: 协方差质量诊断响应
+      description: 协方差质量诊断 / MP 噪声分析响应（字段随 action 变化）
       properties:
         n:
           type: integer
@@ -5495,6 +5587,45 @@ components:
         is_positive_definite:
           type: boolean
           description: 是否正定 (λ_min > 1e-12)
+        valid:
+          type: boolean
+          description: mp_noise 输入是否足以完成谱分析
+        lambda_plus:
+          type: number
+          description: MP 上界 λ₊
+        lambda_minus:
+          type: number
+          description: MP 下界 λ₋
+        n_signal:
+          type: integer
+        n_bulk:
+          type: integer
+        n_below:
+          type: integer
+        signal_var_ratio:
+          type: number
+        noise_var_ratio:
+          type: number
+        below_edge_var_ratio:
+          type: number
+        signal_share:
+          type: array
+          items:
+            type: number
+          description: 每个资产的 signal 方差占比
+        noise_share:
+          type: array
+          items:
+            type: number
+          description: 每个资产的 MP bulk 噪声方差占比
+        below_edge_share:
+          type: array
+          items:
+            type: number
+          description: 每个资产的 λ < λ₋ 方差占比
+        denoise_frobenius:
+          type: number
+          description: "||C - C_clean||_F"
 
     # ═══════════════════════════════════════════════════════════
     #  行情数据 Schemas

@@ -147,16 +147,22 @@ def compute_forecast_golden(returns: np.ndarray, prices: List[float],
 
 
 def call_volatility_api(symbol: str, start_date: str, end_date: str,
-                        windows: str = "20", auth_token: str = None) -> Dict:
+                        windows: str = "20", auth_token: str = None,
+                        action: Optional[str] = None, **extra) -> Dict:
     """调用波动率分析 API"""
     kwargs = {'verify': VERIFY_SSL}
     if auth_token and len(auth_token) > 10:
         kwargs['headers'] = {'Authorization': auth_token}
     # 转换 symbol 格式：sz.900001 → 900001.SZ
     api_symbols = ','.join(to_api_symbol(s.strip()) for s in symbol.split(','))
+    params = {"symbols": api_symbols, "start_date": start_date,
+              "end_date": end_date, "windows": windows}
+    if action is not None:
+        params["action"] = action
+    params.update(extra)
     resp = requests.get(
         f"{BASE_URL}/analysis/volatility",
-        params={"symbols": api_symbols, "start_date": start_date, "end_date": end_date, "windows": windows},
+        params=params,
         **kwargs
     )
     assert resp.status_code == 200, f"API 请求失败: {resp.status_code} - {resp.text}"
@@ -1466,3 +1472,309 @@ class TestSpectrumIndicators:
         si = resp.get("multi", {}).get("spectrum_indicators")
         assert si is None or (isinstance(si, dict) and len(si.get("dates", [])) == 0), \
             f"单标的不应有谱指标，但得到: {si}"
+
+
+# ============================================================
+# 波动率 action 拆分 + Marchenko-Pastur 静态噪声谱
+# ============================================================
+
+
+def mp_bounds_from_T(T: int, n: int) -> Tuple[float, float, float]:
+    """MP 边界（与 C++ computeMpNoise 对齐：Q = T / k）。"""
+    q = float(T) / n
+    lp = (1.0 + 1.0 / np.sqrt(q)) ** 2
+    lm = (1.0 - 1.0 / np.sqrt(q)) ** 2
+    return q, lp, lm
+
+
+def golden_mp_indicators(returns: np.ndarray) -> Dict:
+    """n < T 场景下的 MP 指标黄金标准（numpy 相关矩阵 + eigvalsh）。"""
+    x = np.asarray(returns, dtype=float)
+    n, T = x.shape
+    corr = np.corrcoef(x)
+    evals, evecs = np.linalg.eigh(corr)  # 升序
+    order = np.argsort(evals)[::-1]
+    evals = evals[order]
+    evecs = evecs[:, order]
+
+    q, lp, lm = mp_bounds_from_T(T, n)
+    signal = evals > lp
+    bulk = (evals >= lm) & ~signal
+    below = evals < lm
+
+    signal_sum = float(evals[signal].sum())
+    bulk_sum = float(evals[bulk].sum())
+    below_sum = float(evals[below].sum())
+    trace = signal_sum + bulk_sum + below_sum
+
+    signal_share = np.zeros(n)
+    noise_share = np.zeros(n)
+    below_share = np.zeros(n)
+    for k in range(n):
+        w = evals[k] * evecs[:, k] ** 2
+        if signal[k]:
+            signal_share += w
+        elif bulk[k]:
+            noise_share += w
+        else:
+            below_share += w
+
+    return {
+        "q": q,
+        "lambda_plus": lp,
+        "lambda_minus": lm,
+        "eigenvalues": evals,
+        "n_signal": int(signal.sum()),
+        "n_bulk": int(bulk.sum()),
+        "n_below": int(below.sum()),
+        "signal_var_ratio": signal_sum / trace if trace > 0 else 0.0,
+        "noise_var_ratio": bulk_sum / trace if trace > 0 else 0.0,
+        "below_edge_var_ratio": below_sum / trace if trace > 0 else 0.0,
+        "signal_share": signal_share,
+        "noise_share": noise_share,
+        "below_edge_share": below_share,
+    }
+
+
+def post_mp_noise(body: Dict, auth_token: str = None):
+    """POST /analysis/covariance_diagnostics {action: mp_noise}"""
+    kwargs = {'verify': VERIFY_SSL}
+    if auth_token and len(auth_token) > 10:
+        kwargs['headers'] = {'Authorization': auth_token}
+    return requests.post(
+        f"{BASE_URL}/analysis/covariance_diagnostics",
+        json=body, **kwargs
+    )
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestVolatilityActionSplit:
+    """action 拆分后每个 section 独立返回，默认 all 保持旧结构。"""
+
+    SYMBOLS = "sz.900001,sz.900002,sz.900003"
+
+    def _get(self, auth_token, action=None, **extra):
+        closes, dates = load_csv_prices("sz.900001")
+        return call_volatility_api(self.SYMBOLS, dates[0], dates[-1],
+                                   auth_token=auth_token, action=action,
+                                   **extra)
+
+    def test_single_only(self, auth_token):
+        resp = self._get(auth_token, "single")
+        assert "single" in resp
+        assert "multi" not in resp
+
+    def test_multi_only(self, auth_token):
+        resp = self._get(auth_token, "multi")
+        multi = resp["multi"]
+        for key in ["correlation_matrix", "covariance_matrix", "eigenvalues",
+                    "condition_number", "is_positive_definite"]:
+            assert key in multi
+        for key in ["spectrum_indicators", "multi_forecast",
+                    "time_series_analysis", "mp_noise"]:
+            assert key not in multi
+
+    def test_spectrum_only(self, auth_token):
+        resp = self._get(auth_token, "spectrum", spectrum_window="20")
+        multi = resp["multi"]
+        assert "spectrum_indicators" in multi
+        assert "correlation_matrix" not in multi
+        assert "num_observations" in multi
+
+    def test_forecast_only(self, auth_token):
+        resp = self._get(auth_token, "forecast")
+        multi = resp["multi"]
+        assert "multi_forecast" in multi
+        assert "correlation_matrix" not in multi
+        assert "num_observations" in multi
+
+    def test_lead_lag_only(self, auth_token):
+        resp = self._get(auth_token, "lead_lag")
+        multi = resp["multi"]
+        assert "time_series_analysis" in multi
+        assert "correlation_matrix" not in multi
+        assert "num_observations" in multi
+
+    def test_mp_noise_only(self, auth_token):
+        resp = self._get(auth_token, "mp_noise", include_matrix="1")
+        multi = resp["multi"]
+        assert "mp_noise" in multi
+        assert "correlation_matrix" not in multi
+
+        noise = multi["mp_noise"]
+        assert noise["valid"] is True
+        n = noise["original_n"]
+        assert n == len(resp["symbols"])
+        assert len(noise["eigenvalues"]) == n
+        assert len(noise["signal_share"]) == n
+        assert len(noise["noise_share"]) == n
+        assert len(noise["below_edge_share"]) == n
+        assert len(noise["correlation"]) == n
+        assert len(noise["denoised_correlation"]) == n
+
+        shares = (np.array(noise["signal_share"]) +
+                  np.array(noise["noise_share"]) +
+                  np.array(noise["below_edge_share"]))
+        np.testing.assert_allclose(shares, 1.0, atol=1e-8)
+
+        q, lp, lm = mp_bounds_from_T(noise["n_observations"], n)
+        assert abs(noise["q"] - q) < 1e-12
+        assert abs(noise["lambda_plus"] - lp) < 1e-12
+        assert abs(noise["lambda_minus"] - lm) < 1e-12
+        assert noise["n_signal"] + noise["n_bulk"] + noise["n_below"] == n
+
+    def test_default_all_backward_compatible(self, auth_token):
+        # 测试数据只有 ~60 根 bar，默认 spectrum_window=60 会因 T 不足而省略
+        # spectrum_indicators；显式传 20 以验证旧 section 仍然完整。
+        resp = self._get(auth_token, spectrum_window="20")
+        assert resp["action"] == "all"
+        assert "single" in resp
+        multi = resp["multi"]
+        for key in ["correlation_matrix", "covariance_matrix", "eigenvalues",
+                    "condition_number", "is_positive_definite",
+                    "annual_volatility", "num_observations"]:
+            assert key in multi
+        assert "spectrum_indicators" in multi
+        assert "multi_forecast" in multi
+        assert "time_series_analysis" in multi
+        assert "mp_noise" in multi
+
+    def test_unknown_action_400(self, auth_token):
+        closes, dates = load_csv_prices("sz.900001")
+        kwargs = {'verify': VERIFY_SSL}
+        if auth_token and len(auth_token) > 10:
+            kwargs['headers'] = {'Authorization': auth_token}
+        resp = requests.get(
+            f"{BASE_URL}/analysis/volatility",
+            params={"symbols": to_api_symbol("sz.900001"),
+                    "start_date": dates[0], "end_date": dates[-1],
+                    "action": "not_an_action"},
+            **kwargs
+        )
+        assert resp.status_code == 400
+        assert "error" in resp.json()
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestMpNoisePost:
+    """POST mp_noise：returns / correlation / covariance 三种输入。"""
+
+    @staticmethod
+    def _sample_returns(n=5, T=300, seed=7):
+        rng = np.random.RandomState(seed)
+        factor = rng.normal(size=T)
+        return np.array([
+            0.8 * factor + rng.normal(scale=0.6, size=T)
+            for _ in range(n)
+        ])
+
+    def test_returns_input(self, auth_token):
+        x = self._sample_returns()
+        resp = post_mp_noise({
+            "action": "mp_noise",
+            "returns": x.tolist(),
+            "include_matrix": True,
+        }, auth_token)
+        assert resp.status_code == 200, resp.text[:400]
+        noise = resp.json()
+
+        assert noise["valid"] is True
+        n, T = x.shape
+        assert noise["original_n"] == n
+        assert noise["n_effective"] == n
+        assert noise["n_observations"] == T
+        assert len(noise["eigenvalues"]) == n
+        assert len(noise["correlation"]) == n
+        assert len(noise["denoised_correlation"]) == n
+
+        golden = golden_mp_indicators(x)
+        assert abs(noise["q"] - golden["q"]) < 1e-12
+        assert abs(noise["lambda_plus"] - golden["lambda_plus"]) < 1e-12
+        assert abs(noise["lambda_minus"] - golden["lambda_minus"]) < 1e-12
+        np.testing.assert_allclose(noise["eigenvalues"], golden["eigenvalues"],
+                                   rtol=1e-8, atol=1e-10)
+        assert abs(noise["signal_var_ratio"] - golden["signal_var_ratio"]) < 1e-8
+        assert abs(noise["noise_var_ratio"] - golden["noise_var_ratio"]) < 1e-8
+        assert abs(noise["below_edge_var_ratio"] -
+                   golden["below_edge_var_ratio"]) < 1e-8
+        assert noise["n_signal"] >= 1
+        assert noise["lambda_max"] > noise["lambda_plus"]
+
+        # 边界附近的特征值可能因 Eigen/numpy 浮点差异被分到不同类别，
+        # 只有分类完全一致时才逐值对比 share。
+        if (noise["n_signal"] == golden["n_signal"] and
+                noise["n_bulk"] == golden["n_bulk"] and
+                noise["n_below"] == golden["n_below"]):
+            np.testing.assert_allclose(noise["signal_share"],
+                                       golden["signal_share"], atol=1e-8)
+            np.testing.assert_allclose(noise["noise_share"],
+                                       golden["noise_share"], atol=1e-8)
+            np.testing.assert_allclose(noise["below_edge_share"],
+                                       golden["below_edge_share"], atol=1e-8)
+
+    def test_correlation_input_matches_returns(self, auth_token):
+        x = self._sample_returns(seed=11)
+        T = x.shape[1]
+        resp = post_mp_noise({
+            "action": "mp_noise",
+            "correlation_matrix": np.corrcoef(x).tolist(),
+            "n_observations": T,
+        }, auth_token)
+        assert resp.status_code == 200, resp.text[:400]
+        noise = resp.json()
+        assert noise["valid"] is True
+
+        golden = golden_mp_indicators(x)
+        np.testing.assert_allclose(noise["eigenvalues"], golden["eigenvalues"],
+                                   rtol=1e-8, atol=1e-10)
+        assert noise["n_signal"] == golden["n_signal"]
+        assert noise["n_bulk"] == golden["n_bulk"]
+        assert noise["n_below"] == golden["n_below"]
+
+    def test_covariance_input(self, auth_token):
+        x = self._sample_returns(seed=13)
+        T = x.shape[1]
+        resp = post_mp_noise({
+            "action": "mp_noise",
+            "covariance_matrix": np.cov(x).tolist(),
+            "n_observations": T,
+        }, auth_token)
+        assert resp.status_code == 200, resp.text[:400]
+        noise = resp.json()
+        assert noise["valid"] is True
+
+        golden = golden_mp_indicators(x)
+        np.testing.assert_allclose(noise["eigenvalues"], golden["eigenvalues"],
+                                   rtol=1e-8, atol=1e-10)
+
+    def test_clustering_when_n_ge_t(self, auth_token):
+        x = self._sample_returns(n=8, T=6, seed=17)
+        resp = post_mp_noise({
+            "action": "mp_noise",
+            "returns": x.tolist(),
+            "max_clusters": 4,
+        }, auth_token)
+        assert resp.status_code == 200, resp.text[:400]
+        noise = resp.json()
+        assert noise["valid"] is True
+        assert noise["original_n"] == 8
+        assert noise["n_effective"] == 4
+        assert len(noise["cluster_labels"]) == 8
+        assert len(noise["signal_share"]) == 8
+
+    def test_invalid_returns_400(self, auth_token):
+        resp = post_mp_noise({
+            "action": "mp_noise",
+            "returns": [[1.0, 2.0, 3.0], [4.0, 5.0]],
+        }, auth_token)
+        assert resp.status_code == 400
+        assert "error" in resp.json()
+
+    def test_correlation_requires_n_lt_t(self, auth_token):
+        resp = post_mp_noise({
+            "action": "mp_noise",
+            "correlation_matrix": np.eye(5).tolist(),
+            "n_observations": 5,
+        }, auth_token)
+        assert resp.status_code == 400
+        assert "error" in resp.json()

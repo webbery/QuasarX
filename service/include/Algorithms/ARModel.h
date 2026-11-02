@@ -1,5 +1,6 @@
 #pragma once
 #include "std_header.h"
+#include <Eigen/Dense>
 #include <vector>
 
 namespace ar_model {
@@ -99,8 +100,9 @@ ForecastResult buildForecast(const std::vector<double>& series,
  * 原理: Σ_forecast(h) = Σ_base ⊙ Γ(h)
  * Γ(h)_ij = std_i(h) × std_j(h) 膨胀因子
  */
-std::vector<std::vector<double>> extrapolateCovariance(
-    const std::vector<std::vector<double>>& base_cov,
+/// Eigen 版本：矩阵乘/外推直接留在 Eigen 内，避免嵌套 vector 转换。
+Eigen::MatrixXd extrapolateCovariance(
+    const Eigen::MatrixXd& base_cov,
     const std::vector<Forecast>& forecasts,
     int horizon);
 

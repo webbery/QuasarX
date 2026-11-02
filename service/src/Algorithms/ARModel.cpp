@@ -180,30 +180,30 @@ ForecastResult buildForecast(const std::vector<double>& series,
 // extrapolateCovariance — 多资产协方差外推
 // ============================================================
 
-std::vector<std::vector<double>> extrapolateCovariance(
-    const std::vector<std::vector<double>>& base_cov,
+Eigen::MatrixXd extrapolateCovariance(
+    const Eigen::MatrixXd& base_cov,
     const std::vector<Forecast>& forecasts,
     int horizon)
 {
-    int N = base_cov.size();
-    if (N == 0 || horizon <= 0 || forecasts.empty()) return base_cov;
-
-    auto result = base_cov;
-
-    // 取 horizon-1 步的 std（最后一档）
-    std::vector<double> inflation(N);
-    for (int i = 0; i < N; ++i) {
-        int h = std::min(horizon - 1, static_cast<int>(forecasts[i].std_per_step.size()) - 1);
-        inflation[i] = forecasts[i].std_per_step[h];
+    const int N = static_cast<int>(base_cov.rows());
+    if (N == 0 || horizon <= 0 || base_cov.cols() != N ||
+        static_cast<int>(forecasts.size()) < N) {
+        return base_cov;
     }
 
-    // Σ_forecast = Σ_base ⊙ (σ_i × σ_j)
+    Eigen::VectorXd inflation(N);
+    for (int i = 0; i < N; ++i) {
+        const int last = static_cast<int>(forecasts[i].std_per_step.size()) - 1;
+        const int h = std::min(horizon - 1, last);
+        inflation(i) = (h >= 0) ? forecasts[i].std_per_step[h] : 1.0;
+    }
+
+    Eigen::MatrixXd result = base_cov;
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
-            result[i][j] = base_cov[i][j] * inflation[i] * inflation[j];
+            result(i, j) *= inflation(i) * inflation(j);
         }
     }
-
     return result;
 }
 

@@ -9,84 +9,47 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <sstream>
+#include <stdexcept>
+#include <tuple>
+#include <utility>
 
-static PriceField parsePriceField(const std::string& field) {
-    if (field == "open" || field == "O") return PriceField::Open;
-    if (field == "high" || field == "H") return PriceField::High;
-    if (field == "low" || field == "L") return PriceField::Low;
-    if (field == "volume" || field == "V") return PriceField::Volume;
-    return PriceField::Close;
+namespace {
+
+const char* decayModeToString(ACFDecayMode mode) {
+    switch (mode) {
+        case ACFDecayMode::Exponential:  return "exponential";
+        case ACFDecayMode::Hyperbolic:   return "hyperbolic";
+        case ACFDecayMode::Inconclusive: return "inconclusive";
+    }
+    return "unknown";
 }
 
-// === 工具函数 ===
+String normalizePriceField(const std::string& field) {
+    if (field == "open" || field == "O") return "open";
+    if (field == "high" || field == "H") return "high";
+    if (field == "low" || field == "L") return "low";
+    if (field == "volume" || field == "V") return "volume";
+    return "close";
+}
 
-static double mean(const std::vector<double>& data) {
+double meanOf(const std::vector<double>& data) {
     if (data.empty()) return 0.0;
     return std::accumulate(data.begin(), data.end(), 0.0) / data.size();
 }
 
-static double stddev(const std::vector<double>& data, double m = -1) {
+double stddevOf(const std::vector<double>& data, double m = -1) {
     if (data.size() < 2) return 0.0;
-    if (m < 0) m = mean(data);
+    if (m < 0) m = meanOf(data);
     double sq_sum = 0;
     for (auto v : data) sq_sum += (v - m) * (v - m);
     return std::sqrt(sq_sum / (data.size() - 1));
 }
 
-// === 收益率计算 ===
-
-std::vector<double> VolatilityHandler::simpleReturns(const std::vector<double>& prices) {
-    std::vector<double> rets;
-    for (size_t i = 1; i < prices.size(); ++i) {
-        if (prices[i-1] > 0) {
-            rets.push_back((prices[i] - prices[i-1]) / prices[i-1]);
-        } else {
-            rets.push_back(0.0);
-        }
-    }
-    return rets;
-}
-
-// === 单标的指标 ===
-
-double VolatilityHandler::skewness(const std::vector<double>& data) {
-    if (data.size() < 3) return 0.0;
-    double m = mean(data);
-    double s = stddev(data, m);
-    if (s < 1e-10) return 0.0;
-    double n = data.size();
-    double sum3 = 0;
-    for (auto v : data) {
-        double z = (v - m) / s;
-        sum3 += z * z * z;
-    }
-    // 样本偏度修正
-    return (n / ((n-1) * (n-2))) * sum3;
-}
-
-double VolatilityHandler::kurtosis(const std::vector<double>& data) {
-    if (data.size() < 4) return 0.0;
-    double m = mean(data);
-    double s = stddev(data, m);
-    if (s < 1e-10) return 0.0;
-    double n = data.size();
-    double sum4 = 0;
-    for (auto v : data) {
-        double z = (v - m) / s;
-        sum4 += z * z * z * z;
-    }
-    // 超额峰度 (excess kurtosis)
-    double k = ((n*(n+1)) / ((n-1)*(n-2)*(n-3))) * sum4;
-    double correction = (3.0 * (n-1) * (n-1)) / ((n-2) * (n-3));
-    return k - correction;
-}
-
-// === ACF 衰减模式分析 ===
-
 // 简单线性回归 y = a + b*x，返回 {a, b, r2}
-static std::tuple<double, double, double> linearRegression(
+std::tuple<double, double, double> linearRegression(
     const std::vector<double>& x, const std::vector<double>& y)
 {
     size_t n = x.size();
@@ -105,7 +68,6 @@ static std::tuple<double, double, double> linearRegression(
     double b = (n * sxy - sx * sy) / denom;
     double a = (sy - b * sx) / n;
 
-    // R²
     double y_mean = sy / n;
     double ss_tot = 0, ss_res = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -113,524 +75,10 @@ static std::tuple<double, double, double> linearRegression(
         ss_res += (y[i] - (a + b * x[i])) * (y[i] - (a + b * x[i]));
     }
     double r2 = (ss_tot > 1e-15) ? (1.0 - ss_res / ss_tot) : 0;
-
     return {a, b, r2};
 }
 
-static const char* decayModeToString(ACFDecayMode mode) {
-    switch (mode) {
-        case ACFDecayMode::Exponential:  return "exponential";
-        case ACFDecayMode::Hyperbolic:   return "hyperbolic";
-        case ACFDecayMode::Inconclusive: return "inconclusive";
-    }
-    return "unknown";
-}
-
-ACFDecayAnalysis VolatilityHandler::analyzeACFDecay(
-    const std::vector<double>& abs_acf,
-    const std::vector<double>& abs_returns)
-{
-    ACFDecayAnalysis result;
-
-    if (abs_acf.size() < 3 || abs_returns.size() < 4) {
-        result.decay_mode = ACFDecayMode::Inconclusive;
-        return result;
-    }
-
-    // 1. Ljung-Box 检验（对 abs_returns）
-    int lags = static_cast<int>(abs_acf.size()) - 1;
-    auto [Q, pval] = boost::math::statistics::ljung_box(abs_returns, lags, 0);
-    result.lb_statistic = Q;
-    result.lb_pvalue = pval;
-    result.has_autocorrelation = (pval < 0.05);
-
-    // 2. 拟合衰减模式（用 lag 1..max 的 |ACF|）
-    std::vector<double> lag_vals;
-    std::vector<double> acf_vals;
-    for (size_t k = 1; k < abs_acf.size(); ++k) {
-        double av = std::abs(abs_acf[k]);
-        if (av < 1e-10) continue;
-        lag_vals.push_back(static_cast<double>(k));
-        acf_vals.push_back(av);
-    }
-
-    if (lag_vals.size() < 3) {
-        result.decay_mode = ACFDecayMode::Inconclusive;
-        return result;
-    }
-
-    // 2a. 指数拟合: ln(|ρ(k)|) = ln(a) - b*k
-    std::vector<double> log_acf;
-    for (auto v : acf_vals) log_acf.push_back(std::log(v));
-    auto [exp_a, exp_b, exp_r2] = linearRegression(lag_vals, log_acf);
-    result.exponential_r2 = std::max(0.0, exp_r2);
-
-    // 2b. 双曲拟合: ln(|ρ(k)|) = ln(a) - b*ln(k)
-    std::vector<double> log_lag;
-    for (auto v : lag_vals) log_lag.push_back(std::log(v));
-    auto [hyp_a, hyp_b, hyp_r2] = linearRegression(log_lag, log_acf);
-    result.hyperbolic_r2 = std::max(0.0, hyp_r2);
-
-    // 3. 判定衰减模式
-    double delta_r2 = std::abs(result.exponential_r2 - result.hyperbolic_r2);
-    double max_r2 = std::max(result.exponential_r2, result.hyperbolic_r2);
-
-    if (delta_r2 > 0.1 && max_r2 > 0.3) {
-        result.decay_mode = (result.exponential_r2 > result.hyperbolic_r2)
-            ? ACFDecayMode::Exponential : ACFDecayMode::Hyperbolic;
-    } else {
-        result.decay_mode = ACFDecayMode::Inconclusive;
-    }
-
-    // 4. 半衰期 (仅指数模式)
-    if (result.decay_mode == ACFDecayMode::Exponential && exp_b > 1e-10) {
-        result.decay_half_life = std::log(2.0) / exp_b;
-    }
-
-    // 5. Hurst 指数估计 (从双曲拟合: H = 1 - b/2)
-    if (hyp_b > 0) {
-        result.hurst_estimate = 1.0 - hyp_b / 2.0;
-    }
-
-    return result;
-}
-
-// === 单标的完整计算 ===
-
-VolatilitySingleResult VolatilityHandler::computeSingle(
-    const std::vector<double>& prices,
-    const std::vector<double>& volumes,
-    const std::vector<int>& windows,
-    int band_window)
-{
-    VolatilitySingleResult result;
-    result.prices = prices;
-    result.volumes = volumes;
-    result.returns = simpleReturns(prices);
-
-    if (result.returns.empty()) return result;
-
-    // 滚动波动率
-    for (int w : windows) {
-        result.rolling_vol[w] = rolling_volatility(result.returns, w);
-    }
-
-    // 波动率包络带 (基于滚动窗口)
-    size_t offset = (band_window > 1) ? (band_window - 1) : 0;
-    for (size_t i = 0; i < prices.size(); ++i) {
-        if (i < offset) {
-            result.mean_price.push_back(prices[i]);
-            result.upper_2sigma.push_back(prices[i]);
-            result.lower_2sigma.push_back(prices[i]);
-            continue;
-        }
-
-        // 计算窗口内的均值和标准差
-        double sum = 0;
-        for (int j = 0; j < band_window; ++j) sum += prices[i - j];
-        double m = sum / band_window;
-        double var = 0;
-        for (int j = 0; j < band_window; ++j) {
-            double d = prices[i - j] - m;
-            var += d * d;
-        }
-        double s = std::sqrt(var / (band_window - 1));
-
-        result.mean_price.push_back(m);
-        result.upper_2sigma.push_back(m + 2 * s);
-        result.lower_2sigma.push_back(m - 2 * s);
-    }
-    
-    // 汇总指标
-    result.annual_volatility = compute_annualized_volatility(result.returns);
-    result.max_drawdown = max_drawdown_ratio(prices);
-    result.skewness = skewness(result.returns);
-    result.kurtosis = kurtosis(result.returns);
-    result.var_95 = compute_var(result.returns, 0.95);
-    result.cvar_95 = compute_cvar(result.returns, 0.95);
-    
-    // 波动率聚集 (|returns|)
-    result.abs_returns.reserve(result.returns.size());
-    for (auto r : result.returns) {
-        result.abs_returns.push_back(std::abs(r));
-    }
-    
-    // ACF / PACF (最多 lag 20)
-    int max_lag = std::min(20, static_cast<int>(result.returns.size() / 4));
-    result.returns_acf = finance::computeACF(result.returns, max_lag);
-    result.returns_pacf = finance::computePACF(result.returns_acf, max_lag);
-    result.abs_returns_acf = finance::computeACF(result.abs_returns, max_lag);
-    result.acf_decay = analyzeACFDecay(result.abs_returns_acf, result.abs_returns);
-
-    // === AR(p) 预测：收益率 ===
-    double last_price = result.prices.empty() ? 0.0 : result.prices.back();
-    result.forecast_returns = ar_model::buildForecast(
-        result.returns, result.returns_acf, ar_model::MAX_FORECAST_STEPS,
-        "returns", last_price
-    );
-
-    // === AR(p) 预测：滚动波动率 (window=20) ===
-    if (!result.rolling_vol.empty() && result.rolling_vol.count(20)) {
-        const auto& rv = result.rolling_vol.at(20);
-        if (rv.size() >= 30) {
-            auto vol_acf = finance::computeACF(rv, ar_model::MAX_FORECAST_STEPS);
-            double last_vol = rv.empty() ? 0.0 : rv.back();
-            result.forecast_vol = ar_model::buildForecast(
-                rv, vol_acf, ar_model::MAX_FORECAST_STEPS,
-                "rolling_vol", last_vol
-            );
-        }
-    }
-
-    return result;
-}
-
-// === 多标的计算 ===
-
-VolatilityMultiResult VolatilityHandler::computeMulti(
-    const std::map<std::string, std::vector<double>>& returns_map,
-    const std::vector<std::string>& symbols,
-    const std::vector<std::string>& dates,
-    int max_lag,
-    int spectrum_window,
-    PerfStages* perf_stages)
-{
-    PerfStages local_stages;
-    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
-
-    VolatilityMultiResult result;
-
-    // 按 symbols（请求顺序）构建收益率矩阵，跳过无数据的标的
-    size_t n = 0;
-    size_t min_len = std::numeric_limits<size_t>::max();
-    for (const auto& sym : symbols) {
-        auto it = returns_map.find(sym);
-        if (it == returns_map.end()) continue;
-        if (it->second.size() < min_len) min_len = it->second.size();
-        ++n;
-    }
-    if (n < 2 || min_len < 2) return result;
-
-    stages.setValue("multi_n", static_cast<double>(n));
-    stages.setValue("multi_T", static_cast<double>(min_len));
-
-    // 收益率矩阵与标的顺序在后面的两两检验里还要用，不能只留在下面的作用域里
-    Eigen::MatrixXd ret_matrix(n, min_len);
-    std::vector<std::string> sym_list;
-    sym_list.reserve(n);
-
-    {
-        PERF_SCOPE(stages, "multi_matrix");
-        // 构建 n x T 收益率矩阵（按 symbols 请求顺序）
-        size_t idx = 0;
-        for (const auto& sym : symbols) {
-            auto it = returns_map.find(sym);
-            if (it == returns_map.end()) continue;
-            const auto& rets = it->second;
-            for (size_t t = 0; t < min_len; ++t) {
-                ret_matrix(idx, t) = rets[rets.size() - min_len + t];
-            }
-            sym_list.push_back(sym);
-            ++idx;
-        }
-
-        // 去均值（每行减均值）— 标准 Pearson 相关系数
-        Eigen::MatrixXd centered(n, min_len);
-        for (size_t i = 0; i < n; ++i) {
-            centered.row(i) = ret_matrix.row(i).array() - ret_matrix.row(i).mean();
-        }
-
-        // 协方差矩阵：C = (X_centered * X_centered^T) / (T-1)
-        Eigen::MatrixXd cov = (centered * centered.transpose()) / (min_len - 1);
-
-        // 相关系数矩阵：ρ_ij = cov_ij / (σ_i * σ_j)
-        Eigen::VectorXd std_devs(n);
-        for (size_t i = 0; i < n; ++i) {
-            std_devs(i) = std::sqrt(cov(i, i));
-            if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
-        }
-
-        Eigen::MatrixXd corr = cov;
-        for (size_t i = 0; i < n; ++i) {
-            for (size_t j = 0; j < n; ++j) {
-                corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
-            }
-        }
-        corr.diagonal().setOnes();
-
-        // 转换为 std::vector<std::vector<double>>
-        result.covariance_matrix.resize(n, std::vector<double>(n));
-        result.correlation_matrix.resize(n, std::vector<double>(n));
-        for (size_t i = 0; i < n; ++i) {
-            for (size_t j = 0; j < n; ++j) {
-                result.covariance_matrix[i][j] = cov(i, j);
-                result.correlation_matrix[i][j] = corr(i, j);
-            }
-        }
-    }
-
-    // 年化波动率
-    for (size_t i = 0; i < n; ++i) {
-        result.annual_volatility.push_back(std::sqrt(result.covariance_matrix[i][i] * 252.0));
-    }
-    result.num_observations = min_len;
-
-    // 真实特征值分解 (对称矩阵使用 SelfAdjointEigenSolver，比 Jacobi 通用分解快)
-    {
-        PERF_SCOPE(stages, "multi_eigen");
-        evaluateCovarianceQuality(result.covariance_matrix,
-                                  result.eigenvalues,
-                                  result.condition_number,
-                                  result.is_positive_definite);
-    }
-
-    // === Marchenko-Pastur 谱指标滚动窗口分析 ===
-    // 取 dates 的最后 min_len 个日期与 ret_matrix 对齐（收益率比价格少 1，且多标的对齐到最小长度）
-    if (!dates.empty() && min_len <= dates.size()) {
-        PERF_SCOPE(stages, "multi_spectrum");
-        size_t date_offset = dates.size() - min_len;
-        Vector<String> dates_vec(dates.begin() + date_offset, dates.end());
-        result.spectrum_indicators = finance::computeSpectrumIndicators(
-            ret_matrix, dates_vec, spectrum_window, 10, &stages);
-    }
-
-    // === 多资产预测外推 ===
-    // 收集各资产的 Forecast 结果（按 symbols 请求顺序）
-    std::vector<ar_model::Forecast> all_forecasts;
-    std::vector<std::string> fc_symbols;
-    size_t sym_idx = 0;
-    {
-    PERF_SCOPE(stages, "multi_forecast");
-    for (const auto& sym : symbols) {
-        auto it = returns_map.find(sym);
-        if (it == returns_map.end()) continue;
-        const auto& rets = it->second;
-        if (rets.size() < 30) {
-            ++sym_idx;
-            continue;
-        }
-        auto acf = finance::computeACF(rets, ar_model::MAX_FORECAST_STEPS);
-        int p = ar_model::findSignificantLag(acf, rets.size(), ar_model::MAX_FORECAST_STEPS);
-        if (p > 0) {
-            auto fit = ar_model::solveYuleWalker(acf, p);
-            if (fit.stable && !fit.coeffs.empty()) {
-                std::vector<double> history(rets.end() - p, rets.end());
-                all_forecasts.push_back(ar_model::predict(fit.coeffs, history, p, fit.residual_var));
-                fc_symbols.push_back(sym);
-            }
-        }
-        // 无自相关或拟合失败，使用空预测（零收益率 + 历史波动率）
-        if (fc_symbols.size() <= sym_idx) {
-            double vol = std::sqrt(result.covariance_matrix[sym_idx][sym_idx]);
-            all_forecasts.push_back(ar_model::Forecast{
-                .values = std::vector<double>(1, 0.0),
-                .std_per_step = std::vector<double>(1, vol)
-            });
-            fc_symbols.push_back(sym);
-        }
-        ++sym_idx;
-    }
-
-    if (fc_symbols.size() >= 2) {
-        int horizon = std::max(1, static_cast<int>(all_forecasts[0].values.size()));
-        result.multi_forecast.horizon = horizon;
-        result.multi_forecast.symbols = fc_symbols;
-        result.multi_forecast.forecast_cov = ar_model::extrapolateCovariance(
-            result.covariance_matrix, all_forecasts, horizon
-        );
-
-        // 外推相关系数矩阵
-        size_t N = fc_symbols.size();
-        result.multi_forecast.forecast_corr.resize(N, std::vector<double>(N));
-        for (size_t i = 0; i < N; ++i) {
-            for (size_t j = 0; j < N; ++j) {
-                double vi = result.multi_forecast.forecast_cov[i][i];
-                double vj = result.multi_forecast.forecast_cov[j][j];
-                if (vi > 1e-15 && vj > 1e-15) {
-                    result.multi_forecast.forecast_corr[i][j] =
-                        result.multi_forecast.forecast_cov[i][j] / std::sqrt(vi * vj);
-                } else {
-                    result.multi_forecast.forecast_corr[i][j] = (i == j) ? 1.0 : 0.0;
-                }
-            }
-        }
-
-        // 外推年化波动率
-        for (size_t i = 0; i < N; ++i) {
-            result.multi_forecast.forecast_volatilities.push_back(
-                std::sqrt(result.multi_forecast.forecast_cov[i][i] * 252.0)
-            );
-        }
-    }
-    }  // multi_forecast
-
-    // === 多标的时间序列分析 ===
-    // 对所有标的对执行分析 (n*(n-1)/2 对)
-    int ts_max_lag = std::min(max_lag, static_cast<int>(min_len / 4));
-    if (ts_max_lag < 1) ts_max_lag = 1;
-
-    // 热循环里直接持有计数器引用，避免每次按名字查 map
-    PerfCounter& c_pair_prep = stages.stage("pair_prep");
-    PerfCounter& c_lead_lag  = stages.stage("lead_lag");
-    PerfCounter& c_granger   = stages.stage("granger");
-    const bool perf_on = stages.enabled();
-
-    for (size_t i = 0; i < sym_list.size(); ++i) {
-        // Eigen row → std::vector<double>
-        std::vector<double> rets_i(min_len);
-        for (size_t t = 0; t < min_len; ++t) rets_i[t] = ret_matrix(i, t);
-
-        for (size_t j = i + 1; j < sym_list.size(); ++j) {
-            auto t_prep = PerfClock::now();
-            std::vector<double> rets_j(min_len);
-            for (size_t t = 0; t < min_len; ++t) rets_j[t] = ret_matrix(j, t);
-            if (perf_on) c_pair_prep.add(ms_since(t_prep));
-
-            // 1. 交叉相关 + 领先滞后
-            auto t_ccf = PerfClock::now();
-            auto ccf = finance::crossCorrelation(rets_i, rets_j, ts_max_lag);
-            if (perf_on) c_lead_lag.add(ms_since(t_ccf));
-            result.lead_lag_results.push_back({
-                sym_list[i], sym_list[j],
-                ccf.lead_lag,
-                ccf.max_correlation,
-                ccf.ccf
-            });
-
-            // 2. 格兰杰因果检验 (y→x 和 x→y 双向)
-            auto t_gr = PerfClock::now();
-            int granger_max_lag = std::min(ts_max_lag, 5);
-            auto gr_yx = finance::grangerCausalityTest(rets_i, rets_j, granger_max_lag, sym_list[i], sym_list[j]);
-            result.granger_results.push_back({
-                sym_list[j], sym_list[i],
-                gr_yx.f_statistic, gr_yx.p_value, gr_yx.is_significant, gr_yx.optimal_lag
-            });
-            auto gr_xy = finance::grangerCausalityTest(rets_j, rets_i, granger_max_lag, sym_list[j], sym_list[i]);
-            if (perf_on) c_granger.add(ms_since(t_gr));
-            result.granger_results.push_back({
-                sym_list[i], sym_list[j],
-                gr_xy.f_statistic, gr_xy.p_value, gr_xy.is_significant, gr_xy.optimal_lag
-            });
-        }
-    }
-
-    stages.setValue("pairs", static_cast<double>(sym_list.size() * (sym_list.size() - 1) / 2));
-
-    return result;
-}
-
-// === 主计算函数 ===
-
-VolatilityResult VolatilityHandler::compute(
-    const std::string& db_path,
-    const std::vector<std::string>& symbols,
-    const std::string& start_date,
-    const std::string& end_date,
-    const std::vector<int>& windows,
-    PriceField field,
-    FillMethod fill,
-    int band_window,
-    BarFreq target_freq,
-    int spectrum_window,
-    PerfStages* perf_stages)
-{
-    PerfStages local_stages;
-    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
-
-    VolatilityResult result;
-    // 注意：result.symbols 在循环中动态收集（跳过数据不足的标的）
-
-    std::map<std::string, std::vector<double>> returns_map;
-    std::vector<std::string> common_dates;
-
-    auto getPriceCol = [&](const Map<String, Vector<double>>& data) -> Vector<double> {
-        static const char* names[] = {"close", "open", "high", "low", "volume"};
-        auto it = data.find(names[(int)field]);
-        if (it != data.end() && !it->second.empty()) return it->second;
-        it = data.find("close");
-        if (it != data.end()) return it->second;
-        return {};
-    };
-    auto getVolumeCol = [&](const Map<String, Vector<double>>& data) -> Vector<double> {
-        auto it = data.find("volume");
-        if (it != data.end()) return it->second;
-        return {};
-    };
-
-    for (const auto& symbol : symbols) {
-        Vector<String> dates;
-        Vector<double> prices_vec;
-        Vector<double> volumes_vec;
-
-        auto t_symbol = PerfClock::now();
-
-        // 检测是否为宏观指标 (格式: country/indicator)
-        auto slash = symbol.find('/');
-        bool is_macro = (slash != std::string::npos && symbol.size() > slash + 1 && symbol.find('.', slash) == std::string::npos);
-
-        {
-            PERF_SCOPE(stages, "symbol_load");
-            if (is_macro) {
-                // 宏观指标数据
-                if (!FetchMacroData(symbol, db_path, dates, prices_vec)) {
-                    WARN("[Volatility] No macro data for {}", symbol);
-                    continue;
-                }
-                volumes_vec.assign(prices_vec.size(), 0.0);  // 宏观数据无成交量
-            } else {
-                // 股票/ETF行情数据（默认使用 HFQ 后复权）
-                // 将 symbol 字符串转换为 symbol_t 类型
-                symbol_t sym = to_symbol(toInternalSymbol(symbol));
-                auto multi = LoadHistoryDataWithFreq(sym, {"close", "open", "high", "low", "volume", "turnover"},
-                                                      start_date, end_date, target_freq, AdjType::HFQ, &dates, fill);
-                Vector<double> prices = getPriceCol(multi);
-                Vector<double> volumes = getVolumeCol(multi);
-                if (prices.empty()) {
-                    WARN("[Volatility] No data for {}", symbol);
-                    continue;
-                }
-                prices_vec.assign(prices.begin(), prices.end());
-                volumes_vec.assign(volumes.begin(), volumes.end());
-                if (volumes_vec.empty()) volumes_vec.assign(prices_vec.size(), 0.0);
-            }
-        }
-
-        {
-            PERF_SCOPE(stages, "symbol_compute");
-            auto single_result = computeSingle(prices_vec, volumes_vec, windows, band_window);
-            result.single[symbol] = single_result;
-            returns_map[symbol] = simpleReturns(prices_vec);
-        }
-
-        stages.addItem(symbol, ms_since(t_symbol));
-
-        // 动态收集成功加载数据的标的（跳过数据不足的）
-        result.symbols.push_back(symbol);
-
-        if (common_dates.empty()) {
-            common_dates.assign(dates.begin(), dates.end());
-            if (common_dates.size() != prices_vec.size()) {
-                WARN("[Volatility] Date/price length mismatch for {}: dates={}, prices={}",
-                     symbol, common_dates.size(), prices_vec.size());
-            }
-        }
-    }
-
-    stages.setValue("symbols", static_cast<double>(symbols.size()));
-    stages.setValue("loaded", static_cast<double>(result.symbols.size()));
-
-    {
-        PERF_SCOPE(stages, "compute_multi");
-        result.dates = common_dates;
-        result.multi = computeMulti(returns_map, symbols, common_dates, 10, spectrum_window, &stages);
-    }
-
-    return result;
-}
-
-// === Forecast JSON 序列化 ===
-
-static nlohmann::json forecastToJson(const ar_model::ForecastResult& fc) {
+nlohmann::json forecastToJson(const ar_model::ForecastResult& fc) {
     nlohmann::json j;
     j["source_series"] = fc.source_series;
     j["order_p"] = fc.order_p;
@@ -647,223 +95,1264 @@ static nlohmann::json forecastToJson(const ar_model::ForecastResult& fc) {
     return j;
 }
 
-// === HTTP Handler (GET 请求) ===
+}  // namespace
 
-void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res) {
-    // 分段耗时剖析：每个阶段一行汇总，键序固定，便于优化前后 diff
-    PerfStages stages;
+// === 请求解析 ===
 
-    try {
-        auto db_path = _server->GetConfig().GetDatabasePath();
+bool VolatilityHandler::parseRequest(const httplib::Request& req,
+                                     VolatilityRequest& out,
+                                     std::string& error) const {
+    out._db_path = _server->GetConfig().GetDatabasePath();
 
-        // 从 URL 参数获取
-        auto symbols_param = req.get_param_value("symbols");
-        auto start_date_param = req.get_param_value("start_date");
-        auto end_date_param = req.get_param_value("end_date");
-        auto windows_param = req.get_param_value("windows");
-        auto field_param = req.get_param_value("field");
-        auto fill_param = req.get_param_value("fill_method");
-        auto band_window_param = req.get_param_value("band_window");
-        auto frequency_param = req.get_param_value("frequency");
-        auto spectrum_window_param = req.get_param_value("spectrum_window");
+    const auto action_param = req.get_param_value("action");
+    out._action = parseVolatilityAction(action_param, false);
+    if (out._action == VolatilityAction::Unknown) {
+        error = "unknown action: " + action_param +
+                " (all|single|multi|spectrum|forecast|lead_lag|mp_noise)";
+        return false;
+    }
 
-        if (symbols_param.empty()) {
-            res.status = 400;
-            res.set_content(R"({"error":"symbols parameter is required"})", "application/json");
-            return;
-        }
+    const auto symbols_param = req.get_param_value("symbols");
+    if (symbols_param.empty()) {
+        error = "symbols parameter is required";
+        return false;
+    }
 
-        // 解析 symbols (逗号分隔)
-        std::vector<std::string> symbols;
-        std::istringstream symbols_stream(symbols_param);
-        std::string symbol;
-        while (std::getline(symbols_stream, symbol, ',')) {
-            if (!symbol.empty()) {
-                symbols.push_back(symbol);
+    std::istringstream symbols_stream(symbols_param);
+    std::string symbol;
+    while (std::getline(symbols_stream, symbol, ',')) {
+        if (!symbol.empty()) out._symbols.push_back(symbol);
+    }
+    if (out._symbols.empty()) {
+        error = "symbols parameter is required";
+        return false;
+    }
+
+    out._start_date = req.get_param_value("start_date");
+    out._end_date = req.get_param_value("end_date");
+
+    const auto windows_param = req.get_param_value("windows");
+    if (!windows_param.empty()) {
+        out._windows.clear();
+        std::istringstream windows_stream(windows_param);
+        std::string w;
+        while (std::getline(windows_stream, w, ',')) {
+            if (w.empty()) continue;
+            try {
+                int value = std::stoi(w);
+                if (value > 1) out._windows.push_back(value);
+            } catch (...) {
+                error = "invalid windows parameter: " + windows_param;
+                return false;
             }
         }
+        if (out._windows.empty()) out._windows = {20, 60, 120};
+    }
 
-        std::string start_date = start_date_param.empty() ? "" : start_date_param;
-        std::string end_date = end_date_param.empty() ? "" : end_date_param;
+    const auto band_window_param = req.get_param_value("band_window");
+    if (!band_window_param.empty()) {
+        try {
+            out._band_window = std::clamp(std::stoi(band_window_param), 2, 120);
+        } catch (...) {
+            out._band_window = 20;
+        }
+    }
 
-        std::vector<int> windows = {20, 60, 120};
-        if (!windows_param.empty()) {
-            windows.clear();
-            std::istringstream windows_stream(windows_param);
-            std::string w;
-            while (std::getline(windows_stream, w, ',')) {
-                if (!w.empty()) {
-                    windows.push_back(std::stoi(w));
+    out._price_field = normalizePriceField(req.get_param_value("field"));
+
+    const auto fill_param = req.get_param_value("fill_method");
+    out._fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
+
+    const auto frequency_param = req.get_param_value("frequency");
+    out._target_freq = frequency_param.empty()
+        ? BarFreq::Day : parseBarFreq(frequency_param);
+
+    const auto spectrum_window_param = req.get_param_value("spectrum_window");
+    if (!spectrum_window_param.empty()) {
+        try {
+            out._spectrum_window = std::clamp(std::stoi(spectrum_window_param), 5, 500);
+        } catch (...) {
+            out._spectrum_window = 60;
+        }
+    }
+
+    const auto max_clusters_param = req.get_param_value("max_clusters");
+    if (!max_clusters_param.empty()) {
+        try {
+            out._max_clusters = std::clamp(std::stoi(max_clusters_param), 2, 100);
+        } catch (...) {
+            out._max_clusters = 10;
+        }
+    }
+
+    const auto include_matrix_param = req.get_param_value("include_matrix");
+    out._include_matrix = (include_matrix_param == "1" ||
+                           include_matrix_param == "true" ||
+                           include_matrix_param == "yes");
+
+    return true;
+}
+
+// === 数据加载 ===
+
+VolatilityHandler::VolatilityDataset VolatilityHandler::loadDataset(
+    const VolatilityRequest& req, PerfStages& stages) const
+{
+    VolatilityDataset dataset;
+
+    auto getPriceCol = [&](const Map<String, Vector<double>>& data) -> Vector<double> {
+        auto it = data.find(req._price_field);
+        if (it != data.end() && !it->second.empty()) return it->second;
+        it = data.find("close");
+        if (it != data.end()) return it->second;
+        return {};
+    };
+    auto getVolumeCol = [&](const Map<String, Vector<double>>& data) -> Vector<double> {
+        auto it = data.find("volume");
+        if (it != data.end()) return it->second;
+        return {};
+    };
+
+    for (const auto& symbol : req._symbols) {
+        Vector<String> dates;
+        Vector<double> prices_vec;
+        Vector<double> volumes_vec;
+
+        auto t_symbol = PerfClock::now();
+
+        const auto slash = symbol.find('/');
+        const bool is_macro =
+            (slash != std::string::npos && symbol.size() > slash + 1 &&
+             symbol.find('.', slash) == std::string::npos);
+
+        {
+            PERF_SCOPE(stages, "symbol_load");
+            if (is_macro) {
+                if (!FetchMacroData(symbol, req._db_path, dates, prices_vec)) {
+                    WARN("[Volatility] No macro data for {}", symbol);
+                    continue;
+                }
+                volumes_vec.assign(prices_vec.size(), 0.0);
+            } else {
+                symbol_t sym = to_symbol(toInternalSymbol(symbol));
+                auto multi = LoadHistoryDataWithFreq(
+                    sym, {"close", "open", "high", "low", "volume", "turnover"},
+                    req._start_date, req._end_date, req._target_freq,
+                    AdjType::HFQ, &dates, req._fill);
+
+                auto prices = getPriceCol(multi);
+                auto volumes = getVolumeCol(multi);
+                if (prices.empty()) {
+                    WARN("[Volatility] No data for {}", symbol);
+                    continue;
+                }
+                prices_vec.assign(prices.begin(), prices.end());
+                volumes_vec.assign(volumes.begin(), volumes.end());
+                if (volumes_vec.empty()) {
+                    volumes_vec.assign(prices_vec.size(), 0.0);
                 }
             }
         }
 
-        int band_window = 20;
-        if (!band_window_param.empty()) {
-            try {
-                band_window = std::stoi(band_window_param);
-                if (band_window < 2) band_window = 2;
-                if (band_window > 120) band_window = 120;
-            } catch (...) {
-                band_window = 20;
+        VolatilitySeries series;
+        for (const auto& d : dates) series._dates.emplace_back(d);
+        series._prices.assign(prices_vec.begin(), prices_vec.end());
+        series._volumes.assign(volumes_vec.begin(), volumes_vec.end());
+        series._returns = simpleReturns(series._prices);
+
+        dataset._series[symbol] = std::move(series);
+        dataset._symbols.push_back(symbol);
+
+        if (dataset._common_dates.empty()) {
+            dataset._common_dates = dataset._series[symbol]._dates;
+            if (dataset._common_dates.size() !=
+                dataset._series[symbol]._prices.size()) {
+                WARN("[Volatility] Date/price length mismatch for {}: dates={}, prices={}",
+                     symbol, dataset._common_dates.size(),
+                     dataset._series[symbol]._prices.size());
             }
         }
 
-        PriceField field = parsePriceField(field_param);
-        FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
-        BarFreq target_freq = frequency_param.empty() ? BarFreq::Day : parseBarFreq(frequency_param);
+        stages.addItem(symbol, ms_since(t_symbol));
+    }
 
-        int spectrum_window = 60;
-        if (!spectrum_window_param.empty()) {
-            try {
-                spectrum_window = std::stoi(spectrum_window_param);
-                if (spectrum_window < 5) spectrum_window = 5;
-                if (spectrum_window > 500) spectrum_window = 500;
-            } catch (...) {
-                spectrum_window = 60;
+    stages.setValue("symbols", static_cast<double>(req._symbols.size()));
+    stages.setValue("loaded", static_cast<double>(dataset._symbols.size()));
+    return dataset;
+}
+
+// === 收益率矩阵 ===
+
+VolatilityHandler::ReturnMatrix VolatilityHandler::buildReturnMatrix(
+    const VolatilityDataset& dataset) const
+{
+    ReturnMatrix rm;
+    size_t min_len = std::numeric_limits<size_t>::max();
+
+    for (const auto& symbol : dataset._symbols) {
+        auto it = dataset._series.find(symbol);
+        if (it == dataset._series.end()) continue;
+        if (it->second._returns.size() < 2) continue;
+        min_len = std::min(min_len, it->second._returns.size());
+        rm._symbols.push_back(symbol);
+    }
+
+    if (rm._symbols.size() < 2 || min_len == std::numeric_limits<size_t>::max() ||
+        min_len < 2) {
+        rm._symbols.clear();
+        return rm;
+    }
+
+    rm._n = rm._symbols.size();
+    rm._T = min_len;
+    rm._values.resize(static_cast<Eigen::Index>(rm._n),
+                      static_cast<Eigen::Index>(rm._T));
+
+    for (size_t i = 0; i < rm._n; ++i) {
+        const auto& rets = dataset._series.at(rm._symbols[i])._returns;
+        const size_t offset = rets.size() - rm._T;
+        for (size_t t = 0; t < rm._T; ++t) {
+            rm._values(static_cast<Eigen::Index>(i),
+                       static_cast<Eigen::Index>(t)) = rets[offset + t];
+        }
+    }
+    return rm;
+}
+
+// === 收益率 / 单标的指标 ===
+
+std::vector<double> VolatilityHandler::simpleReturns(
+    const std::vector<double>& prices) const
+{
+    std::vector<double> rets;
+    for (size_t i = 1; i < prices.size(); ++i) {
+        if (prices[i - 1] > 0) {
+            rets.push_back((prices[i] - prices[i - 1]) / prices[i - 1]);
+        } else {
+            rets.push_back(0.0);
+        }
+    }
+    return rets;
+}
+
+double VolatilityHandler::skewness(const std::vector<double>& data) const {
+    if (data.size() < 3) return 0.0;
+    double m = meanOf(data);
+    double s = stddevOf(data, m);
+    if (s < 1e-10) return 0.0;
+    double n = static_cast<double>(data.size());
+    double sum3 = 0;
+    for (auto v : data) {
+        double z = (v - m) / s;
+        sum3 += z * z * z;
+    }
+    return (n / ((n - 1) * (n - 2))) * sum3;
+}
+
+double VolatilityHandler::kurtosis(const std::vector<double>& data) const {
+    if (data.size() < 4) return 0.0;
+    double m = meanOf(data);
+    double s = stddevOf(data, m);
+    if (s < 1e-10) return 0.0;
+    double n = static_cast<double>(data.size());
+    double sum4 = 0;
+    for (auto v : data) {
+        double z = (v - m) / s;
+        sum4 += z * z * z * z;
+    }
+    double k = ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum4;
+    double correction = (3.0 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3));
+    return k - correction;
+}
+
+ACFDecayAnalysis VolatilityHandler::analyzeACFDecay(
+    const std::vector<double>& abs_acf,
+    const std::vector<double>& abs_returns) const
+{
+    ACFDecayAnalysis result;
+
+    if (abs_acf.size() < 3 || abs_returns.size() < 4) {
+        result._decay_mode = ACFDecayMode::Inconclusive;
+        return result;
+    }
+
+    const int lags = static_cast<int>(abs_acf.size()) - 1;
+    auto [Q, pval] = boost::math::statistics::ljung_box(abs_returns, lags, 0);
+    result._lb_statistic = Q;
+    result._lb_pvalue = pval;
+    result._has_autocorrelation = (pval < 0.05);
+
+    std::vector<double> lag_vals;
+    std::vector<double> acf_vals;
+    for (size_t k = 1; k < abs_acf.size(); ++k) {
+        double av = std::abs(abs_acf[k]);
+        if (av < 1e-10) continue;
+        lag_vals.push_back(static_cast<double>(k));
+        acf_vals.push_back(av);
+    }
+
+    if (lag_vals.size() < 3) {
+        result._decay_mode = ACFDecayMode::Inconclusive;
+        return result;
+    }
+
+    std::vector<double> log_acf;
+    for (auto v : acf_vals) log_acf.push_back(std::log(v));
+    auto [exp_a, exp_b, exp_r2] = linearRegression(lag_vals, log_acf);
+    result._exponential_r2 = std::max(0.0, exp_r2);
+
+    std::vector<double> log_lag;
+    for (auto v : lag_vals) log_lag.push_back(std::log(v));
+    auto [hyp_a, hyp_b, hyp_r2] = linearRegression(log_lag, log_acf);
+    result._hyperbolic_r2 = std::max(0.0, hyp_r2);
+
+    double delta_r2 = std::abs(result._exponential_r2 - result._hyperbolic_r2);
+    double max_r2 = std::max(result._exponential_r2, result._hyperbolic_r2);
+
+    if (delta_r2 > 0.1 && max_r2 > 0.3) {
+        result._decay_mode = (result._exponential_r2 > result._hyperbolic_r2)
+            ? ACFDecayMode::Exponential : ACFDecayMode::Hyperbolic;
+    } else {
+        result._decay_mode = ACFDecayMode::Inconclusive;
+    }
+
+    if (result._decay_mode == ACFDecayMode::Exponential && exp_b > 1e-10) {
+        result._decay_half_life = std::log(2.0) / exp_b;
+    }
+    if (hyp_b > 0) {
+        result._hurst_estimate = 1.0 - hyp_b / 2.0;
+    }
+    return result;
+}
+
+VolatilitySingleResult VolatilityHandler::computeSingle(
+    const std::vector<double>& prices,
+    const std::vector<double>& volumes,
+    const std::vector<int>& windows,
+    int band_window) const
+{
+    VolatilitySingleResult result;
+    result._prices = prices;
+    result._volumes = volumes;
+    result._returns = simpleReturns(prices);
+
+    if (result._returns.empty()) return result;
+
+    for (int w : windows) {
+        result._rolling_vol[w] = rolling_volatility(result._returns, w);
+    }
+
+    const size_t offset = (band_window > 1) ? (band_window - 1) : 0;
+    for (size_t i = 0; i < prices.size(); ++i) {
+        if (i < offset) {
+            result._mean_price.push_back(prices[i]);
+            result._upper_2sigma.push_back(prices[i]);
+            result._lower_2sigma.push_back(prices[i]);
+            continue;
+        }
+
+        double sum = 0;
+        for (int j = 0; j < band_window; ++j) sum += prices[i - j];
+        double m = sum / band_window;
+        double var = 0;
+        for (int j = 0; j < band_window; ++j) {
+            double d = prices[i - j] - m;
+            var += d * d;
+        }
+        double s = std::sqrt(var / (band_window - 1));
+
+        result._mean_price.push_back(m);
+        result._upper_2sigma.push_back(m + 2 * s);
+        result._lower_2sigma.push_back(m - 2 * s);
+    }
+
+    result._annual_volatility = compute_annualized_volatility(result._returns);
+    result._max_drawdown = max_drawdown_ratio(prices);
+    result._skewness = skewness(result._returns);
+    result._kurtosis = kurtosis(result._returns);
+    result._var_95 = compute_var(result._returns, 0.95);
+    result._cvar_95 = compute_cvar(result._returns, 0.95);
+
+    result._abs_returns.reserve(result._returns.size());
+    for (auto r : result._returns) {
+        result._abs_returns.push_back(std::abs(r));
+    }
+
+    const int max_lag = std::min(20, static_cast<int>(result._returns.size() / 4));
+    result._returns_acf = finance::computeACF(result._returns, max_lag);
+    result._returns_pacf = finance::computePACF(result._returns_acf, max_lag);
+    result._abs_returns_acf = finance::computeACF(result._abs_returns, max_lag);
+    result._acf_decay = analyzeACFDecay(result._abs_returns_acf, result._abs_returns);
+
+    const double last_price = result._prices.empty() ? 0.0 : result._prices.back();
+    result._forecast_returns = ar_model::buildForecast(
+        result._returns, result._returns_acf, ar_model::MAX_FORECAST_STEPS,
+        "returns", last_price);
+
+    if (result._rolling_vol.count(20)) {
+        const auto& rv = result._rolling_vol.at(20);
+        if (rv.size() >= 30) {
+            auto vol_acf = finance::computeACF(rv, ar_model::MAX_FORECAST_STEPS);
+            const double last_vol = rv.empty() ? 0.0 : rv.back();
+            result._forecast_vol = ar_model::buildForecast(
+                rv, vol_acf, ar_model::MAX_FORECAST_STEPS,
+                "rolling_vol", last_vol);
+        }
+    }
+
+    return result;
+}
+
+// === 多标的 section ===
+
+void VolatilityHandler::computeMoments(const ReturnMatrix& rm,
+                                       VolatilityMultiResult& result,
+                                       PerfStages* perf_stages) const
+{
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+    if (!rm.valid()) return;
+
+    const int n = static_cast<int>(rm._n);
+    const int T = static_cast<int>(rm._T);
+    stages.setValue("multi_n", static_cast<double>(n));
+    stages.setValue("multi_T", static_cast<double>(T));
+
+    {
+        PERF_SCOPE(stages, "multi_matrix");
+        const Eigen::VectorXd means = rm._values.rowwise().mean();
+        const Eigen::MatrixXd centered = rm._values.colwise() - means;
+        Eigen::MatrixXd cov =
+            (centered * centered.transpose()) / static_cast<double>(T - 1);
+
+        Eigen::VectorXd std_devs = cov.diagonal().array().sqrt().matrix();
+        for (int i = 0; i < n; ++i) {
+            if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
+        }
+
+        Eigen::MatrixXd corr = cov;
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) {
+                corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+            }
+        }
+        corr.diagonal().setOnes();
+
+        result._covariance_matrix = std::move(cov);
+        result._correlation_matrix = std::move(corr);
+    }
+
+    result._annual_volatility.resize(n);
+    for (int i = 0; i < n; ++i) {
+        result._annual_volatility(i) =
+            std::sqrt(result._covariance_matrix(i, i) * 252.0);
+    }
+    result._num_observations = static_cast<size_t>(T);
+
+    {
+        PERF_SCOPE(stages, "multi_eigen");
+        Eigen::VectorXd eigenvalues;
+        evaluateCovarianceQuality(result._covariance_matrix, eigenvalues,
+                                  result._condition_number,
+                                  result._is_positive_definite);
+        result._eigenvalues = std::move(eigenvalues);
+    }
+}
+
+void VolatilityHandler::computeSpectrumSection(
+    const ReturnMatrix& rm,
+    const std::vector<std::string>& dates,
+    int spectrum_window,
+    VolatilityMultiResult& result,
+    PerfStages* perf_stages) const
+{
+    if (!rm.valid() || dates.empty() || rm._T > dates.size()) return;
+
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+    result._num_observations = rm._T;
+
+    PERF_SCOPE(stages, "multi_spectrum");
+    Vector<String> dates_vec;
+    dates_vec.reserve(rm._T);
+    const size_t offset = dates.size() - rm._T;
+    for (size_t i = offset; i < dates.size(); ++i) {
+        dates_vec.emplace_back(dates[i]);
+    }
+
+    result._spectrum_indicators = finance::computeSpectrumIndicators(
+        rm._values, dates_vec, spectrum_window, 10, &stages);
+}
+
+void VolatilityHandler::computeForecastSection(
+    const ReturnMatrix& rm,
+    VolatilityMultiResult& result,
+    PerfStages* perf_stages) const
+{
+    if (!rm.valid()) return;
+    if (result._covariance_matrix.rows() != static_cast<Eigen::Index>(rm._n) ||
+        result._covariance_matrix.cols() != static_cast<Eigen::Index>(rm._n)) {
+        return;
+    }
+
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+    PERF_SCOPE(stages, "multi_forecast");
+
+    std::vector<ar_model::Forecast> all_forecasts;
+    std::vector<std::string> forecast_symbols;
+    all_forecasts.reserve(rm._n);
+    forecast_symbols.reserve(rm._n);
+
+    for (size_t i = 0; i < rm._n; ++i) {
+        Vector<double> rets(rm._T);
+        for (size_t t = 0; t < rm._T; ++t) {
+            rets[t] = rm._values(static_cast<Eigen::Index>(i),
+                                 static_cast<Eigen::Index>(t));
+        }
+
+        bool fitted = false;
+        if (rets.size() >= 30) {
+            auto acf = finance::computeACF(rets, ar_model::MAX_FORECAST_STEPS);
+            const int p = ar_model::findSignificantLag(
+                acf, static_cast<int>(rets.size()), ar_model::MAX_FORECAST_STEPS);
+            if (p > 0) {
+                auto fit = ar_model::solveYuleWalker(acf, p);
+                if (fit.stable && !fit.coeffs.empty()) {
+                    std::vector<double> history(rets.end() - p, rets.end());
+                    all_forecasts.push_back(ar_model::predict(
+                        fit.coeffs, history, p, fit.residual_var));
+                    fitted = true;
+                }
             }
         }
 
-        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window, target_freq, spectrum_window, &stages);
+        if (!fitted) {
+            const double var = result._covariance_matrix(
+                static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(i));
+            const double vol = var > 0 ? std::sqrt(var) : 0.0;
+            all_forecasts.push_back(ar_model::Forecast{
+                .values = std::vector<double>(1, 0.0),
+                .std_per_step = std::vector<double>(1, vol)
+            });
+        }
+        forecast_symbols.push_back(rm._symbols[i]);
+    }
 
-        // 构建 JSON 响应
-        auto t_json = PerfClock::now();
+    if (forecast_symbols.size() < 2) return;
+
+    const int horizon = std::max(
+        1, static_cast<int>(all_forecasts.front().values.size()));
+
+    auto& mf = result._multi_forecast;
+    mf._horizon = horizon;
+    mf._symbols = forecast_symbols;
+    mf._forecast_cov = ar_model::extrapolateCovariance(
+        result._covariance_matrix, all_forecasts, horizon);
+
+    const size_t N = forecast_symbols.size();
+    mf._forecast_corr.resize(static_cast<Eigen::Index>(N),
+                             static_cast<Eigen::Index>(N));
+    for (size_t i = 0; i < N; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            const double vi = mf._forecast_cov(static_cast<Eigen::Index>(i),
+                                               static_cast<Eigen::Index>(i));
+            const double vj = mf._forecast_cov(static_cast<Eigen::Index>(j),
+                                               static_cast<Eigen::Index>(j));
+            if (vi > 1e-15 && vj > 1e-15) {
+                mf._forecast_corr(static_cast<Eigen::Index>(i),
+                                  static_cast<Eigen::Index>(j)) =
+                    mf._forecast_cov(static_cast<Eigen::Index>(i),
+                                     static_cast<Eigen::Index>(j)) /
+                    std::sqrt(vi * vj);
+            } else {
+                mf._forecast_corr(static_cast<Eigen::Index>(i),
+                                  static_cast<Eigen::Index>(j)) =
+                    (i == j) ? 1.0 : 0.0;
+            }
+        }
+    }
+
+    mf._forecast_volatilities.resize(static_cast<Eigen::Index>(N));
+    for (size_t i = 0; i < N; ++i) {
+        mf._forecast_volatilities(static_cast<Eigen::Index>(i)) =
+            std::sqrt(mf._forecast_cov(static_cast<Eigen::Index>(i),
+                                       static_cast<Eigen::Index>(i)) * 252.0);
+    }
+}
+
+void VolatilityHandler::computeLeadLagSection(
+    const ReturnMatrix& rm,
+    int max_lag,
+    VolatilityMultiResult& result,
+    PerfStages* perf_stages) const
+{
+    if (!rm.valid()) return;
+
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+    result._num_observations = rm._T;
+
+    int ts_max_lag = std::min(max_lag, static_cast<int>(rm._T / 4));
+    if (ts_max_lag < 1) ts_max_lag = 1;
+
+    PerfCounter& c_pair_prep = stages.stage("pair_prep");
+    PerfCounter& c_lead_lag = stages.stage("lead_lag");
+    PerfCounter& c_granger = stages.stage("granger");
+    const bool perf_on = stages.enabled();
+
+    for (size_t i = 0; i < rm._n; ++i) {
+        std::vector<double> rets_i(rm._T);
+        for (size_t t = 0; t < rm._T; ++t) {
+            rets_i[t] = rm._values(static_cast<Eigen::Index>(i),
+                                   static_cast<Eigen::Index>(t));
+        }
+
+        for (size_t j = i + 1; j < rm._n; ++j) {
+            const auto t_prep = PerfClock::now();
+            std::vector<double> rets_j(rm._T);
+            for (size_t t = 0; t < rm._T; ++t) {
+                rets_j[t] = rm._values(static_cast<Eigen::Index>(j),
+                                       static_cast<Eigen::Index>(t));
+            }
+            if (perf_on) c_pair_prep.add(ms_since(t_prep));
+
+            const auto t_ccf = PerfClock::now();
+            auto ccf = finance::crossCorrelation(rets_i, rets_j, ts_max_lag);
+            if (perf_on) c_lead_lag.add(ms_since(t_ccf));
+
+            result._lead_lag_results.push_back({
+                rm._symbols[i], rm._symbols[j],
+                ccf.lead_lag, ccf.max_correlation, ccf.ccf
+            });
+
+            const auto t_gr = PerfClock::now();
+            const int granger_max_lag = std::min(ts_max_lag, 5);
+            auto gr_yx = finance::grangerCausalityTest(
+                rets_i, rets_j, granger_max_lag, rm._symbols[i], rm._symbols[j]);
+            result._granger_results.push_back({
+                rm._symbols[j], rm._symbols[i],
+                gr_yx.f_statistic, gr_yx.p_value,
+                gr_yx.is_significant, gr_yx.optimal_lag
+            });
+
+            auto gr_xy = finance::grangerCausalityTest(
+                rets_j, rets_i, granger_max_lag, rm._symbols[j], rm._symbols[i]);
+            if (perf_on) c_granger.add(ms_since(t_gr));
+            result._granger_results.push_back({
+                rm._symbols[i], rm._symbols[j],
+                gr_xy.f_statistic, gr_xy.p_value,
+                gr_xy.is_significant, gr_xy.optimal_lag
+            });
+        }
+    }
+
+    stages.setValue("pairs",
+        static_cast<double>(rm._n * (rm._n - 1) / 2));
+}
+
+void VolatilityHandler::computeMpNoiseSection(
+    const ReturnMatrix& rm,
+    int max_clusters,
+    VolatilityMultiResult& result,
+    PerfStages* perf_stages) const
+{
+    if (!rm.valid()) return;
+
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+    result._num_observations = rm._T;
+
+    PERF_SCOPE(stages, "multi_mp_noise");
+    result._mp_noise = finance::computeMpNoise(rm._values, max_clusters);
+    result._mp_symbols.clear();
+    if (result._mp_noise._valid) {
+        result._mp_symbols = rm._symbols;
+    }
+}
+
+// === 主计算 ===
+
+VolatilityResult VolatilityHandler::compute(
+    const VolatilityRequest& req,
+    const VolatilitySections& sections,
+    PerfStages* perf_stages) const
+{
+    PerfStages local_stages;
+    PerfStages& stages = perf_stages ? *perf_stages : local_stages;
+
+    VolatilityResult result;
+    auto dataset = loadDataset(req, stages);
+    result._symbols = dataset._symbols;
+    result._dates = dataset._common_dates;
+
+    if (sections._single) {
+        for (const auto& symbol : dataset._symbols) {
+            const auto& series = dataset._series.at(symbol);
+            PERF_SCOPE(stages, "symbol_compute");
+            result._single[symbol] = computeSingle(
+                series._prices, series._volumes, req._windows, req._band_window);
+        }
+    }
+
+    const bool need_matrix =
+        sections._multi || sections._spectrum || sections._forecast ||
+        sections._lead_lag || sections._mp_noise;
+    if (!need_matrix) return result;
+
+    const auto rm = buildReturnMatrix(dataset);
+
+    if (sections._multi || sections._forecast) {
+        computeMoments(rm, result._multi, &stages);
+    }
+    if (sections._spectrum) {
+        computeSpectrumSection(rm, dataset._common_dates,
+                               req._spectrum_window, result._multi, &stages);
+    }
+    if (sections._forecast) {
+        computeForecastSection(rm, result._multi, &stages);
+    }
+    if (sections._lead_lag) {
+        computeLeadLagSection(rm, 10, result._multi, &stages);
+    }
+    if (sections._mp_noise) {
+        computeMpNoiseSection(rm, req._max_clusters, result._multi, &stages);
+    }
+
+    return result;
+}
+
+// === JSON 序列化 ===
+
+nlohmann::json VolatilityHandler::matrixToJson(const Eigen::MatrixXd& matrix) const {
+    nlohmann::json rows = nlohmann::json::array();
+    for (Eigen::Index i = 0; i < matrix.rows(); ++i) {
+        nlohmann::json row = nlohmann::json::array();
+        for (Eigen::Index j = 0; j < matrix.cols(); ++j) {
+            row.push_back(matrix(i, j));
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+nlohmann::json VolatilityHandler::vectorToJson(const Eigen::VectorXd& vector) const {
+    nlohmann::json arr = nlohmann::json::array();
+    for (Eigen::Index i = 0; i < vector.size(); ++i) {
+        arr.push_back(vector(i));
+    }
+    return arr;
+}
+
+nlohmann::json VolatilityHandler::singleToJson(
+    const VolatilitySingleResult& sr) const
+{
+    nlohmann::json item;
+    item["prices"] = sr._prices;
+    item["returns"] = sr._returns;
+    item["volumes"] = sr._volumes;
+    item["abs_returns"] = sr._abs_returns;
+
+    nlohmann::json rolling;
+    for (const auto& [w, vals] : sr._rolling_vol) {
+        rolling[std::to_string(w)] = vals;
+    }
+    item["rolling_vol"] = rolling;
+
+    item["upper_2sigma"] = sr._upper_2sigma;
+    item["mean_price"] = sr._mean_price;
+    item["lower_2sigma"] = sr._lower_2sigma;
+
+    item["annual_volatility"] = sr._annual_volatility;
+    item["max_drawdown"] = sr._max_drawdown;
+    item["skewness"] = sr._skewness;
+    item["kurtosis"] = sr._kurtosis;
+    item["var_95"] = sr._var_95;
+    item["cvar_95"] = sr._cvar_95;
+
+    item["returns_acf"] = sr._returns_acf;
+    item["returns_pacf"] = sr._returns_pacf;
+    item["abs_returns_acf"] = sr._abs_returns_acf;
+
+    nlohmann::json decay;
+    decay["lb_statistic"] = sr._acf_decay._lb_statistic;
+    decay["lb_pvalue"] = sr._acf_decay._lb_pvalue;
+    decay["has_autocorrelation"] = sr._acf_decay._has_autocorrelation;
+    decay["exponential_r2"] = sr._acf_decay._exponential_r2;
+    decay["hyperbolic_r2"] = sr._acf_decay._hyperbolic_r2;
+    decay["decay_mode"] = decayModeToString(sr._acf_decay._decay_mode);
+    decay["decay_half_life"] = sr._acf_decay._decay_half_life;
+    decay["hurst_estimate"] = sr._acf_decay._hurst_estimate;
+    item["acf_decay"] = decay;
+
+    item["forecast_returns"] = forecastToJson(sr._forecast_returns);
+    item["forecast_vol"] = forecastToJson(sr._forecast_vol);
+    return item;
+}
+
+nlohmann::json VolatilityHandler::multiMomentsToJson(
+    const VolatilityMultiResult& multi) const
+{
+    nlohmann::json j;
+    j["correlation_matrix"] = matrixToJson(multi._correlation_matrix);
+    j["covariance_matrix"] = matrixToJson(multi._covariance_matrix);
+    j["eigenvalues"] = vectorToJson(multi._eigenvalues);
+    j["condition_number"] = multi._condition_number;
+    j["is_positive_definite"] = multi._is_positive_definite;
+    j["annual_volatility"] = vectorToJson(multi._annual_volatility);
+    j["num_observations"] = multi._num_observations;
+    return j;
+}
+
+nlohmann::json VolatilityHandler::spectrumToJson(
+    const finance::SpectrumIndicatorResult& spectrum) const
+{
+    nlohmann::json j;
+    j["dates"] = nlohmann::json::array();
+    for (const auto& d : spectrum.dates) {
+        j["dates"].push_back(std::string(d.begin(), d.end()));
+    }
+    j["m_plus"] = spectrum.m_plus;
+    j["m_minus"] = spectrum.m_minus;
+    j["n_effective"] = spectrum.n_effective;
+    j["signal_var_ratio"] = spectrum.signal_var_ratio;
+    j["lambda_max"] = spectrum.lambda_max;
+    j["lambda_max_ratio"] = spectrum.lambda_max_ratio;
+    j["lambda_plus"] = spectrum.lambda_plus;
+    j["lambda_minus"] = spectrum.lambda_minus;
+    j["original_n"] = spectrum.original_n;
+    j["window_size"] = spectrum.window_size;
+    return j;
+}
+
+nlohmann::json VolatilityHandler::multiForecastToJson(
+    const VolatilityMultiResult::MultiForecast& forecast) const
+{
+    nlohmann::json j;
+    j["horizon"] = forecast._horizon;
+    j["symbols"] = forecast._symbols;
+    j["forecast_cov"] = matrixToJson(forecast._forecast_cov);
+    j["forecast_corr"] = matrixToJson(forecast._forecast_corr);
+    j["forecast_volatilities"] = vectorToJson(forecast._forecast_volatilities);
+    return j;
+}
+
+nlohmann::json VolatilityHandler::timeSeriesToJson(
+    const VolatilityMultiResult& multi) const
+{
+    nlohmann::json ts;
+
+    nlohmann::json lead_lag = nlohmann::json::array();
+    for (const auto& ll : multi._lead_lag_results) {
+        nlohmann::json item;
+        item["symbol_x"] = ll._symbol_x;
+        item["symbol_y"] = ll._symbol_y;
+        item["lead_lag"] = ll._lead_lag;
+        item["max_correlation"] = ll._max_correlation;
+        item["ccf"] = ll._ccf;
+        lead_lag.push_back(std::move(item));
+    }
+    ts["lead_lag"] = std::move(lead_lag);
+
+    nlohmann::json granger = nlohmann::json::array();
+    for (const auto& gr : multi._granger_results) {
+        nlohmann::json item;
+        item["from"] = gr._from;
+        item["to"] = gr._to;
+        item["f_statistic"] = gr._f_statistic;
+        item["p_value"] = gr._p_value;
+        item["is_significant"] = gr._is_significant;
+        item["optimal_lag"] = gr._optimal_lag;
+        granger.push_back(std::move(item));
+    }
+    ts["granger_causality"] = std::move(granger);
+    return ts;
+}
+
+nlohmann::json VolatilityHandler::mpNoiseToJson(
+    const finance::MpNoiseResult& noise,
+    const std::vector<std::string>& symbols,
+    bool include_matrix) const
+{
+    nlohmann::json j;
+    j["valid"] = noise._valid;
+    j["original_n"] = noise._original_n;
+    j["n_effective"] = noise._n_effective;
+    j["n_observations"] = noise._n_observations;
+    j["q"] = noise._q;
+    j["lambda_plus"] = noise._lambda_plus;
+    j["lambda_minus"] = noise._lambda_minus;
+    j["eigenvalues"] = vectorToJson(noise._eigenvalues);
+    j["lambda_max"] = noise._lambda_max;
+    j["lambda_max_ratio"] = noise._lambda_max_ratio;
+    j["n_signal"] = noise._n_signal;
+    j["n_bulk"] = noise._n_bulk;
+    j["n_below"] = noise._n_below;
+    j["signal_var_ratio"] = noise._signal_var_ratio;
+    j["noise_var_ratio"] = noise._noise_var_ratio;
+    j["below_edge_var_ratio"] = noise._below_edge_var_ratio;
+    j["symbols"] = symbols;
+    j["signal_share"] = vectorToJson(noise._signal_share);
+    j["noise_share"] = vectorToJson(noise._noise_share);
+    j["below_edge_share"] = vectorToJson(noise._below_edge_share);
+    j["cluster_labels"] = noise._cluster_labels;
+    j["condition_number_original"] = noise._condition_number_original;
+    j["condition_number_denoised"] = noise._condition_number_denoised;
+    j["denoise_frobenius"] = noise._denoise_frobenius;
+
+    if (include_matrix && noise._valid) {
+        j["correlation"] = matrixToJson(noise._correlation);
+        j["denoised_correlation"] = matrixToJson(noise._denoised_correlation);
+    }
+    return j;
+}
+
+// === 协方差质量诊断 ===
+
+void VolatilityHandler::evaluateCovarianceQuality(
+    const Eigen::MatrixXd& cov,
+    Eigen::VectorXd& eigenvalues_out,
+    double& condition_number_out,
+    bool& is_positive_definite_out) const
+{
+    const Eigen::Index n = cov.rows();
+    eigenvalues_out.resize(0);
+
+    if (n == 0 || cov.cols() != n) {
+        condition_number_out = 0;
+        is_positive_definite_out = false;
+        return;
+    }
+
+    if (n == 1) {
+        eigenvalues_out.resize(1);
+        eigenvalues_out(0) = cov(0, 0);
+        is_positive_definite_out = (cov(0, 0) > 1e-12);
+        condition_number_out = is_positive_definite_out ? 1.0 : 1e15;
+        return;
+    }
+
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(cov);
+    if (es.info() == Eigen::Success) {
+        const Eigen::VectorXd evals = es.eigenvalues();  // 升序
+        const double min_eigen = evals(0);
+        const double max_eigen = evals(n - 1);
+        eigenvalues_out.resize(n);
+        for (Eigen::Index i = 0; i < n; ++i) {
+            eigenvalues_out(i) = evals(n - 1 - i);  // 降序
+        }
+        condition_number_out = (min_eigen > 1e-12)
+            ? (max_eigen / min_eigen) : 1e15;
+        is_positive_definite_out = (min_eigen > 1e-12);
+        return;
+    }
+
+    // 回退: Gershgorin 圆估计
+    double max_eigen = 0;
+    double min_eigen = std::numeric_limits<double>::max();
+    eigenvalues_out.resize(n);
+    for (Eigen::Index i = 0; i < n; ++i) {
+        const double center = cov(i, i);
+        double radius = 0;
+        for (Eigen::Index j = 0; j < n; ++j) {
+            if (i != j) radius += std::abs(cov(i, j));
+        }
+        max_eigen = std::max(max_eigen, center + radius);
+        min_eigen = std::min(min_eigen, std::max(0.0, center - radius));
+        eigenvalues_out(i) = center;
+    }
+    std::sort(eigenvalues_out.data(),
+              eigenvalues_out.data() + eigenvalues_out.size(),
+              [](double a, double b) { return a > b; });
+    condition_number_out = (min_eigen > 1e-15)
+        ? (max_eigen / min_eigen) : 1e15;
+    is_positive_definite_out = (min_eigen > 1e-15);
+    WARN("[Volatility] SelfAdjointEigenSolver failed (n={}), fell back to Gershgorin estimate", n);
+}
+
+// === POST 处理 ===
+
+void VolatilityHandler::handleCovarianceDiagnosticsPost(
+    const nlohmann::json& params,
+    httplib::Response& res) const
+{
+    if (!params.contains("covariance_matrix") ||
+        !params["covariance_matrix"].is_array()) {
+        throw std::runtime_error("missing 'covariance_matrix' (NxN array)");
+    }
+
+    const auto& mat = params["covariance_matrix"];
+    const size_t n = mat.size();
+    if (n == 0 || !mat[0].is_array() || mat[0].size() != n) {
+        throw std::runtime_error(
+            "covariance_matrix must be a non-empty square NxN array");
+    }
+
+    Eigen::MatrixXd cov(static_cast<Eigen::Index>(n),
+                        static_cast<Eigen::Index>(n));
+    for (size_t i = 0; i < n; ++i) {
+        if (!mat[i].is_array() || mat[i].size() != n) {
+            throw std::runtime_error("covariance_matrix is not square");
+        }
+        for (size_t j = 0; j < n; ++j) {
+            if (!mat[i][j].is_number()) {
+                throw std::runtime_error(
+                    "non-numeric element at [" + std::to_string(i) + "][" +
+                    std::to_string(j) + "]");
+            }
+            cov(static_cast<Eigen::Index>(i),
+                static_cast<Eigen::Index>(j)) = mat[i][j].get<double>();
+        }
+    }
+
+    Eigen::VectorXd eigenvalues;
+    double condition_number = 0;
+    bool is_positive_definite = false;
+    evaluateCovarianceQuality(cov, eigenvalues,
+                              condition_number, is_positive_definite);
+
+    nlohmann::json resp;
+    resp["n"] = n;
+    resp["eigenvalues"] = vectorToJson(eigenvalues);
+    resp["condition_number"] = condition_number;
+    resp["is_positive_definite"] = is_positive_definite;
+
+    res.set_content(resp.dump(), "application/json");
+    res.status = 200;
+}
+
+void VolatilityHandler::handleMpNoisePost(
+    const nlohmann::json& params,
+    httplib::Response& res) const
+{
+    const int max_clusters = std::clamp(
+        params.value("max_clusters", 10), 2, 100);
+    const bool include_matrix = params.value("include_matrix", false);
+
+    std::vector<std::string> symbols;
+    auto fillSymbols = [&](size_t n) {
+        if (params.contains("symbols")) {
+            const auto& s = params["symbols"];
+            if (!s.is_array() || s.size() != n) {
+                throw std::runtime_error(
+                    "'symbols' must be an array with the same length as assets");
+            }
+            for (const auto& x : s) {
+                if (!x.is_string()) {
+                    throw std::runtime_error("'symbols' must contain strings");
+                }
+                symbols.push_back(x.get<std::string>());
+            }
+        } else {
+            for (size_t i = 0; i < n; ++i) {
+                symbols.push_back("asset_" + std::to_string(i));
+            }
+        }
+    };
+
+    finance::MpNoiseResult noise;
+
+    if (params.contains("returns") || params.contains("returns_matrix")) {
+        const auto& mat = params.contains("returns")
+            ? params["returns"] : params["returns_matrix"];
+        if (!mat.is_array() || mat.size() < 2 || !mat[0].is_array()) {
+            throw std::runtime_error(
+                "'returns' must be a non-empty NxT array (N >= 2)");
+        }
+
+        const size_t n = mat.size();
+        const size_t T = mat[0].size();
+        if (T < 3) {
+            throw std::runtime_error("'returns' must have at least 3 observations");
+        }
+
+        Eigen::MatrixXd ret(static_cast<Eigen::Index>(n),
+                            static_cast<Eigen::Index>(T));
+        for (size_t i = 0; i < n; ++i) {
+            if (!mat[i].is_array() || mat[i].size() != T) {
+                throw std::runtime_error(
+                    "'returns' rows must have the same length");
+            }
+            for (size_t t = 0; t < T; ++t) {
+                if (!mat[i][t].is_number()) {
+                    throw std::runtime_error(
+                        "non-numeric returns at [" + std::to_string(i) + "][" +
+                        std::to_string(t) + "]");
+                }
+                ret(static_cast<Eigen::Index>(i),
+                    static_cast<Eigen::Index>(t)) = mat[i][t].get<double>();
+            }
+        }
+
+        fillSymbols(n);
+        noise = finance::computeMpNoise(ret, max_clusters);
+    } else if (params.contains("correlation_matrix") ||
+               params.contains("covariance_matrix")) {
+        const bool from_cov = params.contains("covariance_matrix");
+        const auto& mat = from_cov
+            ? params["covariance_matrix"] : params["correlation_matrix"];
+        if (!mat.is_array() || mat.size() < 2 || !mat[0].is_array()) {
+            throw std::runtime_error(
+                "matrix must be a non-empty square NxN array (N >= 2)");
+        }
+
+        const size_t n = mat.size();
+        if (!mat[0].is_array() || mat[0].size() != n) {
+            throw std::runtime_error("matrix must be square NxN");
+        }
+        const int n_obs = params.value("n_observations", 0);
+        if (n_obs < 3) {
+            throw std::runtime_error(
+                "'n_observations' (>= 3) is required for matrix input");
+        }
+        if (static_cast<int>(n) >= n_obs) {
+            throw std::runtime_error(
+                "matrix input requires n < n_observations; pass 'returns' "
+                "to enable clustering-based dimension reduction");
+        }
+
+        Eigen::MatrixXd corr(static_cast<Eigen::Index>(n),
+                             static_cast<Eigen::Index>(n));
+        for (size_t i = 0; i < n; ++i) {
+            if (!mat[i].is_array() || mat[i].size() != n) {
+                throw std::runtime_error("matrix is not square");
+            }
+            for (size_t j = 0; j < n; ++j) {
+                if (!mat[i][j].is_number()) {
+                    throw std::runtime_error(
+                        "non-numeric element at [" + std::to_string(i) + "][" +
+                        std::to_string(j) + "]");
+                }
+                corr(static_cast<Eigen::Index>(i),
+                     static_cast<Eigen::Index>(j)) = mat[i][j].get<double>();
+            }
+        }
+
+        if (from_cov) {
+            Eigen::VectorXd diag(static_cast<Eigen::Index>(n));
+            for (size_t i = 0; i < n; ++i) {
+                diag(static_cast<Eigen::Index>(i)) =
+                    corr(static_cast<Eigen::Index>(i),
+                         static_cast<Eigen::Index>(i));
+                if (!(diag(static_cast<Eigen::Index>(i)) > 1e-15)) {
+                    throw std::runtime_error(
+                        "covariance_matrix diagonal must be positive");
+                }
+            }
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    corr(static_cast<Eigen::Index>(i),
+                         static_cast<Eigen::Index>(j)) /=
+                        std::sqrt(diag(static_cast<Eigen::Index>(i)) *
+                                  diag(static_cast<Eigen::Index>(j)));
+                }
+            }
+        }
+        corr.diagonal().setOnes();
+
+        fillSymbols(n);
+        noise = finance::computeMpNoiseFromCorrelation(corr, n_obs);
+    } else {
+        throw std::runtime_error(
+            "missing 'returns'/'returns_matrix' or "
+            "'correlation_matrix'/'covariance_matrix'");
+    }
+
+    auto resp = mpNoiseToJson(noise, symbols, include_matrix);
+    resp["action"] = "mp_noise";
+    res.set_content(resp.dump(), "application/json");
+    res.status = 200;
+}
+
+// === HTTP GET ===
+
+void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res) {
+    PerfStages stages;
+
+    try {
+        VolatilityRequest vr;
+        std::string error;
+        if (!parseRequest(req, vr, error)) {
+            res.status = 400;
+            res.set_content(nlohmann::json{{"error", error}}.dump(),
+                            "application/json");
+            return;
+        }
+
+        const auto sections = VolatilitySections::forAction(vr._action);
+        auto result = compute(vr, sections, &stages);
+
+        const auto t_json = PerfClock::now();
         nlohmann::json json;
-        json["symbols"] = result.symbols;
-        json["dates"] = result.dates;
+        json["symbols"] = result._symbols;
+        json["dates"] = result._dates;
+        json["field"] = std::string(vr._price_field.begin(), vr._price_field.end());
+        json["action"] = volatilityActionToString(vr._action);
 
-        // 返回使用的字段名
-        static const char* field_names[] = {"close", "open", "high", "low", "volume"};
-        json["field"] = field_names[static_cast<int>(field)];
-
-        // 单标的
-        nlohmann::json single_json;
-        for (const auto& [symbol, sr] : result.single) {
-            nlohmann::json item;
-            item["prices"] = sr.prices;
-            item["returns"] = sr.returns;
-            item["volumes"] = sr.volumes;
-            item["abs_returns"] = sr.abs_returns;
-
-            nlohmann::json rolling;
-            for (const auto& [w, vals] : sr.rolling_vol) {
-                rolling[std::to_string(w)] = vals;
+        if (sections._single) {
+            nlohmann::json single_json;
+            for (const auto& [symbol, sr] : result._single) {
+                single_json[symbol] = singleToJson(sr);
             }
-            item["rolling_vol"] = rolling;
-
-            item["upper_2sigma"] = sr.upper_2sigma;
-            item["mean_price"] = sr.mean_price;
-            item["lower_2sigma"] = sr.lower_2sigma;
-
-            item["annual_volatility"] = sr.annual_volatility;
-            item["max_drawdown"] = sr.max_drawdown;
-            item["skewness"] = sr.skewness;
-            item["kurtosis"] = sr.kurtosis;
-            item["var_95"] = sr.var_95;
-            item["cvar_95"] = sr.cvar_95;
-
-            item["returns_acf"] = sr.returns_acf;
-            item["returns_pacf"] = sr.returns_pacf;
-            item["abs_returns_acf"] = sr.abs_returns_acf;
-
-            // ACF 衰减分析
-            nlohmann::json decay;
-            decay["lb_statistic"] = sr.acf_decay.lb_statistic;
-            decay["lb_pvalue"] = sr.acf_decay.lb_pvalue;
-            decay["has_autocorrelation"] = sr.acf_decay.has_autocorrelation;
-            decay["exponential_r2"] = sr.acf_decay.exponential_r2;
-            decay["hyperbolic_r2"] = sr.acf_decay.hyperbolic_r2;
-            decay["decay_mode"] = decayModeToString(sr.acf_decay.decay_mode);
-            decay["decay_half_life"] = sr.acf_decay.decay_half_life;
-            decay["hurst_estimate"] = sr.acf_decay.hurst_estimate;
-            item["acf_decay"] = decay;
-
-            // AR(p) 预测结果
-            item["forecast_returns"] = forecastToJson(sr.forecast_returns);
-            item["forecast_vol"] = forecastToJson(sr.forecast_vol);
-
-            single_json[symbol] = item;
-        }
-        json["single"] = single_json;
-
-        // 多标的
-        nlohmann::json multi_json;
-        multi_json["correlation_matrix"] = result.multi.correlation_matrix;
-        multi_json["covariance_matrix"] = result.multi.covariance_matrix;
-        multi_json["eigenvalues"] = result.multi.eigenvalues;
-        multi_json["condition_number"] = result.multi.condition_number;
-        multi_json["is_positive_definite"] = result.multi.is_positive_definite;
-        multi_json["annual_volatility"] = result.multi.annual_volatility;
-        multi_json["num_observations"] = result.multi.num_observations;
-
-        // === Marchenko-Pastur 谱指标 ===
-        if (!result.multi.spectrum_indicators.dates.empty()) {
-            nlohmann::json si;
-            const auto& spec = result.multi.spectrum_indicators;
-            si["dates"] = spec.dates;
-            si["m_plus"] = spec.m_plus;
-            si["m_minus"] = spec.m_minus;
-            si["n_effective"] = spec.n_effective;
-            si["signal_var_ratio"] = spec.signal_var_ratio;
-            si["lambda_max"] = spec.lambda_max;
-            si["lambda_max_ratio"] = spec.lambda_max_ratio;
-            si["lambda_plus"] = spec.lambda_plus;
-            si["lambda_minus"] = spec.lambda_minus;
-            si["original_n"] = spec.original_n;
-            si["window_size"] = spec.window_size;
-            multi_json["spectrum_indicators"] = si;
+            json["single"] = std::move(single_json);
         }
 
-        // 多资产预测外推
-        if (result.multi.multi_forecast.horizon > 0) {
-            nlohmann::json mf;
-            mf["horizon"] = result.multi.multi_forecast.horizon;
-            mf["symbols"] = result.multi.multi_forecast.symbols;
-            mf["forecast_cov"] = result.multi.multi_forecast.forecast_cov;
-            mf["forecast_corr"] = result.multi.multi_forecast.forecast_corr;
-            mf["forecast_volatilities"] = result.multi.multi_forecast.forecast_volatilities;
-            multi_json["multi_forecast"] = mf;
+        nlohmann::json multi = nlohmann::json::object();
+        if (sections._multi) {
+            multi = multiMomentsToJson(result._multi);
         }
-
-        // === 多标的时间序列分析 ===
-        if (!result.multi.lead_lag_results.empty()) {
-            nlohmann::json ts;
-
-            // 领先-滞后分析
-            nlohmann::json ll_array = nlohmann::json::array();
-            for (const auto& ll : result.multi.lead_lag_results) {
-                nlohmann::json item;
-                item["symbol_x"] = ll.symbol_x;
-                item["symbol_y"] = ll.symbol_y;
-                item["lead_lag"] = ll.lead_lag;
-                item["max_correlation"] = ll.max_correlation;
-                item["ccf"] = ll.ccf;
-                ll_array.push_back(item);
+        if (sections._spectrum) {
+            if (vr._action == VolatilityAction::All) {
+                if (!result._multi._spectrum_indicators.dates.empty()) {
+                    multi["spectrum_indicators"] =
+                        spectrumToJson(result._multi._spectrum_indicators);
+                }
+            } else {
+                multi["spectrum_indicators"] =
+                    spectrumToJson(result._multi._spectrum_indicators);
             }
-            ts["lead_lag"] = ll_array;
-
-            // 格兰杰因果检验
-            nlohmann::json gr_array = nlohmann::json::array();
-            for (const auto& gr : result.multi.granger_results) {
-                nlohmann::json item;
-                item["from"] = gr.from;
-                item["to"] = gr.to;
-                item["f_statistic"] = gr.f_statistic;
-                item["p_value"] = gr.p_value;
-                item["is_significant"] = gr.is_significant;
-                item["optimal_lag"] = gr.optimal_lag;
-                gr_array.push_back(item);
+        }
+        if (sections._forecast) {
+            if (vr._action == VolatilityAction::All) {
+                if (result._multi._multi_forecast._horizon > 0) {
+                    multi["multi_forecast"] =
+                        multiForecastToJson(result._multi._multi_forecast);
+                }
+            } else {
+                multi["multi_forecast"] =
+                    multiForecastToJson(result._multi._multi_forecast);
             }
-            ts["granger_causality"] = gr_array;
-
-            multi_json["time_series_analysis"] = ts;
+        }
+        if (sections._lead_lag) {
+            if (vr._action == VolatilityAction::All) {
+                if (!result._multi._lead_lag_results.empty()) {
+                    multi["time_series_analysis"] =
+                        timeSeriesToJson(result._multi);
+                }
+            } else {
+                multi["time_series_analysis"] =
+                    timeSeriesToJson(result._multi);
+            }
+        }
+        if (sections._mp_noise) {
+            multi["mp_noise"] = mpNoiseToJson(
+                result._multi._mp_noise, result._multi._mp_symbols,
+                vr._include_matrix);
         }
 
-        json["multi"] = multi_json;
+        if (!sections._multi &&
+            (sections._spectrum || sections._forecast ||
+             sections._lead_lag || sections._mp_noise)) {
+            multi["num_observations"] = result._multi._num_observations;
+        }
 
-        // json_build: 组装 json 对象；json_dump: 序列化成字符串（n 大时相关矩阵很占时间）
+        if (sections._multi || sections._spectrum || sections._forecast ||
+            sections._lead_lag || sections._mp_noise) {
+            json["multi"] = std::move(multi);
+        }
+
         stages.stage("json_build").add(ms_since(t_json));
-        auto t_dump = PerfClock::now();
+        const auto t_dump = PerfClock::now();
         auto body = json.dump();
         stages.stage("json_dump").add(ms_since(t_dump));
 
@@ -872,136 +1361,44 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
     } catch (const std::exception& e) {
         FATAL("[Volatility] Error: {}", e.what());
         res.status = 500;
-        nlohmann::json err;
-        err["error"] = e.what();
-        res.set_content(err.dump(), "application/json");
+        res.set_content(nlohmann::json{{"error", e.what()}}.dump(),
+                        "application/json");
     }
 
-    // 分段耗时汇总（一行，键序固定，便于优化前后对比）
-    INFO("[Volatility][perf] {}", stages.summary());
+    INFO("[Volatility][perf] action={} {}", volatilityActionToString(
+             parseVolatilityAction(req.get_param_value("action"))),
+         stages.summary());
     auto slowest = stages.itemsSummary(5);
     if (!slowest.empty()) {
         INFO("[Volatility][perf] slowest symbols: {}", slowest);
     }
 }
 
-// === 协方差质量诊断 (共用算法: SelfAdjointEigenSolver) ===
-//
-// 对称 NxN 矩阵的真实特征值分解, 输出:
-//   - eigenvalues (降序)
-//   - condition_number (κ = λ_max / λ_min, 接近奇异时返回 1e15)
-//   - is_positive_definite (λ_min > 1e-12)
-// 病态时安全回退 Gershgorin 估计, 保证接口语义稳定。
-void VolatilityHandler::evaluateCovarianceQuality(
-    const std::vector<std::vector<double>>& cov,
-    std::vector<double>& eigenvalues_out,
-    double& condition_number_out,
-    bool& is_positive_definite_out)
-{
-    const size_t n = cov.size();
-    eigenvalues_out.clear();
-    eigenvalues_out.reserve(n);
+// === HTTP POST ===
 
-    if (n == 0) {
-        condition_number_out = 0;
-        is_positive_definite_out = false;
-        return;
-    }
-
-    if (n == 1) {
-        eigenvalues_out.push_back(cov[0][0]);
-        is_positive_definite_out = (cov[0][0] > 1e-12);
-        condition_number_out = is_positive_definite_out ? 1.0 : 1e15;
-        return;
-    }
-
-    Eigen::MatrixXd cov_2d(n, n);
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j < n; ++j) {
-            cov_2d(i, j) = cov[i][j];
-        }
-    }
-
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(cov_2d);
-    if (es.info() == Eigen::Success) {
-        const Eigen::VectorXd evals = es.eigenvalues();  // 升序
-        const double min_eigen = evals(0);
-        const double max_eigen = evals(n - 1);
-        eigenvalues_out.resize(n);
-        for (size_t i = 0; i < n; ++i) {
-            eigenvalues_out[i] = evals(n - 1 - i);  // 降序
-        }
-        condition_number_out = (min_eigen > 1e-12) ? (max_eigen / min_eigen) : 1e15;
-        is_positive_definite_out = (min_eigen > 1e-12);
-        return;
-    }
-
-    // 回退: Gershgorin 圆估计
-    double max_eigen = 0;
-    double min_eigen = std::numeric_limits<double>::max();
-    for (size_t i = 0; i < n; ++i) {
-        double center = cov[i][i];
-        double radius = 0;
-        for (size_t j = 0; j < n; ++j) {
-            if (i != j) radius += std::abs(cov[i][j]);
-        }
-        max_eigen = std::max(max_eigen, center + radius);
-        min_eigen = std::min(min_eigen, std::max(0.0, center - radius));
-        eigenvalues_out.push_back(center);
-    }
-    std::sort(eigenvalues_out.rbegin(), eigenvalues_out.rend());
-    condition_number_out = (min_eigen > 1e-15) ? (max_eigen / min_eigen) : 1e15;
-    is_positive_definite_out = (min_eigen > 1e-15);
-    WARN("[Volatility] SelfAdjointEigenSolver failed (n={}), fell back to Gershgorin estimate", n);
-}
-
-// === POST /analysis/covariance_diagnostics ===
-//
-// Debug 端点: 客户端传入对称 NxN 协方差矩阵，返回特征值分解 + 质量诊断。
-// 用于不需要真实市场数据的纯算法单元测试 / 可视化调试。
 void VolatilityHandler::post(const httplib::Request& req, httplib::Response& res) {
-    nlohmann::json resp;
     try {
-        auto j = nlohmann::json::parse(req.body);
-        if (!j.contains("covariance_matrix") || !j["covariance_matrix"].is_array()) {
-            throw std::runtime_error("missing 'covariance_matrix' (NxN array)");
+        const auto params = nlohmann::json::parse(req.body);
+
+        std::string action = params.value("action", "covariance_diagnostics");
+        if (action.empty()) action = "covariance_diagnostics";
+
+        if (action == "mp_noise" || action == "mp" || action == "noise") {
+            handleMpNoisePost(params, res);
+        } else if (action == "covariance_diagnostics" ||
+                   action == "diagnostics") {
+            handleCovarianceDiagnosticsPost(params, res);
+        } else {
+            res.status = 400;
+            res.set_content(
+                nlohmann::json{{"error",
+                    "unknown action: " + action +
+                    " (covariance_diagnostics|mp_noise)"}}.dump(),
+                "application/json");
         }
-        const auto& mat = j["covariance_matrix"];
-        const size_t n = mat.size();
-
-        if (n == 0 || !mat[0].is_array() || mat[0].size() != n) {
-            throw std::runtime_error("covariance_matrix must be a non-empty square NxN array");
-        }
-
-        std::vector<std::vector<double>> cov(n, std::vector<double>(n, 0.0));
-        for (size_t i = 0; i < n; ++i) {
-            if (!mat[i].is_array() || mat[i].size() != n) {
-                throw std::runtime_error("covariance_matrix is not square");
-            }
-            for (size_t j = 0; j < n; ++j) {
-                if (!mat[i][j].is_number()) {
-                    throw std::runtime_error("non-numeric element at [" +
-                                             std::to_string(i) + "][" + std::to_string(j) + "]");
-                }
-                cov[i][j] = mat[i][j].get<double>();
-            }
-        }
-
-        std::vector<double> eigenvalues;
-        double condition_number = 0;
-        bool is_positive_definite = false;
-        evaluateCovarianceQuality(cov, eigenvalues, condition_number, is_positive_definite);
-
-        resp["n"] = n;
-        resp["eigenvalues"] = eigenvalues;
-        resp["condition_number"] = condition_number;
-        resp["is_positive_definite"] = is_positive_definite;
-
-        res.set_content(resp.dump(), "application/json");
-        res.status = 200;
     } catch (const std::exception& e) {
-        resp["error"] = e.what();
         res.status = 400;
-        res.set_content(resp.dump(), "application/json");
+        res.set_content(nlohmann::json{{"error", e.what()}}.dump(),
+                        "application/json");
     }
 }

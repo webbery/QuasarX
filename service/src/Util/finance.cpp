@@ -10,6 +10,7 @@
 #include <numeric>
 #include <algorithm>
 #include <chrono>
+#include <utility>
 
 namespace finance {
 
@@ -1974,6 +1975,232 @@ SpectrumIndicatorResult computeSpectrumIndicators(
     }
 
     return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Marchenko-Pastur 噪声谱分析（静态全样本）
+// ──────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// 由 n×T 收益率矩阵构造相关矩阵；零方差行按单位方差处理。
+Eigen::MatrixXd correlationFromReturns(const Eigen::MatrixXd& ret_matrix) {
+    const int n = static_cast<int>(ret_matrix.rows());
+    const int T = static_cast<int>(ret_matrix.cols());
+    if (n <= 0 || T <= 1) return {};
+
+    Eigen::VectorXd means = ret_matrix.rowwise().mean();
+    Eigen::MatrixXd centered = ret_matrix.colwise() - means;
+    Eigen::MatrixXd cov = (centered * centered.transpose()) /
+                          static_cast<double>(T - 1);
+
+    Eigen::VectorXd sd = cov.diagonal().array().sqrt().matrix();
+    for (int i = 0; i < n; ++i) {
+        if (!(sd(i) > 1e-12)) sd(i) = 1.0;
+    }
+
+    Eigen::MatrixXd corr(n, n);
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            corr(i, j) = cov(i, j) / (sd(i) * sd(j));
+        }
+    }
+    corr.diagonal().setOnes();
+    return corr;
+}
+
+// 核心：相关矩阵 → MP 噪声谱结果。labels 为空表示未降维。
+MpNoiseResult mpFromCorrelation(const Eigen::MatrixXd& corr_in,
+                                int T,
+                                int original_n,
+                                const Vector<int>& labels) {
+    MpNoiseResult result;
+    const int k = static_cast<int>(corr_in.rows());
+    if (k < 2 || T < 3 || corr_in.cols() != k) return result;
+
+    // SelfAdjointEigenSolver 只读取下三角，先对称化以防调用方传入轻微不对称矩阵。
+    Eigen::MatrixXd corr = 0.5 * (corr_in + corr_in.transpose());
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(corr);
+    if (es.info() != Eigen::Success) return result;
+
+    const Eigen::VectorXd evals_asc = es.eigenvalues();
+    const Eigen::MatrixXd evecs = es.eigenvectors();
+
+    Vector<int> order(k);
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        return evals_asc(a) > evals_asc(b);
+    });
+
+    result._original_n = original_n;
+    result._n_effective = k;
+    result._n_observations = T;
+    result._q = static_cast<double>(T) / static_cast<double>(k);
+    const double sqrt_q = std::sqrt(result._q);
+    result._lambda_plus = (1.0 + 1.0 / sqrt_q) * (1.0 + 1.0 / sqrt_q);
+    result._lambda_minus = (1.0 - 1.0 / sqrt_q) * (1.0 - 1.0 / sqrt_q);
+
+    result._eigenvalues.resize(k);
+    for (int j = 0; j < k; ++j) {
+        result._eigenvalues(j) = evals_asc(order[j]);
+    }
+    result._lambda_max = result._eigenvalues(0);
+    result._lambda_max_ratio = result._lambda_plus > 1e-15
+        ? result._lambda_max / result._lambda_plus : 0.0;
+
+    double signal_sum = 0.0, bulk_sum = 0.0, below_sum = 0.0;
+    for (Eigen::Index j = 0; j < result._eigenvalues.size(); ++j) {
+        const double ev = result._eigenvalues(j);
+        if (ev > result._lambda_plus) {
+            ++result._n_signal;
+            signal_sum += ev;
+        } else if (ev >= result._lambda_minus) {
+            ++result._n_bulk;
+            bulk_sum += ev;
+        } else {
+            ++result._n_below;
+            below_sum += ev;
+        }
+    }
+
+    // 相关系数矩阵的迹为 k，归一化后三个占比之和为 1。
+    const double trace = signal_sum + bulk_sum + below_sum;
+    if (trace > 1e-15) {
+        result._signal_var_ratio = signal_sum / trace;
+        result._noise_var_ratio = bulk_sum / trace;
+        result._below_edge_var_ratio = below_sum / trace;
+    }
+
+    // 每个标的/簇的方差分解：Σ_k λ_k v_ik² = C_ii = 1。
+    Vector<double> signal_k(k, 0.0), noise_k(k, 0.0), below_k(k, 0.0);
+    for (int j = 0; j < k; ++j) {
+        const int col = order[j];
+        const double ev = evals_asc(col);
+        bool is_signal = ev > result._lambda_plus;
+        bool is_bulk = !is_signal && ev >= result._lambda_minus;
+        for (int i = 0; i < k; ++i) {
+            const double w = ev * evecs(i, col) * evecs(i, col);
+            if (is_signal) signal_k[i] += w;
+            else if (is_bulk) noise_k[i] += w;
+            else below_k[i] += w;
+        }
+    }
+
+    result._signal_share.resize(original_n);
+    result._noise_share.resize(original_n);
+    result._below_edge_share.resize(original_n);
+    result._cluster_labels = labels;
+    if (labels.empty()) {
+        for (int i = 0; i < original_n; ++i) {
+            result._signal_share(i) = signal_k[i];
+            result._noise_share(i) = noise_k[i];
+            result._below_edge_share(i) = below_k[i];
+        }
+    } else {
+        for (int i = 0; i < original_n; ++i) {
+            int c = labels[i];
+            if (c < 0 || c >= k) c = 0;
+            result._signal_share(i) = signal_k[c];
+            result._noise_share(i) = noise_k[c];
+            result._below_edge_share(i) = below_k[c];
+        }
+    }
+
+    const double min_ev = result._eigenvalues(k - 1);
+    result._condition_number_original = (min_ev > 1e-12)
+        ? result._lambda_max / min_ev : 1e15;
+
+    // 特征值裁剪（Laloux et al. 1999）：λ > λ₊ 保留，其余替换为均值。
+    Eigen::VectorXd clean = evals_asc;
+    const int n_clipped = result._n_bulk + result._n_below;
+    const double clipped_mean = n_clipped > 0
+        ? (bulk_sum + below_sum) / static_cast<double>(n_clipped) : 0.0;
+    if (n_clipped > 0) {
+        for (int j = 0; j < k; ++j) {
+            if (evals_asc(j) <= result._lambda_plus) clean(j) = clipped_mean;
+        }
+    }
+
+    const double clean_min = clean.minCoeff();
+    const double clean_max = clean.maxCoeff();
+    result._condition_number_denoised = (clean_min > 1e-12)
+        ? clean_max / clean_min : 1e15;
+
+    Eigen::MatrixXd clean_mat = evecs * clean.asDiagonal() * evecs.transpose();
+    Eigen::VectorXd diag = clean_mat.diagonal();
+    for (int i = 0; i < k; ++i) {
+        if (!(diag(i) > 1e-15)) diag(i) = 1.0;
+    }
+    for (int i = 0; i < k; ++i) {
+        for (int j = 0; j < k; ++j) {
+            clean_mat(i, j) /= std::sqrt(diag(i) * diag(j));
+        }
+    }
+    clean_mat.diagonal().setOnes();
+
+    double frob = 0.0;
+    for (int i = 0; i < k; ++i) {
+        for (int j = 0; j < k; ++j) {
+            const double d = corr(i, j) - clean_mat(i, j);
+            frob += d * d;
+        }
+    }
+    result._denoise_frobenius = std::sqrt(frob);
+    result._correlation = std::move(corr);
+    result._denoised_correlation = std::move(clean_mat);
+    result._valid = true;
+    return result;
+}
+
+}  // namespace
+
+MpNoiseResult computeMpNoise(const Eigen::MatrixXd& ret_matrix, int max_clusters) {
+    MpNoiseResult result;
+    const int n = static_cast<int>(ret_matrix.rows());
+    const int T = static_cast<int>(ret_matrix.cols());
+    if (n < 2 || T < 3) return result;
+
+    Eigen::MatrixXd corr = correlationFromReturns(ret_matrix);
+    Vector<int> labels;
+    int k = n;
+
+    if (n >= T) {
+        // 样本数不足时相关矩阵秩亏，先聚类降维，保证 k < T。
+        k = std::min(max_clusters, T - 1);
+        k = std::min(k, n);
+        if (k < 2) return result;
+
+        labels = correlationCluster(corr, k);
+
+        Eigen::MatrixXd cluster_ret = Eigen::MatrixXd::Zero(k, T);
+        Vector<int> counts(k, 0);
+        for (int i = 0; i < n; ++i) {
+            const int c = labels[i];
+            if (c < 0 || c >= k) continue;
+            cluster_ret.row(c) += ret_matrix.row(i);
+            ++counts[c];
+        }
+        for (int c = 0; c < k; ++c) {
+            if (counts[c] > 0) {
+                cluster_ret.row(c) /= static_cast<double>(counts[c]);
+            }
+        }
+        corr = correlationFromReturns(cluster_ret);
+    }
+
+    return mpFromCorrelation(corr, T, n, labels);
+}
+
+MpNoiseResult computeMpNoiseFromCorrelation(const Eigen::MatrixXd& corr_matrix,
+                                            int n_observations) {
+    MpNoiseResult result;
+    const int n = static_cast<int>(corr_matrix.rows());
+    if (n < 2 || corr_matrix.cols() != n || n_observations < 3) return result;
+    if (n >= n_observations) {
+        // n >= T：相关矩阵秩亏，且没有原始收益率可供聚类降维。
+        return result;
+    }
+    return mpFromCorrelation(corr_matrix, n_observations, n, {});
 }
 
 // ──────────────────────────────────────────────────────────────────────

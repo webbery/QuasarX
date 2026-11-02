@@ -353,6 +353,79 @@ SpectrumIndicatorResult computeSpectrumIndicators(
     PerfStages* perf_stages = nullptr);
 
 // ──────────────────────────────────────────────────────────────────────
+// Marchenko-Pastur 噪声谱分析（静态全样本）
+//
+// 与上面的滚动 m+/m- 指标互补：
+//   - 滚动版回答「噪声结构随时间怎么变」
+//   - 静态版回答「当前样本里哪些方差是噪声、哪些标的暴露在噪声子空间」
+//
+// 特征值分类（相关系数矩阵，迹 = N）：
+//   λ > λ₊          signal  —— 不能被 MP 零假设解释的共同因子
+//   λ₋ ≤ λ ≤ λ₊     bulk    —— MP 噪声连续谱
+//   λ < λ₋          below   —— 低于 MP 下界的「弱相关/反相关」结构
+//
+// 每个标的的方差可精确分解为三部分（用特征向量 v_k 和特征值 λ_k）：
+//   Σ_k λ_k v_{ik}² = C_ii = 1
+//   signal_share_i = Σ_{λ_k > λ₊} λ_k v_{ik}²
+//   noise_share_i  = Σ_{λ₋ ≤ λ_k ≤ λ₊} λ_k v_{ik}²
+//   below_share_i  = Σ_{λ_k < λ₋} λ_k v_{ik}²
+//
+// 去噪采用特征值裁剪（Laloux et al. 1999）：保留 λ > λ₊，把其余特征值
+// 替换为它们的均值，再重构相关矩阵并把对角线归一到 1。
+// ──────────────────────────────────────────────────────────────────────
+
+struct MpNoiseResult {
+    bool _valid = false;
+
+    int _original_n = 0;              // 原始标的数
+    int _n_effective = 0;             // 参与谱分析的标的/簇数 k
+    int _n_observations = 0;          // T
+    double _q = 0;                    // Q = T / k
+    double _lambda_plus = 0;          // MP 上界
+    double _lambda_minus = 0;         // MP 下界
+
+    Eigen::VectorXd _eigenvalues;     // 降序，长度 k
+    double _lambda_max = 0;
+    double _lambda_max_ratio = 0;     // λ_max / λ₊
+
+    int _n_signal = 0;                // λ > λ₊
+    int _n_bulk = 0;                  // λ₋ ≤ λ ≤ λ₊
+    int _n_below = 0;                 // λ < λ₋
+
+    double _signal_var_ratio = 0;     // signal 特征值和 / k
+    double _noise_var_ratio = 0;      // bulk 特征值和 / k
+    double _below_edge_var_ratio = 0; // below 特征值和 / k
+
+    // 每个原始标的的方差分解，三者之和 ≈ 1
+    Eigen::VectorXd _signal_share;
+    Eigen::VectorXd _noise_share;
+    Eigen::VectorXd _below_edge_share;
+
+    // 当 n >= T 时自动聚类降维；空表示未降维，长度 = original_n
+    Vector<int> _cluster_labels;
+
+    // 去噪诊断
+    double _condition_number_original = 0;
+    double _condition_number_denoised = 0;
+    double _denoise_frobenius = 0;    // ||C - C_clean||_F
+
+    // 内部保留矩阵，供需要矩阵的调用方使用（JSON 默认不输出）
+    Eigen::MatrixXd _correlation;          // k × k
+    Eigen::MatrixXd _denoised_correlation; // k × k
+};
+
+/// 从 n×T 收益率矩阵做静态 MP 噪声谱分析。
+/// n >= T 时先用 correlationCluster 聚成 k = min(max_clusters, T-1) 个簇。
+/// n < 2 或 T < 3 时返回 valid=false。
+MpNoiseResult computeMpNoise(const Eigen::MatrixXd& ret_matrix,
+                             int max_clusters = 10);
+
+/// 从已知相关矩阵做静态 MP 噪声谱分析（POST 接口使用）。
+/// 要求 n < n_observations（没有收益率原始数据，无法做聚类降维）。
+MpNoiseResult computeMpNoiseFromCorrelation(const Eigen::MatrixXd& corr_matrix,
+                                            int n_observations);
+
+// ──────────────────────────────────────────────────────────────────────
 // A 股期权行权日规则
 //   - CFFEX 股指期权 (IO/HO/MO):   到期月第三个周五
 //   - SSE/SZSE ETF 期权 (50ETF/300ETF/500ETF):  到期月第四个周三
