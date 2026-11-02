@@ -919,12 +919,18 @@ class TestPairTradingStrategy:
         assert entries > 0, "整段回测没有出现过入场信号"
         assert exits > 0, "整段回测没有出现过出场信号"
 
-    def test_short_leg_opens_negative_position(self, backtest_result, pair_meta):
+    def test_short_leg_opens_negative_position(self, backtest_result, pair_meta, is_backtest):
         """成交层：空头腿真的开出负仓，且最终平掉
 
         回测结果的 buy/sell 不区分平多与开空，靠持仓符号判断：
         把成交按时间回放，净持仓出现负数即为空头开仓。
+
+        仅历史回测模式可断言成交：tickflow/实盘模式下服务端没有历史回测上下文
+        （CreateMultiContext 返回 runId=0），回测不会回放任何 K 线，buy/sell 恒为空。
         """
+        if not is_backtest:
+            pytest.skip("仅历史回测模式执行：tickflow/实盘模式下无历史回测上下文，成交恒为空")
+
         sym_a = pair_meta["symbol_a"]
         sym_b = pair_meta["symbol_b"]
 
