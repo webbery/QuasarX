@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
+#include "BrokerSubSystem.h"
 #include <deque>
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
 #include <openssl/x509.h>
