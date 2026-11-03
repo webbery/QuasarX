@@ -350,6 +350,10 @@ void Server::Run() {
     _strategySystem->Release();
 }
 
+void Server::Stop() {
+    _svr.stop();
+}
+
 void Server::Regist() {
     InitDefault();
     _svr.Post(API_VERSION "/exit", [this](const httplib::Request& req, httplib::Response& res) {
@@ -634,7 +638,7 @@ void Server::InitDefault() {
     // 未注册时使用本地账本。
     // _brokerSystem->SetBrokerLedger(new HXBrokerLedger(...));
 
-    _brokerSystem->initLedger(initialCapital, dbpath + "/ledger.json");
+    _brokerSystem->initLedger(initialCapital, dbpath + "/" + LEDGER_FILE_NAME);
 
     // 初始化风控子系统
     _riskSystem = new RiskSubSystem(this);

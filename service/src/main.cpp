@@ -43,6 +43,19 @@ static time_t  g_start_time = 0;
 // don't dereference a partially-constructed _config during early crashes.
 static bool   g_server_ready = false;
 
+// ── 优雅退出管道（self-pipe）────────────────────────────────────
+// 账本是在析构里落盘的：~BrokerSubSystem → Release() → PersistLedger()，
+// 而 _exit() 不跑析构函数。所以 SIGTERM 不能直接 _exit，必须让 main 正常返回。
+// 但信号处理函数里又不能直接调 Server::Stop()：httplib 的 stop() 会碰线程池
+// 的锁与 join，不是 async-signal-safe，在信号上下文里调用有死锁风险。
+// 折中做法（业界标准 self-pipe 模式）：
+//   信号处理函数 write() 一个字节（async-signal-safe）
+//     → 看门狗线程读到字节，在正常线程上下文里调 Server::Stop()
+//     → httplib listen() 返回 → Run() 清场 → main 正常返回 → 析构 → 账本落盘
+#ifndef WIN32
+static int g_shutdown_pipe[2] = {-1, -1};
+#endif
+
 // addr2line 解析后的堆栈（供邮件使用）
 static std::string g_resolved_trace;
 
@@ -497,21 +510,50 @@ void print_stacktrace(int signo) {
 }
 #endif
 
-// 优雅关闭：CHECKPOINT 所有 DuckDB 实例后退出
+// 优雅关闭：走正常退出流程，让析构函数把账本落盘
 // 用于 SIGTERM (systemctl stop) / SIGINT (Ctrl+C)
 void graceful_shutdown(int signo) {
-    // 1. CHECKPOINT + 关闭所有 DuckDB 实例
+#ifndef WIN32
+    // 只做 async-signal-safe 的事：唤醒看门狗线程，由它在正常线程上下文里
+    // 停服务 → main 正常返回 → Server 析构 → ~BrokerSubSystem → Release() →
+    // PersistLedger()。账本在析构里落盘，这里 _exit() 就把账本丢了。
+    if (g_shutdown_pipe[1] >= 0) {
+        const char token = 'x';
+        ssize_t ignored = write(g_shutdown_pipe[1], &token, 1);
+        (void)ignored;
+        return;
+    }
+#endif
+    // 退化路径（管道不可用）：只能 CHECKPOINT 后退出，账本不落盘
     try { DuckDBLogger::instance().shutdown(); } catch (...) {}
     try { QuoteDB::instance().shutdown(); } catch (...) {}
     try { FinanceDB::instance().shutdown(); } catch (...) {}
     try { DecisionDB::instance().shutdown(); } catch (...) {}
 
-    // 2. 刷新日志
+    // 刷新日志
     try { spdlog::default_logger_raw()->flush(); } catch (...) {}
     spdlog::shutdown();
 
     _exit(0);
 }
+
+#ifndef WIN32
+// 看门狗线程：把信号上下文里的"退出请求"搬到正常线程上下文执行
+static void shutdown_watchdog() {
+    char token = 0;
+    ssize_t n = read(g_shutdown_pipe[0], &token, 1);
+    if (n <= 0) return;
+
+    // 信号可能打在启动早期，Server 还没 ready 就等一下（最多 5s）
+    for (int i = 0; i < 100 && !g_server_ready; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (g_server && g_server_ready) {
+        INFO("[Main] shutdown signal received, stopping server for graceful exit");
+        g_server->Stop();
+    }
+}
+#endif
 
 void install_signal_handler() {
 #ifdef WIN32
@@ -532,7 +574,15 @@ void install_signal_handler() {
   sigaction(SIGILL,  &crash_action, NULL);   // 非法指令
   sigaction(SIGBUS,  &crash_action, NULL);   // 总线错误
 
-  // 终止信号 → 优雅关闭（CHECKPOINT 所有 DB 后退出）
+  // 优雅退出管道：信号处理函数 → 看门狗线程 → 正常退出流程（账本才会落盘）
+  if (::pipe(g_shutdown_pipe) != 0) {
+      g_shutdown_pipe[0] = g_shutdown_pipe[1] = -1;
+      WARN("[Main] shutdown pipe creation failed, SIGTERM will not persist the ledger");
+  } else {
+      std::thread(shutdown_watchdog).detach();
+  }
+
+  // 终止信号 → 优雅关闭（走正常退出流程，析构里保存账本）
   struct sigaction term_action;
   memset(&term_action, 0, sizeof(term_action));
   term_action.sa_handler = graceful_shutdown;
@@ -542,6 +592,7 @@ void install_signal_handler() {
   sigaction(SIGINT,  &term_action, NULL);    // Ctrl+C
 #endif
 }
+
 
 // 检测并打印 CPU 向量化指令支持情况
 void print_cpu_features() {

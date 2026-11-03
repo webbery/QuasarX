@@ -11,6 +11,10 @@ WorkingDirectory=/home/webberg/service     # 可执行文件所在目录
 ExecStart=/bin/bash /home/webberg/service/startup.sh   # 可执行文件的绝对路径
 Restart=always                         # 崩溃后总是重启
 RestartSec=5                           # 重启前等待时间（秒）
+# systemctl stop 发 SIGTERM，服务会走正常退出流程：停 HTTP → 清场 → main 返回 →
+# 析构里把账本（<WorkingDirectory>/data/broker/ledger.json）落盘。
+# 别把 KillSignal 改成 SIGKILL，也不要加 ExecStop=kill -9，否则账本不会保存。
+TimeoutStopSec=60                      # 停机等待上限（正常退出在 5 秒内完成）
 StandardOutput=syslog                  # 输出日志到syslog
 StandardError=syslog                   # 错误日志到syslog
 Environment=KEY=value                  # 设置环境变量（可选）

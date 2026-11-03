@@ -17,6 +17,9 @@
 #include "Decision.h"
 #include <boost/lockfree/queue.hpp>
 
+// 账本文件名（位于 broker 的 db 目录下，即 <db_path>/ledger.json）
+#define LEDGER_FILE_NAME "ledger.json"
+
 // class Broker {
 // public:
 //   virtual ~Broker() {}
@@ -189,8 +192,19 @@ public:
     // 注册券商账本提供者。未注册时使用本地账本。
     void SetBrokerLedger(IBrokerLedger* ledger) { _brokerLedger = ledger; }
 
-    // 显式持久化账本（用 _dbpath + "/ledger.json"，与 Release() 保持一致）
+    // 显式持久化账本（用 _dbpath + "/" + LEDGER_FILE_NAME，与 Release() 保持一致）
     void PersistLedger();
+
+    // 通知订单处理线程：订单状态有变化（成交回执到达）。
+    // 成交回执由交易所线程回调，不经过订单队列，若不唤醒 broker 线程，
+    // 已成交的订单要等下一次订单推送才会被记账，账本会滞后。
+    void NotifyOrderUpdate() { _cv.notify_all(); }
+
+    // 从本地账本文件重新载入内存账本（与 PersistLedger 对称）。
+    // 磁盘上的 json 是内存账本的滞后快照：只有成交、手动回写、策略注册、进程退出
+    // 才会落盘，reclaim/reclaim_all 只改内存。因此本接口是"回到最后一次快照"，
+    // 不是"撤销最近一次内存改动"。仅供测试在运行期替换账本文件后生效。
+    bool ReloadLedger();
 
     [[deprecated("使用异步版本 Buy(strategy, symbol, order, callback)")]]
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);

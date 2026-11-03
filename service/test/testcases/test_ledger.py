@@ -33,6 +33,17 @@ from tool import (
     BASE_URL, VERIFY_SSL, _DATA_DIR,
     get_auth_token, api_load_strategy, api_cleanup_strategy,
 )
+from ledger_seed import (
+    PROJECTION_CASH as _PROJECTION_REGRESSION_CASH,
+    PROJECTION_EQUITY as _PROJECTION_REGRESSION_EQUITY,
+    PROJECTION_POSITIONS as _PROJECTION_REGRESSION_POSITIONS,
+    PROJECTION_STRATEGY,
+    build_projection_account,
+    read_ledger_file,
+    remove_account,
+    set_account,
+    write_ledger_file,
+)
 
 # ---------------------------- 常量 ----------------------------
 
@@ -434,23 +445,23 @@ class TestEquityInvariants:
 
 # ---------------------------- L4：投影失明回归 ----------------------------
 
-# 2026-11-03 事故常量
-_PROJECTION_REGRESSION_POSITIONS = {
-    "sz.300450": (11400, 29.15),   # qty, cost
-    "sz.002241": (14900, 22.64),
-    "sh.601939": (27600, 12.04),
-    "sh.688981": (3300, 100.00),
-}
-# prepare.py 把 current_price 写成成本价，因此持仓市值等于建仓成本合计
-_PROJECTION_REGRESSION_POSITION_VALUE = sum(
-    qty * cost for qty, cost in _PROJECTION_REGRESSION_POSITIONS.values()
-)  # 1,331,950
-# 事故现金：初始 1,000,000 − 建仓成本 1,331,950 − 交易费用约 786 = −332,736
-_PROJECTION_REGRESSION_CASH = -332736.0
-# 权益 = 现金 + 持仓市值 − 融资余额 = −332,736 + 1,331,950 = 999,214
-_PROJECTION_REGRESSION_EQUITY = (
-    _PROJECTION_REGRESSION_CASH + _PROJECTION_REGRESSION_POSITION_VALUE
-)
+# 2026-11-03 事故常量（与 prepare.py 共用 ledger_seed.py，避免两份手抄数据漂移）
+#   持仓市值 1,331,950；现金 1,000,000 − 1,331,950 − 786 = −332,736；权益 999,214
+
+
+def _reload_ledger(token: str) -> None:
+    """让服务重新载入本地账本文件（仅 test_mode 可用）
+
+    服务只在启动时读一次 ledger.json，用例要复现"重启后读账本"就必须自己
+    重放这一步。接口是 POST /v0/strategy {"action": "reload_ledger"}。
+    """
+    resp = requests.post(
+        f"{BASE_URL}/strategy",
+        json={"action": "reload_ledger"},
+        headers=_headers(token), verify=VERIFY_SSL, timeout=15,
+    )
+    assert resp.status_code == 200, \
+        f"账本重载失败: {resp.status_code} {resp.text[:300]}"
 
 
 def _assert_projection_account(entry: dict) -> None:
@@ -469,6 +480,33 @@ def _assert_projection_account(entry: dict) -> None:
             f"{sym} 成本应为 {expected_cost}，实际 {pos['avgCost']}"
 
 
+@pytest.fixture(scope="module")
+def _seeded_projection_ledger(auth_token):
+    """自播种投影账本：写文件 → 服务重载 → 用例断言 → 还原
+
+    只动本策略那一个账户，同进程里其它策略的账本账户保持不变
+    （reload 是整体替换，写文件时必须保留已有账户）。
+    """
+    backup = read_ledger_file(LEDGER_FILE)
+    accounts = backup.get("accounts", {})
+    existed = PROJECTION_STRATEGY in accounts
+    saved = accounts.get(PROJECTION_STRATEGY)
+
+    set_account(backup, PROJECTION_STRATEGY, build_projection_account())
+    write_ledger_file(LEDGER_FILE, backup)
+    _reload_ledger(auth_token)
+
+    yield
+
+    if existed:
+        set_account(backup, PROJECTION_STRATEGY, saved)
+    else:
+        remove_account(backup, PROJECTION_STRATEGY)
+    write_ledger_file(LEDGER_FILE, backup)
+    _reload_ledger(auth_token)
+
+
+@pytest.mark.usefixtures("_seeded_projection_ledger")
 class TestProjectionRegression:
     """2026-11-03 账本投影失明事故回归
 
@@ -488,10 +526,17 @@ class TestProjectionRegression:
       - 负现金账户禁止开仓 + 买入额不超过可用现金+卖出回款
 
     前置条件：
-      - 服务启动前写入测试账本，且 db_path 必须与服务一致（服务以 service/build
-        为工作目录，读 data/broker/ledger.json）。在仓库根目录执行：
-            python service/test/prepare.py projection_ledger --db-path service/build/data
-        否则服务启动时会走"从成交流水重建账本"分支，本策略不存在，查询返回 404。
+      - 无外部前置条件。用例自播种：把种子账本写进服务读的那个文件
+        （<db_path>/broker/ledger.json），再让服务重新载入
+        （POST /v0/strategy {"action": "reload_ledger"}，仅 test_mode 可用），
+        用完把该账户摘掉并重新载入还原。
+
+        为什么不能靠"服务启动前用 prepare.py 预灌"：
+          - 服务只在启动时读一次账本，运行期换文件必须显式 reload；
+          - reclaim / reclaim_all 只改内存不落盘，会把内存账本清空，而随后
+            任意一次落盘（成交 / 部署策略 / 进程退出）都会把空账本固化到磁盘，
+            预灌的账户就此消失。CI 里 test_decision 的 autouse fixture 就调了
+            reclaim_all，查询因此返回 404（2026-11-03 CI 失败）。
     """
 
     @pytest.fixture(autouse=True)
@@ -502,11 +547,11 @@ class TestProjectionRegression:
     @pytest.fixture
     def projection_strategy(self):
         """投影回归测试策略名"""
-        return "test_ledger_projection_regression"
+        return PROJECTION_STRATEGY
 
     def test_projection_reads_ledger_after_restart(self, auth_token, projection_strategy):
         """重启后投影应看到账本里的 4 个持仓、现金 −332736"""
-        # 假设 prepare.py projection_ledger 已写入（见类注释的前置条件）
+        # 账本已由 _seeded_projection_ledger 写好并让服务重新载入
         _assert_projection_account(_ledger(auth_token, projection_strategy))
 
     def test_negative_cash_blocks_buy(self, auth_token, projection_strategy):

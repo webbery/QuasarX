@@ -32,6 +32,16 @@ except ImportError:
           file=sys.stderr)
     sys.exit(1)
 
+# 账本种子数据与 test_ledger.py 共用（同一个文件，别抄两份）
+sys.path.insert(0, str(Path(__file__).resolve().parent / "testcases"))
+from ledger_seed import (  # noqa: E402
+    INITIAL_CAPITAL,
+    PROJECTION_CASH,
+    PROJECTION_POSITIONS,
+    PROJECTION_STRATEGY,
+    build_projection_account,
+)
+
 # std_header.h — enum contract_type
 CONTRACT_TYPES = {
     "stock": 0,
@@ -162,47 +172,21 @@ def seed_projection_ledger(ctx):
     策略把已持仓标的又买了一遍，现金 −332,736。
 
     写入 4 个持仓、现金 −332,736 的账本文件，服务启动后应能正确读取。
+
+    注意：这只对"服务启动前就写好账本"生效。服务运行期间测试用例自己调用
+    reclaim_all 会把内存账本清空（reclaim 不落盘），随后任何一次落盘
+    （成交 / 部署策略 / 进程退出）都会把空账本固化到磁盘。因此 test_ledger.py
+    的投影回归用例改为自播种：写文件 → POST /strategy {action: reload_ledger}
+    → 断言 → 还原，见 ledger_seed.py 与 test_ledger.py。
     """
     ledger_file = ctx.db_path / "broker" / "ledger.json"
     ctx.log(f"projection_ledger → {ledger_file.resolve()}")
 
-    positions = {
-        "sz.300450": (11400, 29.15),
-        "sz.002241": (14900, 22.64),
-        "sh.601939": (27600, 12.04),
-        "sh.688981": (3300, 100.00),
-    }
-    # 现金 = 1,000,000 - 建仓成本 1,331,950 - 交易费用约 786 = -332,736
-    # 与 test_ledger.py 的 _PROJECTION_REGRESSION_CASH 保持一致
-    cash = -332736.0
-
     data = {
         "version": 1,
-        "initialCapital": 1000000.0,
+        "initialCapital": INITIAL_CAPITAL,
         "accounts": {
-            "test_ledger_projection_regression": {
-                "allocated": 1000000.0,
-                "cash": cash,
-                "profit": 0.0,
-                "active": True,
-                "positions": {
-                    sym: {
-                        "quantity": qty,
-                        "avg_cost": cost,
-                        "current_price": cost,
-                        "is_margin": False,
-                        "margin_ratio": 1.0,
-                    }
-                    for sym, (qty, cost) in positions.items()
-                },
-                "lots": {},
-                "credit": {
-                    "borrowedCash": 0.0,
-                    "borrowedShares": {},
-                    "shortAvgPrice": {},
-                    "financedAmount": {},
-                },
-            }
+            PROJECTION_STRATEGY: build_projection_account(),
         },
     }
 
@@ -210,7 +194,8 @@ def seed_projection_ledger(ctx):
     with open(ledger_file, "w") as f:
         json.dump(data, f, indent=2)
 
-    ctx.log(f"projection_ledger 写入 {len(positions)} 个持仓，现金 {cash}")
+    ctx.log(f"projection_ledger 写入 {len(PROJECTION_POSITIONS)} 个持仓，"
+            f"现金 {PROJECTION_CASH}")
 
 
 # 新增预灌项在此注册

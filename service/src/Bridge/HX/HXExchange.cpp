@@ -945,6 +945,11 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
     if (OrderStatus::OrderAccept != report._status) {
         _orders.erase(id._id);
     }
+    // 唤醒 broker 线程：成交回执不走订单队列，不通知的话已成交订单要等下一次
+    // 订单推送才被记账（账本滞后 → 重启后策略以为没仓 → 重复买入）
+    if (broker) {
+        broker->NotifyOrderUpdate();
+    }
 }
 
 Boolean HXExchange::CancelOrder(order_id id, OrderContext* ctx){

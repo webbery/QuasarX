@@ -286,7 +286,24 @@ void BrokerSubSystem::PersistLedger() {
         WARN("[BrokerSubSystem] PersistLedger: _dbpath not initialized, skip");
         return;
     }
-    _ledger.Save(_dbpath + "/ledger.json");
+    _ledger.Save(_dbpath + "/" + LEDGER_FILE_NAME);
+}
+
+bool BrokerSubSystem::ReloadLedger() {
+    if (_dbpath.empty()) {
+        WARN("[BrokerSubSystem] ReloadLedger: _dbpath not initialized, skip");
+        return false;
+    }
+    // 注意：这里绝不能先 PersistLedger()——那是把当前内存写回磁盘再读回来，
+    // 等于自我覆盖、重载没有意义。正确顺序是"读磁盘 → 整体替换内存"。
+    const String path = _dbpath + "/" + LEDGER_FILE_NAME;
+    if (!_ledger.Load(path)) {
+        // Load 失败（文件缺失/JSON 非法）时保持现有内存账本不变
+        WARN("[BrokerSubSystem] ReloadLedger failed: {}", path);
+        return false;
+    }
+    INFO("[BrokerSubSystem] Ledger reloaded from {}: accounts={}", path, _ledger.GetAccounts().size());
+    return true;
 }
 
 void BrokerSubSystem::Release() {
@@ -294,6 +311,9 @@ void BrokerSubSystem::Release() {
     return;
 
   _exit = true;
+  // 唤醒等待中的 broker 线程：否则它要在 CV 上等到 5 秒超时才看到 _exit，
+  // join 跟着白等 5 秒（systemctl stop 的停机时间）。
+  _cv.notify_all();
   _thread->join();
   delete _thread;
   _thread = nullptr;
@@ -701,7 +721,10 @@ void BrokerSubSystem::run() {
             std::unique_lock<std::mutex> lck(_mutex);
             if (_cv.wait_until(lck, future) == std::cv_status::timeout) {
                 flush(_txn, dbi);
-                continue;
+                // 超时后不能直接 continue：成交回执不通知 CV（见 NotifyOrderUpdate），
+                // 直接跳过下面的处理分支的话，安静市里已成交的订单会一直躺在
+                // contexts 里不被记账——账本迟迟不知道持仓，重启后策略以为没仓
+                // 就会重复买入。超时也要继续往下走，把已完成的订单补记进账本。
             }
         }
 

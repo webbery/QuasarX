@@ -116,6 +116,12 @@ public:
 
     void Run();
 
+    // 请求停止服务：httplib 的 listen() 返回后，Run() 会走完清场流程并 return，
+    // main 随后正常返回 → Server 析构 → ~BrokerSubSystem → Release() →
+    // PersistLedger()。账本是在析构里落盘的，所以任何退出路径都必须走
+    // "main 正常返回"，不能 _exit()。
+    void Stop();
+
     static bool IsExit() { return _exit; }
 
     ExchangeInterface* GetExchange(ExchangeType type);

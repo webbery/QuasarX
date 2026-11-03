@@ -216,6 +216,38 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    // 账本重载（仅测试模式）：用本地 ledger.json 重新载入内存账本。
+    // 服务正常只在启动时读一次账本；测试需要在运行期替换账本文件后生效，
+    // 否则用例只能依赖"服务启动前预灌"，而预灌会被其它用例的 reclaim_all 清掉。
+    // 语义：回到最后一次落盘的快照（reclaim/reclaim_all 只改内存、不落盘），
+    // 不是"撤销最近一次内存改动"；且 Load 是整体替换，磁盘上没有的账户会消失。
+    if (params.contains("action") && params["action"] == "reload_ledger") {
+        if (!_server->GetConfig().IsTestMode()) {
+            INFO("[StrategyHandler] reload_ledger rejected: not in test mode");
+            res.status = 403;
+            res.set_content(R"({"error": "reload_ledger is only available in test mode"})", "application/json");
+            return;
+        }
+        auto* broker = _server->GetBrokerSubSystem();
+        if (!broker) {
+            WARN("[StrategyHandler] ledger not available");
+            res.status = 500;
+            res.set_content(R"({"error": "ledger not available"})", "application/json");
+            return;
+        }
+        if (!broker->ReloadLedger()) {
+            res.status = 500;
+            res.set_content(R"({"error": "ledger reload failed"})", "application/json");
+            return;
+        }
+        nlohmann::json result;
+        result["status"] = "ok";
+        result["accounts"] = broker->GetLedger()->GetAccounts().size();
+        res.status = 200;
+        res.set_content(result.dump(), "application/json");
+        return;
+    }
+
     // 回收策略资金（测试隔离 / 管理接口）
     // reclaim_all: 归还全部; reclaim: 归还指定策略（需传 name）
     if (params.contains("action") && params["action"].is_string()) {

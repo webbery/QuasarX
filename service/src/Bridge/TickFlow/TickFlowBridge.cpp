@@ -351,6 +351,13 @@ order_id TickFlowBridge::AddOrder(run_id_t run_id, const symbol_t& symbol, Order
         order->_promise.set_value(true);
     } catch (...) {}
 
+    // 唤醒 broker 线程，让它立刻把成交记进账本（不等下一次订单推送）
+    if (_server) {
+        if (auto broker = _server->GetBrokerSubSystem()) {
+            broker->NotifyOrderUpdate();
+        }
+    }
+
     return order_id{};
 }
 
