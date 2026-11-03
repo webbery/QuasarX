@@ -109,6 +109,12 @@ public:
     // ── 持仓 ───────────────────────────────────────────────────
     Map<symbol_t, Position> GetPositions(const String& strategy) const;
     int64_t GetQuantity(const String& strategy, symbol_t symbol) const;
+    // 单只持仓快照（O(1)，供成本价/数量这类点查使用，避免整表拷贝）
+    Position GetPosition(const String& strategy, symbol_t symbol) const;
+    // 建仓时间（该标的现存最早一笔未平批次的时间）；无记录返回 0。
+    // 供风控判定"这根 bar 上仓位是否已经存在"使用：日终策略回放 160 根历史 bar，
+    // 而仓位是之后才建立的，早于建仓时间的 bar 不该触发止损。
+    time_t GetPositionEntryTime(const String& strategy, symbol_t symbol) const;
     const LedgerLots& GetLots(const String& strategy) const;
     double GetPositionCost(const String& strategy, symbol_t symbol) const;
     double GetPositionValue(const String& strategy) const;
@@ -141,9 +147,6 @@ public:
                           const Map<symbol_t, Position>& positions);
     const BrokerMirror* GetBrokerMirror(const String& strategy) const;
 
-    // ── 版本号 ─────────────────────────────────────────────────
-    uint64_t GetVersion(const String& strategy) const;
-
     // ── 持久化 ─────────────────────────────────────────────────
     bool Save(const String& path) const;
     bool Load(const String& path);
@@ -162,12 +165,10 @@ public:
 private:
     Account& _account(const String& strategy);
     const Account* _find(const String& strategy) const;
-    void _touch(const String& strategy);
     static int64_t QuantityOf(const Account& acc, symbol_t symbol);
 
     mutable std::mutex _mutex;
     Map<String, Account> _accounts;
     Map<String, BrokerMirror> _mirrors;
-    Map<String, uint64_t> _versions;
     double _initialCapital = 0.0;
 };

@@ -84,15 +84,25 @@ inline const char* to_string(RiskAction a) {
  */
 class RiskContext {
 public:
-    bool triggered = false;
-    RiskTriggerType trigger_type = RiskTriggerType::None;
-    RiskAction action = RiskAction::None;
-    double reduce_ratio = 0.0;      // [0, 1]，仅 action=Reduce 时有效
+    RiskTriggerType _trigger_type = RiskTriggerType::None;
+    RiskAction _action = RiskAction::None;
+    double _reduce_ratio = 0.0;      // [0, 1]，仅 _action=Reduce 时有效
+
+    // 触发风控的标的（可能多个：同一根 bar 上多只标的都可能各自击穿止损）。
+    // 它同时是"是否触发风控"的判据 —— 集合非空即表示触发了。
+    //
+    // 必须带上标的，否则下游只能按"全部平仓"处理：一只标的触发就把整个组合清空
+    // （2026-11-03：sz.300450 的追踪止损误触发，4 只持仓被连带平掉并全部打上
+    // "紧急"标记，而其余 3 只并没有触发任何风控条件）。
+    Set<symbol_t> _trigger_symbols;
+
+    // 是否触发了风控
+    bool Triggered() const { return !_trigger_symbols.empty(); }
 
     void reset() {
-        triggered = false;
-        trigger_type = RiskTriggerType::None;
-        action = RiskAction::None;
-        reduce_ratio = 0.0;
+        _trigger_type = RiskTriggerType::None;
+        _action = RiskAction::None;
+        _reduce_ratio = 0.0;
+        _trigger_symbols.clear();
     }
 };

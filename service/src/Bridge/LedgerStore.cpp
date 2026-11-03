@@ -48,10 +48,6 @@ const LedgerStore::Account* LedgerStore::_find(const String& strategy) const {
     return it == _accounts.end() ? nullptr : &it->second;
 }
 
-void LedgerStore::_touch(const String& strategy) {
-    _versions[strategy] = _versions.count(strategy) ? _versions[strategy] + 1 : 1;
-}
-
 int64_t LedgerStore::QuantityOf(const Account& acc, symbol_t symbol) {
     auto it = acc._positions.find(symbol);
     return it == acc._positions.end() ? 0 : it->second._quantity;
@@ -65,7 +61,6 @@ bool LedgerStore::Allocate(const String& strategy, double amount) {
     acc._allocated = amount;
     acc._cash = amount;
     acc._active = true;
-    _touch(strategy);
     return true;
 }
 
@@ -74,7 +69,6 @@ double LedgerStore::Reclaim(const String& strategy) {
     auto it = _accounts.find(strategy);
     if (it == _accounts.end()) return 0.0;
     it->second._active = false;
-    _touch(strategy);
     return it->second._allocated;
 }
 
@@ -83,14 +77,12 @@ void LedgerStore::Deactivate(const String& strategy) {
     auto it = _accounts.find(strategy);
     if (it != _accounts.end()) {
         it->second._active = false;
-        _touch(strategy);
     }
 }
 
 void LedgerStore::ReclaimAll() {
     std::lock_guard<std::mutex> lock(_mutex);
     _accounts.clear();
-    _versions.clear();
 }
 
 bool LedgerStore::HasStrategy(const String& strategy) const {
@@ -148,7 +140,6 @@ double LedgerStore::GetAllocated(const String& strategy) const {
 void LedgerStore::SetAvailable(const String& strategy, double available) {
     std::lock_guard<std::mutex> lock(_mutex);
     _account(strategy)._cash = available;
-    _touch(strategy);
 }
 
 double LedgerStore::UpdateAvailable(const String& strategy, double delta) {
@@ -158,7 +149,6 @@ double LedgerStore::UpdateAvailable(const String& strategy, double delta) {
     if (acc._cash < 0.0) {
         WARN("[Ledger] strategy '{}' cash negative: {}", strategy, acc._cash);
     }
-    _touch(strategy);
     return acc._cash;
 }
 
@@ -186,6 +176,24 @@ int64_t LedgerStore::GetQuantity(const String& strategy, symbol_t symbol) const 
     const Account* acc = _find(strategy);
     if (!acc) return 0;
     return QuantityOf(*acc, symbol);
+}
+
+Position LedgerStore::GetPosition(const String& strategy, symbol_t symbol) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    const Account* acc = _find(strategy);
+    if (!acc) return Position{};
+    auto it = acc->_positions.find(symbol);
+    return it == acc->_positions.end() ? Position{} : it->second;
+}
+
+time_t LedgerStore::GetPositionEntryTime(const String& strategy, symbol_t symbol) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    const Account* acc = _find(strategy);
+    if (!acc) return 0;
+    auto it = acc->_lots.find(symbol);
+    if (it == acc->_lots.end() || it->second.empty()) return 0;
+    // FIFO：front 就是现存最早的一批；部分卖出消耗的也是最早的批次。
+    return it->second.front()._date;
 }
 
 const LedgerLots& LedgerStore::GetLots(const String& strategy) const {
@@ -428,7 +436,6 @@ double LedgerStore::ApplyFill(const String& strategy, const LedgerFill& fill) {
     if (acc._cash < 0.0) {
         WARN("[Ledger] strategy '{}' cash negative after fill: {}", strategy, acc._cash);
     }
-    _touch(strategy);
     return cashDelta;
 }
 
@@ -475,14 +482,6 @@ const BrokerMirror* LedgerStore::GetBrokerMirror(const String& strategy) const {
     std::lock_guard<std::mutex> lock(_mutex);
     auto it = _mirrors.find(strategy);
     return it == _mirrors.end() ? nullptr : &it->second;
-}
-
-// ── 版本号 ──────────────────────────────────────────────────────
-
-uint64_t LedgerStore::GetVersion(const String& strategy) const {
-    std::lock_guard<std::mutex> lock(_mutex);
-    auto it = _versions.find(strategy);
-    return it == _versions.end() ? 0 : it->second;
 }
 
 // ── 持久化 ──────────────────────────────────────────────────────
@@ -569,67 +568,70 @@ bool LedgerStore::Load(const String& path) {
         nlohmann::json root;
         ifs >> root;
 
-        std::lock_guard<std::mutex> lock(_mutex);
-        _accounts.clear();
-        _versions.clear();
-        _initialCapital = root.value("initialCapital", 0.0);
+        // 先解析到临时表，全部成功后再整体切换：
+        // 解析中断时旧账本保持原样，不会留下半加载状态（现金/持仓各缺一半）。
+        Map<String, Account> loaded;
+        if (root.contains("accounts")) {
+            for (const auto& [name, item] : root["accounts"].items()) {
+                Account acc;
+                acc._allocated = item.value("allocated", 0.0);
+                acc._cash = item.value("cash", 0.0);
+                acc._profit = item.value("profit", 0.0);
+                acc._active = item.value("active", true);
 
-        if (!root.contains("accounts")) return true;
-        for (const auto& [name, item] : root["accounts"].items()) {
-            Account acc;
-            acc._allocated = item.value("allocated", 0.0);
-            acc._cash = item.value("cash", 0.0);
-            acc._profit = item.value("profit", 0.0);
-            acc._active = item.value("active", true);
-
-            if (item.contains("positions")) {
-                for (const auto& [sym, pos] : item["positions"].items()) {
-                    Position p{};
-                    p._symbol = to_symbol(sym);
-                    p._quantity = pos.value("quantity", (int64_t)0);
-                    p._avgPrice = pos.value("avg_cost", 0.0);
-                    p._currentPrice = pos.value("current_price", 0.0);
-                    p._isMargin = pos.value("is_margin", false);
-                    p._marginRatio = pos.value("margin_ratio", 1.0);
-                    acc._positions[p._symbol] = p;
+                if (item.contains("positions")) {
+                    for (const auto& [sym, pos] : item["positions"].items()) {
+                        Position p{};
+                        p._symbol = to_symbol(sym);
+                        p._quantity = pos.value("quantity", (int64_t)0);
+                        p._avgPrice = pos.value("avg_cost", 0.0);
+                        p._currentPrice = pos.value("current_price", 0.0);
+                        p._isMargin = pos.value("is_margin", false);
+                        p._marginRatio = pos.value("margin_ratio", 1.0);
+                        acc._positions[p._symbol] = p;
+                    }
                 }
+
+                if (item.contains("lots")) {
+                    for (const auto& [sym, arr] : item["lots"].items()) {
+                        symbol_t symbol = to_symbol(sym);
+                        for (const auto& lot : arr) {
+                            LedgerLot l{};
+                            l._quantity = lot.value("quantity", (int64_t)0);
+                            l._price = lot.value("price", 0.0);
+                            l._date = static_cast<time_t>(lot.value("date", (int64_t)0));
+                            acc._lots[symbol].push_back(l);
+                        }
+                    }
+                }
+
+                if (item.contains("credit")) {
+                    const auto& credit = item["credit"];
+                    acc._credit.borrowedCash = credit.value("borrowedCash", 0.0);
+                    if (credit.contains("borrowedShares")) {
+                        for (const auto& [sym, qty] : credit["borrowedShares"].items()) {
+                            acc._credit.borrowedShares[sym] = qty.get<int64_t>();
+                        }
+                    }
+                    if (credit.contains("shortAvgPrice")) {
+                        for (const auto& [sym, price] : credit["shortAvgPrice"].items()) {
+                            acc._credit.shortAvgPrice[sym] = price.get<double>();
+                        }
+                    }
+                    if (credit.contains("financedAmount")) {
+                        for (const auto& [sym, amount] : credit["financedAmount"].items()) {
+                            acc._credit.financedAmount[sym] = amount.get<double>();
+                        }
+                    }
+                }
+
+                loaded[name] = std::move(acc);
             }
-
-            if (item.contains("lots")) {
-                for (const auto& [sym, arr] : item["lots"].items()) {
-                    symbol_t symbol = to_symbol(sym);
-                    for (const auto& lot : arr) {
-                        LedgerLot l{};
-                        l._quantity = lot.value("quantity", (int64_t)0);
-                        l._price = lot.value("price", 0.0);
-                        l._date = static_cast<time_t>(lot.value("date", (int64_t)0));
-                        acc._lots[symbol].push_back(l);
-                    }
-                }
-            }
-
-            if (item.contains("credit")) {
-                const auto& credit = item["credit"];
-                acc._credit.borrowedCash = credit.value("borrowedCash", 0.0);
-                if (credit.contains("borrowedShares")) {
-                    for (const auto& [sym, qty] : credit["borrowedShares"].items()) {
-                        acc._credit.borrowedShares[sym] = qty.get<int64_t>();
-                    }
-                }
-                if (credit.contains("shortAvgPrice")) {
-                    for (const auto& [sym, price] : credit["shortAvgPrice"].items()) {
-                        acc._credit.shortAvgPrice[sym] = price.get<double>();
-                    }
-                }
-                if (credit.contains("financedAmount")) {
-                    for (const auto& [sym, amount] : credit["financedAmount"].items()) {
-                        acc._credit.financedAmount[sym] = amount.get<double>();
-                    }
-                }
-            }
-
-            _accounts[name] = std::move(acc);
         }
+
+        std::lock_guard<std::mutex> lock(_mutex);
+        _accounts = std::move(loaded);
+        _initialCapital = root.value("initialCapital", 0.0);
         return true;
     } catch (const std::exception& e) {
         WARN("[Ledger] Load failed: {}", e.what());
@@ -706,6 +708,5 @@ int LedgerStore::RestoreFromFills(const String& strategy, const List<RestoreFill
         }
     }
 
-    _touch(strategy);
     return static_cast<int>(acc._positions.size());
 }

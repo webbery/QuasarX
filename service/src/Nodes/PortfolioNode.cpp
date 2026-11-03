@@ -206,7 +206,8 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         auto getPositionQuantity = [&](symbol_t symbol) -> int64_t {
             auto* broker = _server->GetBrokerSubSystem();
             auto* capital = broker->GetStrategyCapital(strategy);
-            return capital->getPositions().getHoldingQuantity(symbol);
+            // 点查：不要为了取一个数量把整张持仓表拷一遍
+            return capital->getHoldingQuantity(symbol);
         };
 
         newPlan = generatePlan(strategy, context, decisions, targetCapital,
@@ -515,19 +516,75 @@ ExecutionPlan PortfolioNode::generatePlan(
 
     // 资金闸门：买入总额不应超过账本可用现金 + 本轮卖出回款。
     // 超了说明预算口径与账本脱节（例如权益重复计入了已花掉的现金）。
+    // 这里做硬拦：
+    //   1. 现金为负（超额占用）→ 丢弃所有买入项（账户已超配，不能再开新仓）
+    //   2. 买入总额超过可用现金+卖出回款 → 按比例缩减买入（避免超买）
     if (_server->GetRunningMode() != RuningType::Backtest) {
+        auto* broker = _server->GetBrokerSubSystem();
+        const double cash = broker ? broker->GetLedger()->GetAvailable(strategy) : 0.0;
+
+        // 统计买入/卖出总额
         double buyNotional = 0.0;
         double sellNotional = 0.0;
         for (const auto& item : plan._items) {
             if (item._action == TradeAction::BUY) buyNotional += item._targetValue;
             else if (item._action == TradeAction::SELL) sellNotional += item._targetValue;
         }
-        auto* broker = _server->GetBrokerSubSystem();
-        const double cash = broker ? broker->GetLedger()->GetAvailable(strategy) : 0.0;
-        if (buyNotional > cash + sellNotional + 1.0) {
+
+        // 闸门 1：超额占用 → 禁止开新仓
+        if (cash < 0.0) {
+            if (buyNotional > 0.0) {
+                STRATEGY_WARN(strategy,
+                              "Cash is negative ({:.0f}), over-committed; dropping all {} BUY items "
+                              "(notional {:.0f}). Please verify sell proceeds before opening new positions.",
+                              cash, plan._items.size(), buyNotional);
+                // 丢弃所有买入项
+                Vector<ExecutionItem> filtered;
+                for (const auto& item : plan._items) {
+                    if (item._action != TradeAction::BUY) {
+                        filtered.push_back(item);
+                    }
+                }
+                plan._items = std::move(filtered);
+                // 重新计算 usedCapital
+                plan._usedCapital = 0.0;
+                for (const auto& item : plan._items) {
+                    if (item._action == TradeAction::BUY) {
+                        plan._usedCapital += item._targetValue;
+                    }
+                }
+            }
+        }
+        // 闸门 2：超预算 → 按比例缩减
+        else if (buyNotional > cash + sellNotional + 1.0) {
+            const double budget = cash + sellNotional;
+            const double scale = budget / buyNotional;
             STRATEGY_WARN(strategy,
-                          "Plan buy notional {:.0f} exceeds available cash {:.0f} + sell proceeds {:.0f}",
-                          buyNotional, cash, sellNotional);
+                          "Plan buy notional {:.0f} exceeds budget {:.0f} (cash {:.0f} + sell {:.0f}); "
+                          "scaling BUY items by {:.2f}",
+                          buyNotional, budget, cash, sellNotional, scale);
+            // 按比例缩减每个买入项的数量（向下取整到 100 股）
+            for (auto& item : plan._items) {
+                if (item._action == TradeAction::BUY && item._limitPrice > 0.0) {
+                    const int64_t newQty = static_cast<int64_t>(
+                        std::floor(item._quantity * scale / 100.0)) * 100;
+                    if (newQty < 100) {
+                        // 缩减后不足一手，丢弃该项
+                        item._action = TradeAction::HOLD;
+                        item._quantity = 0;
+                    } else {
+                        item._quantity = static_cast<int>(newQty);
+                        item._targetValue = newQty * item._limitPrice;
+                    }
+                }
+            }
+            // 重新计算 usedCapital
+            plan._usedCapital = 0.0;
+            for (const auto& item : plan._items) {
+                if (item._action == TradeAction::BUY) {
+                    plan._usedCapital += item._targetValue;
+                }
+            }
         }
     }
 
@@ -557,20 +614,21 @@ bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {
     return false;
 }
 
-// ── 风控短路：RiskContext.triggered 为 true 时，全部改为 SELL ──
+// ── 风控短路：只把触发风控的标的改为 SELL ──
+// 原实现把全部 decisions 都改成 SELL，等于"一只标的触发 → 清空整个组合"，
+// 其余持仓会被连带平掉并打上"紧急"标记。现在只处理带标的的触发集合；
+// 集合为空（风控未定位到具体标的）时才退回全局平仓语义。
 void PortfolioNode::applyRiskContext(DataContext& context, Map<symbol_t, TradeAction>& decisions) {
     auto* rc = context.GetRiskContext();
-    if (!rc || !rc->triggered) {
+    if (!rc || !rc->Triggered()) {
         return;
     }
 
-    if (_server->GetRunningMode() != RuningType::Backtest) {
-        STRATEGY_INFO(context.CurrentStrategy(), "[PortfolioNode] RiskContext triggered (type={})",
-             to_string(rc->trigger_type));
-    } else {
-        INFO("[PortfolioNode] RiskContext triggered (type={})", to_string(rc->trigger_type));
-    }
+    INFO("[PortfolioNode] {} RiskContext triggered (type={}, symbols={})",
+            to_string(rc->_trigger_type), context.CurrentStrategy(), rc->_trigger_symbols.size());
+
     for (auto& [symbol, action] : decisions) {
+        if (rc->_trigger_symbols.count(symbol) == 0) continue;
         if (action != TradeAction::SELL) {
             action = TradeAction::SELL;
         }

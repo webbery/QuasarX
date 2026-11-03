@@ -61,18 +61,26 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
 }
 
 NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& context) {
-    // ── 风控短路处理：RiskContext triggered 时修改 plan（添加平仓腿） ──
+    // ── 风控短路处理：RiskContext 触发时修改 plan（给触发标的添加平仓腿） ──
     auto* rc = context.GetRiskContext();
-    if (rc && rc->triggered && rc->action == RiskAction::Close) {
+    if (rc && rc->Triggered() && rc->_action == RiskAction::Close) {
+        // 只平触发风控的标的。触发集合为空时才退回"全部平仓"（兼容没有标的的风控源）。
+        // 以前是无条件遍历全部持仓：一只标的触发就把整个组合清空，
+        // 其余持仓也被打上"紧急"标记，决策与真实风控意图不符。
+        auto should_close = [rc](symbol_t symbol) {
+            return rc->_trigger_symbols.empty() || rc->_trigger_symbols.count(symbol) > 0;
+        };
+
         if (_server->GetRunningMode() != RuningType::Backtest) {
-            STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+            STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close triggered: type={} symbols={}",
+                          to_string(rc->_trigger_type), rc->_trigger_symbols.size());
 
             // 收集被平仓的标的
             Vector<String> closedSymbols;
             auto* broker = _server->GetBrokerSubSystem();
             auto* capital = broker->GetStrategyCapital(strategy);
             for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
-                if (pos._quantity > 0) {
+                if (pos._quantity > 0 && should_close(symbol)) {
                     closedSymbols.push_back(get_symbol(symbol));
                 }
             }
@@ -100,21 +108,22 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     "触发类型: {}\n"
                     "平仓标的: {}",
                     strategy,
-                    int(rc->trigger_type),
+                    int(rc->_trigger_type),
                     symbolsStr);
                 _server->SendEmail(emailContent);
             }
         } else {
-            INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+            INFO("[ExecuteNode] Emergency close triggered: type={} symbols={}",
+                 to_string(rc->_trigger_type), rc->_trigger_symbols.size());
         }
 
-        // 修改 plan：为每个持仓添加平仓腿
+        // 修改 plan：为触发标的的持仓添加平仓腿
         auto& plan = context.GetExecutionPlan();
         if (_server->GetRunningMode() != RuningType::Backtest) {
             auto* broker = _server->GetBrokerSubSystem();
             auto* capital = broker->GetStrategyCapital(strategy);
             for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
-                if (pos._quantity > 0) {
+                if (pos._quantity > 0 && should_close(symbol)) {
                     ExecutionItem item;
                     item._symbol = symbol;
                     item._action = TradeAction::SELL;
@@ -147,7 +156,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 if (btCtx) {
                     for (const auto& symbol : btCtx->getSymbols()) {
                         int64_t qty = btCtx->getPosition(symbol);
-                        if (qty > 0) {
+                        if (qty > 0 && should_close(symbol)) {
                             ExecutionItem item;
                             item._symbol = symbol;
                             item._action = TradeAction::SELL;

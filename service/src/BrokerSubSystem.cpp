@@ -221,6 +221,31 @@ StrategyCapital* BrokerSubSystem::CreateStrategyCapital(const String& strategy, 
          "initialMarginRatio={:.2f}",
          strategy, allocated, _ledger.GetAvailable(strategy), marginConfig._initialMarginRatio);
 
+    // 启动自检：账本是唯一权威，这里把实际状态打一遍，便于重启后核对
+    // "持仓数 / 现金" 是否与账本文件一致。
+    // 2026-11-02 事故：投影缓存失明（版本号协议存在漏写路径），重启后的第一份
+    // 日终决策把已持仓标的又买了一遍，且预算按全量权益算 → 账户被买到现金为负。
+    {
+        const Map<symbol_t, Position> positions = _ledger.GetPositions(strategy);
+        int held = 0;
+        String holdings;
+        for (const auto& [sym, pos] : positions) {
+            if (pos._quantity == 0) continue;
+            held++;
+            if (!holdings.empty()) holdings += ",";
+            holdings += get_symbol(sym);
+            holdings += "=";
+            holdings += std::to_string(pos._quantity);
+        }
+        INFO("[BrokerSubSystem] Ledger check: strategy='{}' held={}/{} cash={:.2f} equity={:.2f} holdings=[{}]",
+             strategy, held, positions.size(), _ledger.GetAvailable(strategy),
+             _ledger.GetEquity(strategy), holdings);
+        if (_ledger.GetAvailable(strategy) < 0.0) {
+            WARN("[BrokerSubSystem] Ledger check: strategy='{}' is over-committed (cash={:.2f}); "
+                 "今日买入前请先核对卖出回款", strategy, _ledger.GetAvailable(strategy));
+        }
+    }
+
     // 券商账本校验：只在首次创建时做一次
     _syncBrokerLedger(strategy);
 

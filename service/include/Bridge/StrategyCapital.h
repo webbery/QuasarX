@@ -68,7 +68,9 @@ private:
     MarginConfig _config;
 };
 
-// 持仓只读视图
+// 持仓只读快照。
+// getAll() 按值返回：调用方普遍写成 capital->getPositions().getAll()，
+// 若这里返回内部成员的引用，外层 getPositions() 返回临时对象时该引用会悬垂。
 class PositionLedger {
 public:
     void Set(const Map<symbol_t, Position>& positions) { _positions = positions; }
@@ -83,21 +85,25 @@ public:
         return it != _positions.end() ? it->second._quantity : 0;
     }
 
-    const Map<symbol_t, Position>& getAll() const { return _positions; }
+    Map<symbol_t, Position> getAll() const { return _positions; }
 
 private:
     Map<symbol_t, Position> _positions;
 };
 
 // 策略资金接口
-// 数据全部来自账本（LedgerStore），本接口只做只读投影与两融口径计算。
+// 账本（LedgerStore）是资金与持仓的唯一来源，本接口是它的只读投影。
+// 这里刻意不做缓存：早期版本用"版本号 + 本地副本"缓存投影，
+// 而版本号协议存在漏写路径（Load / UpdatePrice 不 bump），
+// 重启后投影会一直停在"空持仓"状态 —— 表现为策略把已持仓标的再买一遍、
+// 预算按全量权益计算（超配）。直读后"重启即同步"是自然结果，不依赖失效通知。
 class StrategyCapital {
 public:
     virtual ~StrategyCapital() = default;
 
     // 资金查询
     virtual double getAllocated() const = 0;   // 分配总额
-    virtual double getAvailable() const = 0;   // 可用余额（负值截断为 0）
+    virtual double getAvailable() const = 0;   // 可用现金（超配时为负，原样返回）
     virtual double getEquity() const = 0;      // 权益 = 可用 + 持仓市值 − 融资负债
 
     // 两融配置
@@ -111,7 +117,11 @@ public:
     virtual double getShortSellingPower() const = 0;   // 做空购买力
 
     // 持仓查询
-    virtual const PositionLedger& getPositions() const = 0;
+    virtual PositionLedger getPositions() const = 0;               // 整表快照（按值）
+    virtual int64_t getHoldingQuantity(symbol_t symbol) const = 0; // 单只数量（O(1)）
+    virtual Position getPosition(symbol_t symbol) const = 0;       // 单只持仓（O(1)）
+    // 建仓时间（最早未平批次）；无记录返回 0
+    virtual time_t getPositionEntryTime(symbol_t symbol) const = 0;
 
     // 预算计算（核心方法）
     // budget = equity × positionRatio − 保留持仓市值
@@ -123,7 +133,7 @@ public:
     virtual void updatePrice(symbol_t symbol, double price) = 0;
 };
 
-// 策略资金实现：读穿账本，按账本版本号刷新本地缓存
+// 策略资金实现：直读账本，不做本地缓存
 class StrategyCapitalImpl : public StrategyCapital {
 public:
     StrategyCapitalImpl(LedgerStore* ledger, const String& strategy,
@@ -136,13 +146,14 @@ public:
     }
 
     double getAvailable() const override {
-        _refresh();
-        return std::max(0.0, _cash);
+        // 原样返回账本现金：负值代表超额占用（已买入的市值超过可用资金），
+        // 截成 0 会把超配藏起来，报表上只剩一个没有解释的"可用 ¥0"。
+        return _ledger ? _ledger->GetAvailable(_strategy) : _allocated;
     }
 
     double getEquity() const override {
         if (_ledger) return _ledger->GetEquity(_strategy);
-        return _cash;
+        return _allocated;
     }
 
     // 两融配置
@@ -157,13 +168,12 @@ public:
     // 两融相关
     double getMarginEquity() const override {
         if (_ledger) return _ledger->GetMarginEquity(_strategy);
-        return _cash;
+        return _allocated;
     }
 
     double getMaintenanceMargin() const override {
-        _refresh();
         double total = 0.0;
-        for (const auto& [symbol, pos] : _positions.getAll()) {
+        for (const auto& [symbol, pos] : getPositions().getAll()) {
             total += _margin.calculateMaintenanceMargin(pos);
         }
         return total;
@@ -178,9 +188,22 @@ public:
     }
 
     // 持仓查询
-    const PositionLedger& getPositions() const override {
-        _refresh();
-        return _positions;
+    PositionLedger getPositions() const override {
+        PositionLedger ledger;
+        if (_ledger) ledger.Set(_ledger->GetPositions(_strategy));
+        return ledger;
+    }
+
+    int64_t getHoldingQuantity(symbol_t symbol) const override {
+        return _ledger ? _ledger->GetQuantity(_strategy, symbol) : 0;
+    }
+
+    Position getPosition(symbol_t symbol) const override {
+        return _ledger ? _ledger->GetPosition(_strategy, symbol) : Position{};
+    }
+
+    time_t getPositionEntryTime(symbol_t symbol) const override {
+        return _ledger ? _ledger->GetPositionEntryTime(_strategy, symbol) : 0;
     }
 
     // 预算计算
@@ -190,10 +213,14 @@ public:
             return getBuyingPower();
         }
 
-        _refresh();
         double equity = getEquity();
         double retainedValue = 0.0;
-        for (const auto& [symbol, pos] : _positions.getAll()) {
+        // 直读账本：保留市值要用当前 bar 的价格（调用方会先把本 bar 价格灌进账本），
+        // 读缓存会拿到上一版价格，预算就落在旧价上。
+        const Map<symbol_t, Position> positions = _ledger
+            ? _ledger->GetPositions(_strategy)
+            : Map<symbol_t, Position>{};
+        for (const auto& [symbol, pos] : positions) {
             if (pos._quantity == 0) continue;
             if (sellSymbols.count(symbol) == 0) {
                 retainedValue += std::abs(pos.getMarketValue());
@@ -208,26 +235,12 @@ public:
     void updatePrice(symbol_t symbol, double price) override {
         if (_ledger) {
             _ledger->UpdatePrice(_strategy, symbol, price);
-            _version = 0;  // 强制下次读取刷新
         }
     }
 
 private:
-    // 账本版本变化时刷新缓存
-    void _refresh() const {
-        if (!_ledger) return;
-        const uint64_t version = _ledger->GetVersion(_strategy);
-        if (version == _version) return;
-        _version = version;
-        _cash = _ledger->GetAvailable(_strategy);
-        _positions.Set(_ledger->GetPositions(_strategy));
-    }
-
     LedgerStore* _ledger = nullptr;
     String _strategy;
     double _allocated = 0.0;
     MarginAccount _margin;
-    mutable double _cash = 0.0;
-    mutable PositionLedger _positions;
-    mutable uint64_t _version = 0;
 };

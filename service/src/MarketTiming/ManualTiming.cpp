@@ -286,6 +286,12 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
         return fmt::format("{:.2f}", v);
     };
 
+    // 金额展示：负值（超额占用）用 "-¥xxx" 形式，
+    // 避免出现 "¥-332736.00" 这种读不懂的写法。
+    auto fmtAmount = [](double v) {
+        return v < 0.0 ? ("-¥" + fmt::format("{:.2f}", -v)) : ("¥" + fmt::format("{:.2f}", v));
+    };
+
     // ==== 构建 HTML 邮件 ====
     // 日期用 DecisionSet 的归属日（回放口径），不用 wall clock：
     // 补跑历史日期时邮件正文与落盘/DB 必须说的是同一天。
@@ -333,10 +339,19 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     // 不显示 ¥0 —— 那会让读者以为钱被花光了，而事实是"查不到"。
     const bool showBudget = budgetKnown && strategyCap > 0.0;
     if (showBudget) {
-        htmlItem("分配资金", "¥" + fmtMoney(strategyCap));
-        htmlItem("可用资金", "¥" + fmtMoney(strategyAvailable));
+        htmlItem("分配资金", fmtAmount(strategyCap));
+        htmlItem("可用资金", fmtAmount(strategyAvailable));
     } else if (!budgetKnown) {
         htmlItem("资金账本", "未注册（无法核对预算）", true);
+    }
+    // 可用资金为负 = 账户已超额占用（持仓市值 + 当日买入 > 分配资金）。
+    // 这个状态以前被截成 ¥0 藏起来，读者只会以为"钱花光了"，
+    // 看不出是超配 —— 超配时买入预算仍按账本权益口径给出，必须显式提示。
+    if (showBudget && strategyAvailable < 0.0) {
+        html += R"h(<div style="margin-top:8px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#b91c1c;">)h";
+        html += "⚠️ 可用资金为负：账户已超额占用（持仓市值 + 当日买入 &gt; 分配资金）。"
+                "当日买入预算按账本权益口径给出，请先核对卖出回款再下单。";
+        html += "</div>";
     }
     auto buyPct = showBudget ? fmt::format(" ({:.1f}%)", totalBuyValue / strategyCap * 100.0) : "";
     auto sellPct = showBudget ? fmt::format(" ({:.1f}%)", totalSellValue / strategyCap * 100.0) : "";

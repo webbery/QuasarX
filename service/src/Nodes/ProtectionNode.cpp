@@ -191,7 +191,7 @@ static double get_position_cost(Server* server, DataContext& context, const Stri
     } else {
         auto* broker = server->GetBrokerSubSystem();
         auto* capital = broker->GetStrategyCapital(strategy);
-        auto pos = capital->getPositions().getPosition(symbol);
+        auto pos = capital->getPosition(symbol);
         return pos._avgPrice;
     }
     return 0.0;
@@ -211,7 +211,7 @@ static int64_t get_position_qty(Server* server, DataContext& context, const Stri
     }
     auto* broker = server->GetBrokerSubSystem();
     auto* capital = broker->GetStrategyCapital(strategy);
-    return capital->getPositions().getHoldingQuantity(symbol);
+    return capital->getHoldingQuantity(symbol);
 }
 
 void ProtectionNode::syncPositions(const String& strategy, DataContext& context) {
@@ -241,10 +241,16 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
     } else {
         auto* broker = _server->GetBrokerSubSystem();
         auto* capital = broker->GetStrategyCapital(strategy);
+        // 日终策略会重放 160 根历史 bar，而仓位是之后才建立的：
+        // 早于建仓时刻的 bar 上这个仓位根本不存在，不能参与止损判定。
+        // 不排除的话，建仓前的高点会进追踪止损的参考高点，建仓当根就可能误触发
+        // （2026-11-03：sz.300450 以 29.15 建仓，参考高点却是 5 月的 57.01）。
+        const time_t now = context.Current();
         for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
-            if (pos._quantity != 0) {
-                current_symbols.insert(symbol);
-            }
+            if (pos._quantity == 0) continue;
+            const time_t entry_time = capital->getPositionEntryTime(symbol);
+            if (entry_time > 0 && now > 0 && now < entry_time) continue;
+            current_symbols.insert(symbol);
         }
     }
 
@@ -289,15 +295,22 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                 }
             }
 
-            // 获取当前价作为初始最高价和最低价（复权口径，与止损判定一致）
+            // 初始最高/最低价：以建仓价为起点，再并入当前 bar 的收盘价（复权口径）。
+            // 不能直接拿当前收盘价当起点 —— 建仓时间未知时，回放窗口里任意一根
+            // bar 的收盘价都会变成"建仓以来的极值"，追踪止损/MAE 就都算错了。
+            double high = info._avg_price > 0 ? info._avg_price : 0.0;
+            double low = high;
             String close_key = get_symbol(symbol) + ".close";
             if (context.exist(close_key)) {
                 auto price_var = context.get<Vector<double>>(close_key);
                 if (!price_var.empty()) {
-                    info._highest_price = price_var.back();
-                    info._lowest_price = price_var.back();  // Phase 0: MAE 用
+                    const double close = price_var.back();
+                    high = (high > 0) ? std::max(high, close) : close;
+                    low = (low > 0) ? std::min(low, close) : close;
                 }
             }
+            info._highest_price = high;
+            info._lowest_price = low;  // Phase 0: MAE 用
 
             _entry_info[symbol] = info;
             if (_server->GetRunningMode() != RuningType::Backtest) {
@@ -352,7 +365,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     // 回测模式 或 决策bar：正常执行止损检查
     int current_bar = context.GetEpoch();
     RiskTriggerType triggered = RiskTriggerType::None;
-    symbol_t triggered_symbol;
+    Set<symbol_t> triggered_symbols;
 
     // 公式止损：一次性计算所有标的
     Map<symbol_t, double> formulaResults;
@@ -375,6 +388,11 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         }
         if (current_price <= 0) continue;
 
+        // 同一标的上多条止损规则，命中第一条即止（保持原有优先级）。
+        // 命中的标的要全部记下来：不同标的可以各自触发各自的止损，
+        // 只有触发的那几只该被平仓，其余持仓不该被连带清掉。
+        RiskTriggerType hit = RiskTriggerType::None;
+
         // 1. 检查止损: current < entry * (1 - percent)
         if (_sl.enabled) {
             double sl_price = info._avg_price * (1.0 - _sl.percent);
@@ -382,57 +400,49 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
                  get_symbol(symbol), info._avg_price, current_price, sl_price, _sl.enabled);
             if (current_price <= sl_price) {
                 INFO("[ProtectionNode] StopLoss TRIGGERED!");
-                triggered = RiskTriggerType::StopLoss;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::StopLoss;
             }
         }
 
         // 2. 检查止盈: current > entry * (1 + percent)
-        if (_tp.enabled && triggered == RiskTriggerType::None) {
+        if (hit == RiskTriggerType::None && _tp.enabled) {
             double tp_price = info._avg_price * (1.0 + _tp.percent);
             if (current_price >= tp_price) {
-                triggered = RiskTriggerType::TakeProfit;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::TakeProfit;
             }
         }
 
         // 3. 检查追踪止损: current < highest * (1 - percent)
-        if (_ts.enabled && triggered == RiskTriggerType::None) {
+        //    highest 只统计建仓之后的 bar（见 syncPositions），
+        //    否则回放窗口里建仓前的高点会把参考价抬到不可能达到的位置。
+        if (hit == RiskTriggerType::None && _ts.enabled) {
             double highest = info._highest_price > 0 ? info._highest_price : info._avg_price;
             double ts_price = highest * (1.0 - _ts.percent);
             if (current_price <= ts_price) {
-                triggered = RiskTriggerType::TrailingStop;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::TrailingStop;
             }
         }
 
         // 4. 检查时间止损: held_bars > max_bars
-        if (_time.enabled && triggered == RiskTriggerType::None) {
+        if (hit == RiskTriggerType::None && _time.enabled) {
             int held_bars = current_bar - info._entry_bar;
             if (held_bars >= _time.max_bars) {
-                triggered = RiskTriggerType::TimeStop;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::TimeStop;
             }
         }
 
-        // 5. 检查公式止损: 表达式结果非零即触发
-        if (_formula.enabled && triggered == RiskTriggerType::None) {
+        // 5. 检查公式止损：表达式结果非零即触发
+        if (hit == RiskTriggerType::None && _formula.enabled) {
             auto it = formulaResults.find(symbol);
             if (it != formulaResults.end() && it->second != 0.0) {
-                triggered = RiskTriggerType::FormulaStop;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::FormulaStop;
             }
         }
 
         // ===== Phase 0: 4 类新止损 =====
 
         // 6. ATR 自适应止损: current < entry - multiplier * ATR(period)
-        if (_atr_sl.enabled && triggered == RiskTriggerType::None) {
+        if (hit == RiskTriggerType::None && _atr_sl.enabled) {
             // 懒初始化计算器
             if (!_atr_calc[symbol]) {
                 _atr_calc[symbol] = std::make_unique<ATR>(_atr_sl.period);
@@ -443,28 +453,26 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (context.exist(prefix + "high"))  args["high"]  = context.get<Vector<double>>(prefix + "high");
             if (context.exist(prefix + "low"))   args["low"]   = context.get<Vector<double>>(prefix + "low");
             if (context.exist(prefix + "close")) args["close"] = context.get<Vector<double>>(prefix + "close");
-            
+
             context_t result = (*_atr_calc[symbol])(args);
             double atr = std::visit([](const auto& v) -> double {
                 using T = std::decay_t<decltype(v)>;
                 if constexpr (std::is_same_v<T, double>) return v;
-                else if constexpr (std::is_same_v<T, Vector<double>>) 
+                else if constexpr (std::is_same_v<T, Vector<double>>)
                     return v.empty() ? std::nan("") : v.back();
                 else return std::nan("");
             }, result);
-            
+
             if (!std::isnan(atr) && atr > 0) {
                 double sl_price = info._avg_price - _atr_sl.multiplier * atr;
                 if (current_price <= sl_price) {
-                    triggered = RiskTriggerType::AtrStopLoss;
-                    triggered_symbol = symbol;
-                    break;
+                    hit = RiskTriggerType::AtrStopLoss;
                 }
             }
         }
 
         // 7. MA 跌破止损: current <= MA(period)
-        if (_ma_sl.enabled && triggered == RiskTriggerType::None) {
+        if (hit == RiskTriggerType::None && _ma_sl.enabled) {
             if (!_ma_calc[symbol]) {
                 _ma_calc[symbol] = std::make_unique<MA>(_ma_sl.period);
             }
@@ -473,25 +481,22 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (context.exist(close_key)) {
                 args["close"] = context.get<Vector<double>>(close_key);
             }
-            
             context_t result = (*_ma_calc[symbol])(args);
             double ma = std::visit([](const auto& v) -> double {
                 using T = std::decay_t<decltype(v)>;
                 if constexpr (std::is_same_v<T, double>) return v;
-                else if constexpr (std::is_same_v<T, Vector<double>>) 
+                else if constexpr (std::is_same_v<T, Vector<double>>)
                     return v.empty() ? std::nan("") : v.back();
                 else return std::nan("");
             }, result);
-            
+
             if (!std::isnan(ma) && current_price <= ma) {
-                triggered = RiskTriggerType::MaStopLoss;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::MaStopLoss;
             }
         }
 
         // 8. R² 趋势消失止损: R2(period) <= threshold
-        if (_r2_sl.enabled && triggered == RiskTriggerType::None) {
+        if (hit == RiskTriggerType::None && _r2_sl.enabled) {
             if (!_r2_calc[symbol]) {
                 _r2_calc[symbol] = std::make_unique<R2>(_r2_sl.period);
             }
@@ -500,35 +505,37 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (context.exist(close_key)) {
                 args["close"] = context.get<Vector<double>>(close_key);
             }
-            
             context_t result = (*_r2_calc[symbol])(args);
             double r2 = std::visit([](const auto& v) -> double {
                 using T = std::decay_t<decltype(v)>;
                 if constexpr (std::is_same_v<T, double>) return v;
-                else if constexpr (std::is_same_v<T, Vector<double>>) 
+                else if constexpr (std::is_same_v<T, Vector<double>>)
                     return v.empty() ? std::nan("") : v.back();
                 else return std::nan("");
             }, result);
-            
+
             if (!std::isnan(r2) && r2 <= _r2_sl.threshold) {
-                triggered = RiskTriggerType::R2StopLoss;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::R2StopLoss;
             }
         }
 
         // 9. MAE 最大不利偏移止损: (entry - lowest) / entry >= percent
-        if (_mae_sl.enabled && triggered == RiskTriggerType::None) {
+        if (hit == RiskTriggerType::None && _mae_sl.enabled) {
             double lowest = info._lowest_price > 0 ? info._lowest_price : info._avg_price;
             double mae = (info._avg_price - lowest) / info._avg_price;
             if (mae >= _mae_sl.percent) {
-                triggered = RiskTriggerType::MaeStopLoss;
-                triggered_symbol = symbol;
-                break;
+                hit = RiskTriggerType::MaeStopLoss;
             }
         }
 
-        // 更新最高价和最低价
+        if (hit != RiskTriggerType::None) {
+            if (triggered == RiskTriggerType::None) {
+                triggered = hit;   // 首个触发的类型作为主类型上报
+            }
+            triggered_symbols.insert(symbol);
+        }
+
+        // 更新最高价和最低价（触发与否都要更新）
         auto& entry = _entry_info[symbol];
         if (current_price > entry._highest_price) {
             entry._highest_price = current_price;
@@ -538,35 +545,41 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         }
     }
 
-    if (triggered != RiskTriggerType::None) {
-        rc->triggered = true;
-        rc->trigger_type = triggered;
-        rc->action = RiskAction::Close;
-        _pending_close.insert(triggered_symbol);
+    if (!triggered_symbols.empty()) {
+        rc->_trigger_type = triggered;
+        rc->_action = RiskAction::Close;
 
-        const auto& trig_info = _entry_info[triggered_symbol];
-        ProtectionEvent evt;
-        evt._bar_index = current_bar;
-        evt._datetime = context.Current();
-        evt._symbol = triggered_symbol;
-        evt._type = triggered;
-        // 事件里记原始价：成本取撮合成交价，现价取当前 Bar 原始报价。
-        // 止损判定用的 _avg_price 是复权口径，两者不能混用于展示，
-        // 否则除权日附近算出来的盈亏是错的。
-        evt._entry_price = trig_info._raw_cost > 0 ? trig_info._raw_cost : trig_info._avg_price;
-        evt._current_price = context.GetRawPrice(triggered_symbol);
-        evt._quantity = get_position_qty(_server, context, strategy, triggered_symbol);
-        _events.push_back(evt);
+        for (symbol_t sym : triggered_symbols) {
+            _pending_close.insert(sym);
 
-        if (_server->GetRunningMode() != RuningType::Backtest) {
-            STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
-                 get_symbol(triggered_symbol), to_string(triggered),
-                 evt._entry_price, evt._current_price, evt._quantity);
-        } else {
-            INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
-                 get_symbol(triggered_symbol), to_string(triggered),
-                 evt._entry_price, evt._current_price, evt._quantity);
+            const auto& trig_info = _entry_info[sym];
+            ProtectionEvent evt;
+            evt._bar_index = current_bar;
+            evt._datetime = context.Current();
+            evt._symbol = sym;
+            evt._type = triggered;
+            // 事件里记原始价：成本取撮合成交价，现价取当前 Bar 原始报价。
+            // 止损判定用的 _avg_price 是复权口径，两者不能混用于展示，
+            // 否则除权日附近算出来的盈亏是错的。
+            evt._entry_price = trig_info._raw_cost > 0 ? trig_info._raw_cost : trig_info._avg_price;
+            evt._current_price = context.GetRawPrice(sym);
+            evt._quantity = get_position_qty(_server, context, strategy, sym);
+            _events.push_back(evt);
+
+            if (_server->GetRunningMode() != RuningType::Backtest) {
+                STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
+                     get_symbol(sym), to_string(triggered),
+                     evt._entry_price, evt._current_price, evt._quantity);
+            } else {
+                INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
+                     get_symbol(sym), to_string(triggered),
+                     evt._entry_price, evt._current_price, evt._quantity);
+            }
         }
+
+        // 触发标的写进 RiskContext：下游只平这些标的，
+        // 其余持仓不跟着一起清掉。
+        rc->_trigger_symbols = triggered_symbols;
     }
 
     return NodeProcessResult::Success;
