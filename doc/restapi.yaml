@@ -2842,6 +2842,135 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /analysis/regression:
+    post:
+      summary: 通用金融回归
+      security:
+        - BearerAuth: []
+      description: |
+        一套估计 + 推断的内核，支持三种估计单元（估计单元不同，不能混在一个接口里）：
+
+        - **cross_section**：每个交易日 t 跨 N 个标的，`y[i,t] = a_t + X[i,t]'b_t + e[i,t]`。
+          产出逐日系数与**逐日残差**（行业/市值中性化的直接产物）。
+        - **time_series**：每个标的 i 跨 T 期，`y[i,t] = a_i + F[t]'b_i + e[i,t]`。
+          产出逐标的暴露与 t 值（风险模型）。
+        - **panel**：双向固定效应，`y[i,t] = a_i + g_t + X'beta + e`。
+          产出平均效应与组内 R²。
+
+        **输入形态**：面板直传（变体 A）。`dates` / `symbols` / `y` / `x` / `f` / `groups`
+        全部内联。`x` 的每个因子是 T×N 面板（如 log 市值），`f` 的每个因子是长度 T 的
+        共享序列（如市场收益），`groups` 是每个标的的组标签。
+
+        **缺测**：一律用 `null`。内核按 listwise 整行删除并上报丢弃行数，**不做任何插补**。
+
+        **规模上限**：标的数 ≤ 300、日期数 ≤ 5000、单元格数 T×N ≤ 1500000。
+        超限直接 400；更大规模请先把特征落缓存，再走离线批量路径。
+
+        **标准误**：`se` 的可用组合随模式不同，不支持的组合会退化为 `iid` 并在
+        `warnings` 中**明确提示**（不静默降级）：
+        - `cross_section` / `time_series`：`iid`、`hac`（`cluster` 退化为 `iid`）
+        - `panel`：`iid`、`cluster`（按**日期**聚类；`hac` 退化为 `iid`）
+
+        **共线列**：设计矩阵按列顺序贪心判秩，被判线性相关的列**显式剔除**并写入
+        `drop_reason`（形如 `collinear_with:<列名>`），绝不让最小二乘返回无意义系数。
+
+        **与 Python 侧一致性**：响应 schema 与 `tools/ml_regression.py` 逐字同构，
+        由 `test/testcases/test_regression_parity.py` 对拍守护
+        （系数/标准误/残差容差 1e-8，p 值 1e-6，剔除列集合必须完全一致）。
+
+        > 变体 B（`source.feature_cache` 服务端取数）尚未实现：传入 `source` 会返回 400。
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegressionSpec"
+            examples:
+              cross_section:
+                summary: 逐日横截面（带行业分组哑变量）
+                value:
+                  mode: cross_section
+                  dates: ["2024-01-02", "2024-01-03"]
+                  symbols: ["sh.600001", "sh.600002", "sh.600003"]
+                  y: [[0.01, -0.02, 0.005], [0.02, 0.01, -0.01]]
+                  x:
+                    size: [[3.1, 2.8, 3.5], [3.1, 2.8, 3.5]]
+                  f: {}
+                  groups:
+                    industry: ["C39", "C39", "J66"]
+                  xnames: ["size"]
+                  fnames: []
+                  groupnames: ["industry"]
+                  se: iid
+                  options:
+                    min_obs: 2
+                    min_group_size: 2
+                    add_const: true
+              time_series:
+                summary: 逐标的时序（含市场因子 + HAC 标准误）
+                value:
+                  mode: time_series
+                  dates: ["2024-01-02", "2024-01-03", "2024-01-04"]
+                  symbols: ["sz.000001", "sz.000002"]
+                  y: [[0.01, -0.02], [0.02, 0.01], [-0.01, 0.03]]
+                  x:
+                    xown: [[0.5, -0.3], [0.2, 0.1], [-0.4, 0.6]]
+                  f:
+                    mkt: [0.004, -0.002, 0.001]
+                  groups: {}
+                  xnames: ["xown"]
+                  fnames: ["mkt"]
+                  groupnames: []
+                  se: hac
+                  options:
+                    min_obs: 3
+                    hac_lag: 5
+      responses:
+        '200':
+          description: 回归结果（schema 随请求的 `mode` 变化）
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RegressionCrossSectionResult"
+                  - $ref: "#/components/schemas/RegressionTimeSeriesResult"
+                  - $ref: "#/components/schemas/RegressionPanelResult"
+        '400':
+          description: |
+            请求不合法：维度不符、因子/分组不存在、`mode`/`se` 取值非法、
+            规模超限、或使用了尚未实现的 `source`（变体 B）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegressionError"
+        '500':
+          description: 内核异常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegressionError"
+    get:
+      summary: 回归端点用法提示
+      security:
+        - BearerAuth: []
+      description: 该端点只接受 POST；GET 返回 405 与用法提示。
+      tags:
+        - Analysis
+      responses:
+        '405':
+          description: 请使用 POST
+          headers:
+            Allow:
+              schema:
+                type: string
+                example: POST
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegressionError"
+
   # ═══════════════════════════════════════════════════════════
   #  行情数据
   # ═══════════════════════════════════════════════════════════
@@ -7365,3 +7494,350 @@ components:
               type: string
           summary:
             type: object
+
+    # ═══ 通用金融回归（/analysis/regression） ═══
+    RegressionSpec:
+      type: object
+      description: |
+        回归 spec（面板直传形态）。C++ 内核与 Python 参考实现共用这一份契约。
+        符号列表显式给出，**不从列名解析**——仓库里同时存在
+        `symbol.feature` / `market.code.feature` / `symbol.field` 三套命名。
+      required:
+        - mode
+        - dates
+        - symbols
+        - y
+      properties:
+        mode:
+          type: string
+          enum: [cross_section, time_series, panel]
+          description: 估计模式（决定估计单元与产出）
+        dates:
+          type: array
+          items:
+            type: string
+          description: 交易日列表，长度 T
+          example: ["2024-01-02", "2024-01-03"]
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 标的列表，长度 N（上限 300）
+          example: ["sh.600001", "sh.600002"]
+        y:
+          type: array
+          description: |
+            被解释变量，T×N。`null` 表示缺测；内核按 listwise 整行删除，不插补。
+          items:
+            type: array
+            items:
+              type: number
+              nullable: true
+        x:
+          type: object
+          description: 截面因子，每个因子是一张 T×N 面板（如 log 市值）
+          additionalProperties:
+            type: array
+            items:
+              type: array
+              items:
+                type: number
+                nullable: true
+        f:
+          type: object
+          description: 时序因子，每个因子是长度 T 的共享序列（如市场收益、宏观变量）
+          additionalProperties:
+            type: array
+            items:
+              type: number
+              nullable: true
+        groups:
+          type: object
+          description: 分组变量，每个标的一个组标签（长度 N），内核转哑变量
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        xnames:
+          type: array
+          items:
+            type: string
+          description: 参与回归的截面因子名（必须出现在 x 中）
+        fnames:
+          type: array
+          items:
+            type: string
+          description: 参与回归的时序因子名（必须出现在 f 中）
+        groupnames:
+          type: array
+          items:
+            type: string
+          description: 参与回归的分组变量名（必须出现在 groups 中）
+        se:
+          type: string
+          enum: [iid, hac, cluster]
+          default: iid
+          description: 标准误口径；不支持的组合会降级为 iid 并在 warnings 中说明
+        options:
+          type: object
+          description: 拟合选项（样本守卫集中在这里）
+          properties:
+            min_obs:
+              type: integer
+              default: 10
+              description: 每次回归的最少有效样本
+            min_group_size:
+              type: integer
+              default: 2
+              description: 分组最少成员数，不足并入 fallback_group
+            hac_lag:
+              type: integer
+              default: 20
+              description: HAC 滞后阶
+            add_const:
+              type: boolean
+              default: true
+              description: 是否加截距
+            winsor_q:
+              type: number
+              default: 0.0
+              description: 截面缩尾分位（0 = 不裁剪，只作用于 y）
+            ridge_lambda:
+              type: number
+              default: 0.0
+              description: 岭惩罚（0 = OLS；截距不参与惩罚）
+            report_vif:
+              type: boolean
+              default: true
+              description: 是否计算 VIF
+            time_ordered:
+              type: boolean
+              default: false
+              description: 行是否按时间排列（决定 Durbin-Watson 是否有意义）
+            fallback_group:
+              type: string
+              default: OTHER
+              description: 小组合并后的兜底组名
+
+    RegressionTerm:
+      type: object
+      description: 单个回归项。未估计（被剔除）的项 beta/se/t/p 均为 null。
+      properties:
+        name:
+          type: string
+          description: 项名（const / 因子名 / 分组哑变量名）
+        beta:
+          type: number
+          nullable: true
+        se:
+          type: number
+          nullable: true
+        t:
+          type: number
+          nullable: true
+        p:
+          type: number
+          nullable: true
+          description: 双侧 student-t p 值，恒在 [0,1]
+        std_beta:
+          type: number
+          description: 标准化系数（仅对数值列有意义）
+        dropped:
+          type: boolean
+          description: 是否被显式剔除
+        drop_reason:
+          type: string
+          description: |
+            剔除原因：`collinear_with:<列名>` / `collinear_global` /
+            `constant` / `zero_variance`
+
+    RegressionCrossSectionResult:
+      type: object
+      description: 逐日横截面回归结果（mode=cross_section）
+      properties:
+        mode:
+          type: string
+          example: cross_section
+        dates:
+          type: array
+          items:
+            type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        terms:
+          type: array
+          description: 系数为逐日均值，标准误按系数序列的 HAC/IID 计算（Fama-MacBeth 口径）
+          items:
+            $ref: "#/components/schemas/RegressionTerm"
+        vif:
+          type: array
+          items:
+            type: number
+          description: 与 terms 对齐；截距与被剔除项为 0
+        cond:
+          type: number
+          description: 设计矩阵列标准化后的条件数
+        warnings:
+          type: array
+          items:
+            type: string
+          description: 缺测丢弃、共线剔除、se 降级等提示
+        beta:
+          type: array
+          description: T×K 逐日系数；某日不可估的列为 null
+          items:
+            type: array
+            items:
+              type: number
+              nullable: true
+        resid:
+          type: array
+          description: T×N 逐日残差（中性化产物）
+          items:
+            type: array
+            items:
+              type: number
+              nullable: true
+        r2:
+          type: array
+          description: 长度 T 的逐日 R²
+          items:
+            type: number
+            nullable: true
+        n_names:
+          type: array
+          description: 长度 T 的逐日有效标的数
+          items:
+            type: integer
+        dropped:
+          type: array
+          description: T×K 逐日剔除掩码（1 = 该日该列被剔除）
+          items:
+            type: array
+            items:
+              type: integer
+
+    RegressionTimeSeriesResult:
+      type: object
+      description: 逐标的时序回归结果（mode=time_series）
+      properties:
+        mode:
+          type: string
+          example: time_series
+        dates:
+          type: array
+          items:
+            type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        terms:
+          type: array
+          description: 系数为逐标的暴露的截面均值
+          items:
+            $ref: "#/components/schemas/RegressionTerm"
+        vif:
+          type: array
+          items:
+            type: number
+        cond:
+          type: number
+        warnings:
+          type: array
+          items:
+            type: string
+        beta:
+          type: array
+          description: N×K 逐标的系数
+          items:
+            type: array
+            items:
+              type: number
+              nullable: true
+        se:
+          type: array
+          description: N×K 逐标的系数标准误
+          items:
+            type: array
+            items:
+              type: number
+              nullable: true
+        t:
+          type: array
+          description: N×K 逐标的 t 值
+          items:
+            type: array
+            items:
+              type: number
+              nullable: true
+        r2:
+          type: array
+          description: 长度 N 的逐标的 R²
+          items:
+            type: number
+            nullable: true
+        n_obs:
+          type: array
+          description: 长度 N 的逐标的有效样本数
+          items:
+            type: integer
+        dropped:
+          type: array
+          description: N×K 剔除掩码
+          items:
+            type: array
+            items:
+              type: integer
+
+    RegressionPanelResult:
+      type: object
+      description: 双向固定效应面板回归结果（mode=panel）
+      properties:
+        mode:
+          type: string
+          example: panel
+        dates:
+          type: array
+          items:
+            type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        terms:
+          type: array
+          description: 双向固定效应吸收后的平均效应
+          items:
+            $ref: "#/components/schemas/RegressionTerm"
+        vif:
+          type: array
+          description: 当前固定返回全 0（双向 FE 去均值后 VIF 意义有限）
+          items:
+            type: number
+        cond:
+          type: number
+          description: 当前固定返回 0
+        warnings:
+          type: array
+          items:
+            type: string
+        r2:
+          type: number
+          nullable: true
+          description: 组内（within）R²
+        adj_r2:
+          type: number
+          nullable: true
+        n_obs:
+          type: integer
+
+    RegressionError:
+      type: object
+      description: 回归端点的错误体
+      properties:
+        error:
+          type: string
+          example: "标的数超限: 6000 > 300"

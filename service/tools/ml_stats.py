@@ -24,6 +24,19 @@ HAC 方差按"样本均值的方差"归一化：
 ml_metrics 共同使用。注意与另外两份旧实现区分：旧实现把自协方差求和不除 n、
 方差除以 n(n-1)，得到的 t 值系统性偏小，同一份数据两套公式会给出不同结论。
 
+两处口径差异（有意为之，不要"顺手统一"）
+----------------------------------------
+`newey_west_t`（IC 序列显著性）与 `series_mean_test`（回归系数序列均值检验）
+共用同一个 `_hac_mean_stat`，因此 **t 值完全一致**。但两处差异仍在：
+
+1. **p 值分布**：newey_west_t 用正态近似（erfc），series_mean_test 用
+   student-t（不完全 Beta）。IC 序列动辄几百个交易日，正态近似足够；
+   回归系数序列样本少，student-t 才不虚高。
+2. **lag 下限**：newey_west_t 至少取一阶（min_lag=1，保持历史行为），
+   series_mean_test 允许 L=0（min_lag=0，L=0 即退化成 IID）。
+
+除这两点外，两边的 S / se / t 是逐字一致的。
+
 数据布局
 --------
 本模块提供两套等价的数据布局，统计口径完全一致：
@@ -69,6 +82,15 @@ __all__ = [
     "ks_2samp",
     "psi",
     "block_bounds",
+    # 回归内核（C++ service/src/Algorithms/regression.cpp 的镜像）
+    "student_t_two_sided_p",
+    "greedy_rank_select",
+    "ols_fit",
+    "series_mean_test",
+    "build_group_codes",
+    "winsorize_cross_section",
+    "alternate_demean",
+    "partial_residual",
 ]
 
 
@@ -128,6 +150,47 @@ def spearman_ic(x, y) -> float:
 # Newey-West HAC 显著性
 # ============================================================
 
+def _hac_mean_stat(values, lag: int, min_lag: int = 0) -> Tuple[float, float, float]:
+    """HAC 均值检验的核心统计量，返回 (mean, se, S)。
+
+    口径（全仓库唯一，与 C++ regression.cpp::seriesMeanTest 逐字一致）：
+
+        d_t     = x_t - mean(x)
+        gamma_j = (1/n) * sum_t d_t * d_{t-j}      ← 除以 n，不是 n-j
+        S       = gamma_0 + 2 * sum_{j=1..L} w_j * gamma_j,  w_j = 1 - j/(L+1)
+        Var(mean) = S / n
+        se      = sqrt(Var(mean))
+
+    注意 gamma_j 的分母是 n。写成 ``(d[j:] * d[:-j]).mean()`` 会除以 n-j，
+    与本模块头声明的公式、以及回归内核的口径都不一致，同一份数据会给出
+    不同的 t 值。
+
+    lag 的截断在函数内统一：``L = max(min_lag, min(lag, n-2))``。
+    ``min_lag=0`` 是回归内核的口径（允许 L=0，即退化成 IID）；
+    ``min_lag=1`` 是 newey_west_t 的历史口径（至少取一阶）。
+
+    调用方各自决定 p 值分布与边界情形，本函数只给统计量。
+    """
+    x = np.asarray(values, dtype=float).ravel()
+    x = x[np.isfinite(x)]
+    n = len(x)
+    if n == 0:
+        return float("nan"), float("nan"), float("nan")
+
+    m = float(x.mean())
+    d = x - m
+    S = float(np.sum(d * d)) / n
+
+    L = max(int(min_lag), min(int(lag), n - 2))
+    for j in range(1, L + 1):
+        w = 1.0 - j / (L + 1.0)
+        g = float(np.sum(d[j:] * d[:-j])) / n
+        S += 2.0 * w * g
+
+    se = math.sqrt(max(S, 0.0) / n) if S > 0.0 else 0.0
+    return m, se, S
+
+
 def newey_west_t(series, lag: int) -> Tuple[float, float]:
     """Newey-West HAC t 值和双侧 p 值（正态近似）。
 
@@ -136,24 +199,21 @@ def newey_west_t(series, lag: int) -> Tuple[float, float]:
     样本不足 10 个时返回 (nan, nan)。
 
     口径见模块头：var 按均值的方差归一化，se = sqrt(var / n)。
+    自协方差分母是 n（与模块头公式、回归内核 series_mean_test 一致）。
+
+    p 值用正态近似，与回归内核的 student-t 不同——见模块头"两处口径差异"。
     """
     x = np.asarray(series, dtype=float).ravel()
     x = x[np.isfinite(x)]
     n = len(x)
     if n < 10:
         return float("nan"), float("nan")
-    lag = max(1, min(int(lag), n - 2))
-    mu = float(x.mean())
-    e = x - mu
-    var = float((e * e).mean())
-    for l in range(1, lag + 1):
-        gamma = float((e[l:] * e[:-l]).mean())
-        var += 2.0 * (1.0 - l / (lag + 1.0)) * gamma
-    if var <= 1e-18:
+
+    mu, se, S = _hac_mean_stat(x, lag, min_lag=1)
+    if S <= 1e-18:
         if abs(mu) < 1e-18:
             return 0.0, 1.0
         return math.copysign(float("inf"), mu), 0.0
-    se = math.sqrt(var / n)
     t = mu / se
     p = math.erfc(abs(t) / math.sqrt(2.0))
     return float(t), float(p)
@@ -772,4 +832,495 @@ def block_bounds(n: int, n_blocks: int, gap: int) -> list:
         bounds.append((start, stop))
         start = stop + gap
     return bounds
+
+
+# ============================================================
+# 金融回归内核（C++ service/src/Algorithms/regression.cpp 的逐字镜像）
+# ============================================================
+#
+# 这一节的口径必须与 C++ 侧完全一致：service/test/testcases/
+# test_regression_parity.py 通过 REST 接口做对拍，任何一处公式、阈值、
+# 迭代策略改动都要两边同时改，否则 parity 会红。
+#
+# 共同约定
+#   listwise 删除：y 或任一 X 非有限 → 整行丢弃，计数上报，绝不插补
+#   秩判定：按列顺序贪心，投影残差相对范数 > 1e-10 才保留
+#   IID：V = sigma^2 (X'X)^-1，sigma^2 = e'e/(n-rank)
+#   HAC：V = (X'X)^-1 Omega (X'X)^-1，Bartlett 权 w_j = 1 - j/(L+1)
+#   聚类：V = c (X'X)^-1 (sum_g X_g'u_g u_g'X_g) (X'X)^-1
+#        c = G/(G-1)·(n-1)/(n-rank)
+#   t 分布 p 值：p = I_{df/(df+t^2)}(df/2, 1/2)，df = n-rank
+#   系数序列均值检验：Var(mean) = S/n，S 为 Bartlett 加权长期方差
+
+REG_RANK_TOL = 1e-10
+REG_ZERO_NORM = 1e-12
+REG_CONST_TOL = 1e-12
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Lentz 连分式 betacf(a, b, x)，与 C++ betacf 逐行对齐。
+
+    参数必须显式传入：Numerical Recipes 的 I_x(a, b) 在
+    x >= (a+1)/(a+b+2) 时走补集分支，需要 betacf(b, a, 1-x)——
+    参数与自变量都要换。若写成闭包捕获 (a, b, x)，补集分支会算错，
+    导致小 |t| 时 p 值变成负数。
+    """
+    k_max_iter = 200
+    eps = 3e-16
+    fpmin = 1e-300
+
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < fpmin:
+        d = fpmin
+    d = 1.0 / d
+    h = d
+    for m in range(1, k_max_iter + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        h *= d * c
+
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
+
+
+def _regularized_incomplete_beta(a: float, b: float, x: float) -> float:
+    """正则化不完全 Beta I_x(a, b)（Lentz 连分式，与 C++ betacf 同算法）。"""
+    if not (a > 0.0) or not (b > 0.0):
+        return float("nan")
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+
+    lbeta = math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+
+    if x < (a + 1.0) / (a + b + 2.0):
+        return (math.exp(a * math.log(x) + b * math.log1p(-x) - lbeta)
+                * _betacf(a, b, x) / a)
+    return 1.0 - (math.exp(b * math.log1p(-x) + a * math.log(x) - lbeta)
+                  * _betacf(b, a, 1.0 - x) / b)
+
+
+def student_t_two_sided_p(t: float, df: float) -> float:
+    """双侧 student-t p 值；与 C++ studentTTwoSidedP 同口径。"""
+    if not np.isfinite(t) or not (df > 0.0):
+        return float("nan")
+    if t == 0.0:
+        return 1.0
+    x = df / (df + t * t)
+    return _regularized_incomplete_beta(df / 2.0, 0.5, x)
+
+
+def _is_constant(col: np.ndarray) -> bool:
+    if col.size == 0:
+        return True
+    return bool(np.max(np.abs(col - col[0])) <= REG_CONST_TOL)
+
+
+def _sample_std(v: np.ndarray) -> float:
+    if len(v) < 2:
+        return 0.0
+    return float(np.std(v, ddof=1))
+
+
+def greedy_rank_select(A, forced_drop=None):
+    """按列顺序贪心选列：投影残差的相对范数 > REG_RANK_TOL 才保留。
+
+    与 C++ greedyRankSelect 同判据。返回 (kept, dropped)，均为升序下标。
+    """
+    A = np.asarray(A, dtype=float)
+    if A.ndim == 1:
+        A = A[:, None]
+    n, k = A.shape
+    kept: list[int] = []
+    dropped: list[int] = []
+
+    for j in range(k):
+        if forced_drop is not None and bool(forced_drop[j]):
+            dropped.append(j)
+            continue
+        col = A[:, j]
+        norm = float(np.linalg.norm(col))
+        if not (norm > REG_ZERO_NORM):
+            dropped.append(j)
+            continue
+        if not kept:
+            kept.append(j)
+            continue
+        K = A[:, kept]
+        coef, *_ = np.linalg.lstsq(K, col, rcond=None)
+        rel = float(np.linalg.norm(col - K @ coef)) / norm
+        if rel > REG_RANK_TOL:
+            kept.append(j)
+        else:
+            dropped.append(j)
+    return kept, dropped
+
+
+def _drop_reason(A: np.ndarray, dropped_col: int, kept, names) -> str:
+    x = A[:, dropped_col]
+    sx = _sample_std(x) if x.size > 1 else 0.0
+    if sx <= 1e-15:
+        return "constant" if _is_constant(x) else "zero_variance"
+    best = -1.0
+    best_name = "unknown"
+    for j in kept:
+        z = A[:, j]
+        sz = _sample_std(z) if z.size > 1 else 0.0
+        if sz <= 1e-15:
+            continue
+        cov = float(np.sum((x - x.mean()) * (z - z.mean())))
+        corr = abs(cov / (sx * sz * x.size))
+        if corr > best:
+            best = corr
+            best_name = names[j] if j < len(names) else f"col{j}"
+    return f"collinear_with:{best_name}"
+
+
+def _solve_design(A, b, ridge_lambda: float = 0.0, forced_drop=None) -> dict:
+    """OLS/岭回归（保留列 + (X'X)^-1），与 C++ solveDesign 同口径。"""
+    A = np.asarray(A, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if A.ndim == 1:
+        A = A[:, None]
+    n, k = A.shape
+
+    kept, dropped = greedy_rank_select(A, forced_drop)
+    rank = len(kept)
+    beta = np.full(k, np.nan)
+    resid = np.zeros(n)
+
+    if rank == 0:
+        return {
+            "beta": beta, "resid": resid,
+            "Akept": np.zeros((n, 0)), "XtXinv": np.zeros((0, 0)),
+            "kept": kept, "dropped": dropped, "rank": 0,
+        }
+
+    Ak = A[:, kept]
+    XtX = Ak.T @ Ak
+    Xty = Ak.T @ b
+    is_const = [_is_constant(Ak[:, m]) for m in range(rank)]
+
+    if ridge_lambda > 0.0:
+        XtXr = XtX.copy()
+        for m in range(rank):
+            if not is_const[m]:
+                XtXr[m, m] += ridge_lambda
+        beta_k = np.linalg.solve(XtXr, Xty)
+        XtXinv = np.linalg.inv(XtXr)
+    else:
+        beta_k, *_ = np.linalg.lstsq(Ak, b, rcond=None)
+        XtXinv = np.linalg.inv(XtX)
+
+    resid = b - Ak @ beta_k
+    beta[kept] = beta_k
+    return {
+        "beta": beta, "resid": resid, "Akept": Ak, "XtXinv": XtXinv,
+        "kept": kept, "dropped": dropped, "rank": rank,
+    }
+
+
+def _cov_hac(A: np.ndarray, u: np.ndarray, XtXinv: np.ndarray, lag: int) -> np.ndarray:
+    n, k = A.shape
+    omega = np.zeros((k, k))
+    for t in range(n):
+        xt = A[t]
+        omega += (u[t] * u[t]) * np.outer(xt, xt)
+    L = min(int(lag), n - 2)
+    if L < 0:
+        L = 0
+    for j in range(1, L + 1):
+        w = 1.0 - j / (L + 1.0)
+        gamma = np.zeros((k, k))
+        for t in range(j, n):
+            gamma += (u[t] * u[t - j]) * np.outer(A[t], A[t - j])
+        omega += w * (gamma + gamma.T)
+    return XtXinv @ omega @ XtXinv
+
+
+def _cov_cluster(A: np.ndarray, u: np.ndarray, XtXinv: np.ndarray,
+                 cluster, rank: int) -> np.ndarray:
+    n, k = A.shape
+    groups: dict[int, list[int]] = {}
+    for t in range(min(n, len(cluster))):
+        groups.setdefault(int(cluster[t]), []).append(t)
+    if len(groups) < 2:
+        return XtXinv.copy()
+
+    meat = np.zeros((k, k))
+    for idx in groups.values():
+        s = np.zeros(k)
+        for t in idx:
+            s += u[t] * A[t]
+        meat += np.outer(s, s)
+
+    G = float(len(groups))
+    df = float(max(1, n - rank))
+    c = (G / (G - 1.0)) * (float(n) - 1.0) / df
+    return c * (XtXinv @ meat @ XtXinv)
+
+
+def _compute_cond(A: np.ndarray) -> float:
+    if A.shape[1] < 2 or A.shape[0] < 2:
+        return 0.0
+    S = A.copy()
+    for j in range(S.shape[1]):
+        nrm = float(np.linalg.norm(S[:, j]))
+        if nrm > 1e-12:
+            S[:, j] /= nrm
+    sv = np.linalg.svd(S, compute_uv=False)
+    smin = float(sv[-1])
+    return float(sv[0] / smin) if smin > 0.0 else float("inf")
+
+
+def _compute_vif(A: np.ndarray) -> list:
+    k = A.shape[1]
+    out = [0.0] * k
+    if k < 2 or A.shape[0] < 3:
+        return out
+    # 设计里已有常量列（截距）就不再补，避免秩亏导致投影差异（与 C++ 同规则）
+    has_const = any(_is_constant(A[:, m]) for m in range(k))
+    for j in range(k):
+        yj = A[:, j]
+        if _is_constant(yj):
+            continue
+        cols = [A[:, m] for m in range(k) if m != j]
+        if not has_const:
+            cols.append(np.ones(A.shape[0]))
+        Xo = np.column_stack(cols)
+        coef, *_ = np.linalg.lstsq(Xo, yj, rcond=None)
+        sst = float(np.sum((yj - yj.mean()) ** 2))
+        if sst <= 1e-15:
+            continue
+        r2 = 1.0 - float(np.sum((yj - Xo @ coef) ** 2)) / sst
+        out[j] = float("inf") if r2 >= 1.0 - 1e-12 else 1.0 / (1.0 - r2)
+    return out
+
+
+def ols_fit(y, X, names=None, se: str = "iid", hac_lag: int = 20,
+            ridge_lambda: float = 0.0, cluster=None,
+            report_vif: bool = True, time_ordered: bool = False) -> dict:
+    """单次 OLS / 岭回归，返回与 C++ Fit 同构的 dict。
+
+    se: "iid" | "hac" | "cluster"（cluster 与 y 等长，按原始行号索引）
+    """
+    y = np.asarray(y, dtype=float).ravel()
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        X = X[:, None]
+    n_raw, k = X.shape
+    if n_raw <= 0 or k <= 0 or X.shape[0] != y.size:
+        return {"n_obs": 0, "n_reg": k, "rank": 0, "n_dropped_rows": 0,
+                "r2": float("nan"), "adj_r2": float("nan"), "sigma": float("nan"),
+                "dw": 0.0, "cond": 0.0, "terms": [], "vif": [],
+                "warnings": ["输入为空或维度不一致"]}
+
+    names = list(names) if names else [f"x{j}" for j in range(k)]
+    valid = np.isfinite(y) & np.all(np.isfinite(X), axis=1)
+    rows = np.flatnonzero(valid)
+    n = len(rows)
+    n_dropped = n_raw - n
+    if n < 2:
+        return {"n_obs": n, "n_reg": k, "rank": 0, "n_dropped_rows": n_dropped,
+                "r2": float("nan"), "adj_r2": float("nan"), "sigma": float("nan"),
+                "dw": 0.0, "cond": 0.0,
+                "terms": [{"name": names[j], "beta": float("nan"), "se": float("nan"),
+                           "t": float("nan"), "p": float("nan"), "std_beta": 0.0,
+                           "dropped": True, "drop_reason": "insufficient_obs"}
+                          for j in range(k)],
+                "vif": [0.0] * k, "warnings": ["有效样本不足"]}
+
+    A = X[rows, :]
+    b = y[rows]
+    s = _solve_design(A, b, ridge_lambda)
+    rank = s["rank"]
+
+    warnings: list = []
+    terms = []
+    for j in range(k):
+        dropped = j in s["dropped"]
+        terms.append({"name": names[j], "beta": float("nan"), "se": float("nan"),
+                      "t": float("nan"), "p": float("nan"), "std_beta": 0.0,
+                      "dropped": dropped,
+                      "drop_reason": _drop_reason(A, j, s["kept"], names) if dropped else ""})
+
+    sse = float(np.sum(s["resid"] ** 2))
+    df = n - rank
+    sigma2 = sse / df if df > 0 else float("nan")
+    sigma = math.sqrt(sigma2) if np.isfinite(sigma2) else float("nan")
+
+    my = float(b.mean())
+    sst = float(np.sum((b - my) ** 2))
+    r2 = 1.0 - sse / sst if sst > 1e-15 else float("nan")
+    adj_r2 = (1.0 - (1.0 - r2) * (n - 1.0) / df
+              if df > 0 and np.isfinite(r2) else float("nan"))
+
+    dw = 0.0
+    if time_ordered and n > 1 and sse > 1e-15:
+        dw = float(np.sum(np.diff(s["resid"]) ** 2)) / sse
+
+    if se == "hac":
+        V = _cov_hac(s["Akept"], s["resid"], s["XtXinv"], hac_lag)
+    elif se == "cluster":
+        if cluster is not None and len(cluster) == n_raw:
+            c = np.asarray(cluster)[rows]
+            V = _cov_cluster(s["Akept"], s["resid"], s["XtXinv"], c, rank)
+        else:
+            warnings.append("聚类 id 长度不符，退化为 IID")
+            V = s["XtXinv"] * sigma2
+    else:
+        V = s["XtXinv"] * sigma2
+
+    sy = _sample_std(b)
+    for m, j in enumerate(s["kept"]):
+        beta = float(s["beta"][j])
+        se_j = math.sqrt(max(0.0, float(V[m, m])))
+        t = beta / se_j if se_j > 0.0 else float("nan")
+        p = student_t_two_sided_p(abs(t), float(df))
+        xj = s["Akept"][:, m]
+        std_beta = (beta * _sample_std(xj) / sy
+                    if sy > 1e-15 and not _is_constant(xj) else 0.0)
+        terms[j].update({"beta": beta, "se": se_j, "t": t, "p": p,
+                         "std_beta": std_beta, "dropped": False, "drop_reason": ""})
+
+    vif = [0.0] * k
+    if report_vif:
+        vif_kept = _compute_vif(s["Akept"])
+        for m, j in enumerate(s["kept"]):
+            vif[j] = float(vif_kept[m])
+
+    return {
+        "n_obs": n, "n_reg": k, "rank": rank, "n_dropped_rows": n_dropped,
+        "r2": r2, "adj_r2": adj_r2, "sigma": sigma, "dw": dw,
+        "cond": _compute_cond(s["Akept"]),
+        "terms": terms, "vif": vif, "warnings": warnings,
+    }
+
+
+def series_mean_test(values, se: str = "iid", hac_lag: int = 20) -> dict:
+    """系数序列的均值检验（横截面逐日系数 / 时序逐标的暴露）。
+
+    Var(mean) = S/n，S = gamma0 + 2·sum_j w_j·gamma_j，gamma 为自协方差。
+    与 newey_west_t 共用 _hac_mean_stat：自协方差分母是 n，两侧 t 值一致。
+    """
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    n = len(v)
+    nan = float("nan")
+    if n == 0:
+        return {"mean": nan, "se": nan, "t": nan, "p": nan, "n": 0}
+    if n == 1:
+        return {"mean": float(v[0]), "se": nan, "t": nan, "p": nan, "n": 1}
+
+    # IID 口径不引入自协方差项（L=0）；HAC 口径用 hac_lag。
+    lag = int(hac_lag) if se == "hac" else 0
+    m, se_v, _S = _hac_mean_stat(v, lag, min_lag=0)
+    t = m / se_v if se_v > 0.0 else nan
+    return {"mean": m, "se": se_v, "t": t,
+            "p": student_t_two_sided_p(abs(t), float(n - 1)), "n": n}
+
+
+def build_group_codes(labels, min_size: int = 2, fallback: str = "OTHER"):
+    """组标签 → 组号；成员数 < min_size 的组并入 fallback。
+
+    返回 (codes, levels)，levels 升序排列（与 C++ std::set 排序一致）。
+    """
+    labels = [str(x) for x in labels]
+    counts: dict = {}
+    for l in labels:
+        counts[l] = counts.get(l, 0) + 1
+    mapped = [l if counts[l] >= min_size else fallback for l in labels]
+    levels = sorted(set(mapped))
+    index = {l: i for i, l in enumerate(levels)}
+    return [index[m] for m in mapped], levels
+
+
+def winsorize_cross_section(values, q: float):
+    """按分位裁剪（线性插值分位，与 C++ 一致）。q=0 表示不裁剪。"""
+    v = np.asarray(values, dtype=float).copy()
+    if not (q > 0.0) or q >= 0.5:
+        return v
+    finite = v[np.isfinite(v)]
+    if len(finite) < 3:
+        return v
+    lo = float(np.quantile(finite, q))
+    hi = float(np.quantile(finite, 1.0 - q))
+    return np.clip(v, lo, hi)
+
+
+def _demean_by_codes(v: np.ndarray, code, ng: int) -> np.ndarray:
+    code = np.asarray(code, dtype=int)
+    sums = np.bincount(code, weights=v, minlength=ng)
+    cnt = np.bincount(code, minlength=ng)
+    means = np.divide(sums, cnt, out=np.zeros(ng), where=cnt > 0)
+    return v - means[code]
+
+
+def alternate_demean(y, X, codes, n_groups):
+    """交替投影去均值（返回新数组）。
+
+    单分组变量一步精确；多分组变量迭代到不动点（容差 1e-13，上限 200 次），
+    与 C++ alternateDemean 同策略。
+    """
+    y = np.asarray(y, dtype=float).copy()
+    X = np.asarray(X, dtype=float).copy()
+    if X.ndim == 1:
+        X = X[:, None]
+    if not codes:
+        return y, X
+
+    if len(codes) == 1:
+        y = _demean_by_codes(y, codes[0], n_groups[0])
+        for c in range(X.shape[1]):
+            X[:, c] = _demean_by_codes(X[:, c], codes[0], n_groups[0])
+        return y, X
+
+    for _ in range(200):
+        y_prev = y.copy()
+        X_prev = X.copy()
+        for g, code in enumerate(codes):
+            y = _demean_by_codes(y, code, n_groups[g])
+            for c in range(X.shape[1]):
+                X[:, c] = _demean_by_codes(X[:, c], code, n_groups[g])
+        delta = float(np.max(np.abs(y - y_prev))) if y.size else 0.0
+        if X.size:
+            delta = max(delta, float(np.max(np.abs(X - X_prev))))
+        if delta < 1e-13:
+            break
+    return y, X
+
+
+def partial_residual(y, X, codes, n_groups, add_const: bool = True):
+    """FWL 部分残差：等价于 y ~ 1 + 分组 + X 的联合回归残差。
+
+    输入必须全部有限（NaN 会被静默传播，调用方负责清洗）。
+    """
+    y1, X1 = alternate_demean(y, X, codes, n_groups)
+    if X1.shape[1] == 0:
+        return y1
+    A = np.column_stack([np.ones(len(y1)), X1]) if add_const else X1
+    return _solve_design(A, y1, 0.0)["resid"]
 

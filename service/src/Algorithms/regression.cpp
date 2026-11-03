@@ -1,4 +1,4 @@
-#include "Util/regression.h"
+#include "Algorithms/regression.h"
 
 #include <algorithm>
 #include <cmath>
@@ -49,7 +49,13 @@ inline bool rowValid(const Vec& y, const Mat& X, int i) {
 
 // ── 秩揭示 ──────────────────────────────────────────────────────────────────
 
-/// 贪心选列：按原顺序逐列尝试，秩增加才保留。
+/// 贪心选列：按原顺序逐列尝试，能带来新信息才保留。
+///
+/// 判据用"投影残差的相对范数"，而不是 QR 的主元阈值：
+///   rel = ||A_j - P_kept(A_j)|| / ||A_j||
+///   rel <= tol 视为线性相关。
+/// 这样 C++（Eigen 求解）与 Python（numpy lstsq）用的是同一个可复现判据，
+/// 不会因为两边 QR 实现的主元阈值不同而分叉。
 ///
 /// 不直接用 QR 的主元顺序，是因为主元会打乱列序——截距列会被排到后面，
 /// 坍缩掉"截距优先"这个业务语义。贪心保证：截距先入选，其余按调用方给的
@@ -59,23 +65,36 @@ inline bool rowValid(const Vec& y, const Mat& X, int i) {
 ///                   继承全样本的剔除决定，保证各日列集合可比）
 void greedyRankSelect(const Mat& A, std::vector<int>& kept, std::vector<int>& dropped,
                       const std::vector<char>* forcedDrop = nullptr) {
+    constexpr double kRankTol = 1e-10;
+    constexpr double kZeroNorm = 1e-12;
+
     kept.clear();
     dropped.clear();
     if (A.rows() == 0 || A.cols() == 0) return;
 
     for (int j = 0; j < A.cols(); ++j) {
         if (forcedDrop != nullptr && (*forcedDrop)[j]) {
-            // 被强制剔除，不做秩判定
             dropped.push_back(j);
             continue;
         }
-        Mat trial(A.rows(), static_cast<int>(kept.size()) + 1);
-        int c = 0;
-        for (int k : kept) trial.col(c++) = A.col(k);
-        trial.col(c) = A.col(j);
 
-        Eigen::ColPivHouseholderQR<Mat> qr(trial);
-        if (qr.rank() > static_cast<int>(kept.size())) {
+        const Vec col = A.col(j);
+        const double norm = col.norm();
+        if (!(norm > kZeroNorm)) {
+            dropped.push_back(j);
+            continue;
+        }
+        if (kept.empty()) {
+            kept.push_back(j);
+            continue;
+        }
+
+        Mat K(A.rows(), static_cast<int>(kept.size()));
+        for (int m = 0; m < static_cast<int>(kept.size()); ++m) K.col(m) = A.col(kept[m]);
+
+        const Vec coef = K.colPivHouseholderQr().solve(col);
+        const double rel = (col - K * coef).norm() / norm;
+        if (rel > kRankTol) {
             kept.push_back(j);
         } else {
             dropped.push_back(j);
@@ -204,8 +223,7 @@ Mat covCluster(const Mat& A, const Vec& u, const Mat& XtXinv,
     std::map<int, std::vector<int>> groups;
     for (int t = 0; t < n && t < static_cast<int>(cluster.size()); ++t) {
         groups[cluster[t]].push_back(t);
-    }
-    if (groups.size() < 2) return XtXinv;  // 无法聚类，退化
+    }    if (groups.size() < 2) return XtXinv;  // 无法聚类，退化
 
     Mat meat = Mat::Zero(k, k);
     for (const auto& [gid, idx] : groups) {
@@ -246,16 +264,23 @@ std::vector<double> computeVIF(const Mat& A) {
     std::vector<double> vif(k, 0.0);
     if (k < 2 || n < 3) return vif;
 
+    // 设计里已经有常量列（截距）就不再补——否则 Xo 秩亏，
+    // QR 解与 Python 的 lstsq 解在秩亏时的投影会有微小差异，VIF 随之分叉。
+    bool hasConst = false;
+    for (int m = 0; m < k; ++m) {
+        if (isConstantColumn(A.col(m))) { hasConst = true; break; }
+    }
+
     for (int j = 0; j < k; ++j) {
         const Vec& yj = A.col(j);
         if (isConstantColumn(yj)) continue;
 
-        Mat Xo(n, k);  // 其余 k-1 列 + 截距
+        Mat Xo(n, k - 1 + (hasConst ? 0 : 1));
         int c = 0;
         for (int m = 0; m < k; ++m) {
             if (m != j) Xo.col(c++) = A.col(m);
         }
-        Xo.col(k - 1).setOnes();
+        if (!hasConst) Xo.col(c).setOnes();
 
         Eigen::ColPivHouseholderQR<Mat> qr(Xo);
         const Vec fitted = Xo * qr.solve(yj);
@@ -487,8 +512,15 @@ Fit ols(const Vec& y, const Mat& X, const std::vector<std::string>& names,
             (j < static_cast<int>(names.size())) ? names[j] : ("x" + std::to_string(j));
     }
     for (int j : s.dropped) {
-        fit._terms[j]._dropped = true;
-        fit._terms[j]._drop_reason = dropReason(A, j, s.kept, names);
+        Term& t = fit._terms[j];
+        t._dropped = true;
+        t._drop_reason = dropReason(A, j, s.kept, names);
+        // 未估计的项一律 NaN，不保留 Term 的默认值 0/1——
+        // Python 侧输出 null，两边必须同形。
+        t._beta = kNaN;
+        t._se = kNaN;
+        t._t = kNaN;
+        t._p = kNaN;
     }
     if (s.rank == 0) {
         fit._warnings.push_back("设计矩阵秩为 0");
@@ -547,9 +579,9 @@ Fit ols(const Vec& y, const Mat& X, const std::vector<std::string>& names,
     }
 
     fit._cond = computeCond(s.Akept);
+    fit._vif.assign(k, 0.0);
     if (opt._report_vif) {
         const std::vector<double> vifKept = computeVIF(s.Akept);
-        fit._vif.assign(k, 0.0);
         for (int m = 0; m < s.rank; ++m) fit._vif[s.kept[m]] = vifKept[m];
     }
     return fit;
@@ -572,6 +604,11 @@ CrossSectionResult crossSection(const PanelData& p,
     if (T == 0 || N == 0 || p._Y.rows() != T || p._Y.cols() != N) {
         out._warnings.push_back("面板维度不一致");
         return out;
+    }
+    // se 降级提示：逐日横截面回归没有聚类维度，cluster 退化为 iid。
+    // 不静默——调用方必须知道拿到的不是自己请求的推断口径。
+    if (se == SeType::Cluster) {
+        out._warnings.push_back("cross_section 模式不支持 cluster 标准误，已退化为 iid");
     }
 
     // ── 1. 解析并固定列定义 ──
@@ -657,15 +694,17 @@ CrossSectionResult crossSection(const PanelData& p,
         return true;
     };
 
-    auto fillRow = [&](int t, int i, double* dst) {
+    // 注意：Eigen::MatrixXd 默认列主序，A.row(r).data() 不是连续内存，
+    // 直接往里写会把行写坏。这里统一填到一个临时行向量再整体赋值。
+    auto fillRow = [&](int t, int i, Vec& dst) {
         for (int j = 0; j < K; ++j) {
             const Column& c = cols[j];
             switch (c._kind) {
-                case Column::Kind::Const:   dst[j] = 1.0; break;
-                case Column::Kind::XPanel:  dst[j] = (*xPanels[c._idx])(t, i); break;
-                case Column::Kind::FSeries: dst[j] = (*fSeries[c._idx])(t); break;
+                case Column::Kind::Const:   dst(j) = 1.0; break;
+                case Column::Kind::XPanel:  dst(j) = (*xPanels[c._idx])(t, i); break;
+                case Column::Kind::FSeries: dst(j) = (*fSeries[c._idx])(t); break;
                 case Column::Kind::Dummy:
-                    dst[j] = (groupDefs[c._idx]._codes[i] == c._level) ? 1.0 : 0.0;
+                    dst(j) = (groupDefs[c._idx]._codes[i] == c._level) ? 1.0 : 0.0;
                     break;
             }
         }
@@ -686,7 +725,11 @@ CrossSectionResult crossSection(const PanelData& p,
     Mat globalKept;
     if (!gt.empty()) {
         Mat Ag(static_cast<int>(gt.size()), K);
-        for (size_t r = 0; r < gt.size(); ++r) fillRow(gt[r], gi[r], Ag.row(r).data());
+        Vec row(K);
+        for (size_t r = 0; r < gt.size(); ++r) {
+            fillRow(gt[r], gi[r], row);
+            Ag.row(static_cast<int>(r)) = row.transpose();
+        }
 
         std::vector<int> gk, gd;
         greedyRankSelect(Ag, gk, gd);
@@ -722,8 +765,10 @@ CrossSectionResult crossSection(const PanelData& p,
 
         Mat A(static_cast<int>(idx.size()), K);
         Vec b(static_cast<int>(idx.size()));
+        Vec row(K);
         for (size_t r = 0; r < idx.size(); ++r) {
-            fillRow(t, idx[r], A.row(static_cast<int>(r)).data());
+            fillRow(t, idx[r], row);
+            A.row(static_cast<int>(r)) = row.transpose();
             b(static_cast<int>(r)) = p._Y(t, idx[r]);
         }
         if (opt._winsor_q > 0.0) winsorizeCrossSection(b, opt._winsor_q);
@@ -755,6 +800,10 @@ CrossSectionResult crossSection(const PanelData& p,
         if (globalDrop[j]) {
             term._dropped = true;
             term._drop_reason = "collinear_global";
+            term._beta = kNaN;
+            term._se = kNaN;
+            term._t = kNaN;
+            term._p = kNaN;
             continue;
         }
         std::vector<double> series(T, kNaN);
@@ -767,9 +816,9 @@ CrossSectionResult crossSection(const PanelData& p,
     }
 
     out._cond = computeCond(globalKept);
+    out._vif.assign(K, 0.0);
     if (opt._report_vif) {
         const std::vector<double> vifKept = computeVIF(globalKept);
-        out._vif.assign(K, 0.0);
         int m = 0;
         for (int j = 0; j < K; ++j) {
             if (!globalDrop[j]) {
@@ -797,6 +846,10 @@ TimeSeriesResult timeSeries(const PanelData& p,
     if (T == 0 || N == 0 || p._Y.rows() != T || p._Y.cols() != N) {
         out._warnings.push_back("面板维度不一致");
         return out;
+    }
+    // se 降级提示：逐标的回归没有聚类 id，cluster 退化为 iid。
+    if (se == SeType::Cluster) {
+        out._warnings.push_back("time_series 模式不支持 cluster 标准误，已退化为 iid");
     }
 
     std::vector<const Mat*> xPanels;
@@ -861,22 +914,7 @@ TimeSeriesResult timeSeries(const PanelData& p,
 
         Mat A(static_cast<int>(rows.size()), K);
         Vec b(static_cast<int>(rows.size()));
-        int c = 0;
-        for (int j = 0; j < K; ++j) {
-            if (names[j] == "const") {
-                A.col(c).setOnes();
-                ++c;
-                continue;
-            }
-            // 先找时序因子，再找该标的自身的截面因子
-            bool found = false;
-            for (size_t m = 0; m < fSeries.size(); ++m) {
-                if (names[j] == std::string("")) { /* unreachable */ }
-            }
-            (void)found;
-            ++c;
-        }
-        // 显式重填（避免上面的索引技巧出错）
+        // 列顺序与 names 一致：const, xPanels（本标的自身截面因子）, fSeries
         for (size_t r = 0; r < rows.size(); ++r) {
             const int t = rows[r];
             b(static_cast<int>(r)) = p._Y(t, i);
@@ -918,6 +956,7 @@ TimeSeriesResult timeSeries(const PanelData& p,
     }
 
     out._terms.resize(K);
+    out._vif.assign(K, 0.0);
     for (int j = 0; j < K; ++j) {
         out._terms[j]._name = names[j];
         const MeanTest mt = seriesMeanTest(betaSeries[j], se, opt._hac_lag);
@@ -971,6 +1010,10 @@ PanelResult panel(const PanelData& p,
     if (T == 0 || N == 0 || p._Y.rows() != T || p._Y.cols() != N) {
         out._warnings.push_back("面板维度不一致");
         return out;
+    }
+    // se 降级提示：面板回归只实现了按日期聚类，hac 退化为 iid。
+    if (se == SeType::HAC) {
+        out._warnings.push_back("panel 模式不支持 hac 标准误，已退化为 iid");
     }
 
     std::vector<const Mat*> xPanels;
@@ -1043,6 +1086,10 @@ PanelResult panel(const PanelData& p,
         out._terms[j]._name = names[j];
         out._terms[j]._dropped = true;
         out._terms[j]._drop_reason = "collinear";
+        out._terms[j]._beta = kNaN;
+        out._terms[j]._se = kNaN;
+        out._terms[j]._t = kNaN;
+        out._terms[j]._p = kNaN;
     }
     for (int m = 0; m < s.rank; ++m) {
         const int j = s.kept[m];

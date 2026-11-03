@@ -155,9 +155,68 @@ def seed_margin_stock(ctx):
                 f"exchange={exchange:<3} symbol_id={encoded}")
 
 
+def seed_projection_ledger(ctx):
+    """写入投影回归测试账本（2026-11-03 事故回归）
+
+    事故：重启后 StrategyCapitalImpl 的投影缓存停在"空持仓"状态，
+    策略把已持仓标的又买了一遍，现金 −332,736。
+
+    写入 4 个持仓、现金 −332,736 的账本文件，服务启动后应能正确读取。
+    """
+    ledger_file = ctx.db_path / "broker" / "ledger.json"
+    ctx.log(f"projection_ledger → {ledger_file.resolve()}")
+
+    positions = {
+        "sz.300450": (11400, 29.15),
+        "sz.002241": (14900, 22.64),
+        "sh.601939": (27600, 12.04),
+        "sh.688981": (3300, 100.00),
+    }
+    # 现金 = 1,000,000 - 建仓成本 1,331,950 - 交易费用约 786 = -332,736
+    # 与 test_ledger.py 的 _PROJECTION_REGRESSION_CASH 保持一致
+    cash = -332736.0
+
+    data = {
+        "version": 1,
+        "initialCapital": 1000000.0,
+        "accounts": {
+            "test_ledger_projection_regression": {
+                "allocated": 1000000.0,
+                "cash": cash,
+                "profit": 0.0,
+                "active": True,
+                "positions": {
+                    sym: {
+                        "quantity": qty,
+                        "avg_cost": cost,
+                        "current_price": cost,
+                        "is_margin": False,
+                        "margin_ratio": 1.0,
+                    }
+                    for sym, (qty, cost) in positions.items()
+                },
+                "lots": {},
+                "credit": {
+                    "borrowedCash": 0.0,
+                    "borrowedShares": {},
+                    "shortAvgPrice": {},
+                    "financedAmount": {},
+                },
+            }
+        },
+    }
+
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(ledger_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+    ctx.log(f"projection_ledger 写入 {len(positions)} 个持仓，现金 {cash}")
+
+
 # 新增预灌项在此注册
 STEPS = {
     "margin_stock": seed_margin_stock,
+    "projection_ledger": seed_projection_ledger,
 }
 
 

@@ -441,46 +441,32 @@ _PROJECTION_REGRESSION_POSITIONS = {
     "sh.601939": (27600, 12.04),
     "sh.688981": (3300, 100.00),
 }
-# 预期：现金 = 1,000,000 - (11400*29.15 + 14900*22.64 + 27600*12.04 + 3300*100) = -332,736
+# prepare.py 把 current_price 写成成本价，因此持仓市值等于建仓成本合计
+_PROJECTION_REGRESSION_POSITION_VALUE = sum(
+    qty * cost for qty, cost in _PROJECTION_REGRESSION_POSITIONS.values()
+)  # 1,331,950
+# 事故现金：初始 1,000,000 − 建仓成本 1,331,950 − 交易费用约 786 = −332,736
 _PROJECTION_REGRESSION_CASH = -332736.0
-# 预期权益 = 现金 + 持仓市值（按成本价算）= -332736 + 1,000,000 = 667,264
-_PROJECTION_REGRESSION_EQUITY = 667264.0
+# 权益 = 现金 + 持仓市值 − 融资余额 = −332,736 + 1,331,950 = 999,214
+_PROJECTION_REGRESSION_EQUITY = (
+    _PROJECTION_REGRESSION_CASH + _PROJECTION_REGRESSION_POSITION_VALUE
+)
 
 
-def _write_projection_test_ledger(strategy: str, cash: float, positions: dict):
-    """写入投影回归测试账本文件"""
-    data = {
-        "version": 1,
-        "initialCapital": INITIAL_CAPITAL,
-        "accounts": {
-            strategy: {
-                "allocated": INITIAL_CAPITAL,
-                "cash": cash,
-                "profit": 0.0,
-                "active": True,
-                "positions": {
-                    sym: {
-                        "quantity": qty,
-                        "avg_cost": cost,
-                        "current_price": cost,  # 简化：当前价=成本价
-                        "is_margin": False,
-                        "margin_ratio": 1.0,
-                    }
-                    for sym, (qty, cost) in positions.items()
-                },
-                "lots": {},
-                "credit": {
-                    "borrowedCash": 0.0,
-                    "borrowedShares": {},
-                    "shortAvgPrice": {},
-                    "financedAmount": {},
-                },
-            }
-        },
-    }
-    LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(LEDGER_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+def _assert_projection_account(entry: dict) -> None:
+    """投影账户的统一断言：现金与持仓都来自同一份账本快照"""
+    assert entry["cash"] == pytest.approx(_PROJECTION_REGRESSION_CASH, abs=1.0), \
+        f"现金应为 {_PROJECTION_REGRESSION_CASH}，实际 {entry['cash']}"
+    assert len(entry["positions"]) == len(_PROJECTION_REGRESSION_POSITIONS), \
+        f"应有 {len(_PROJECTION_REGRESSION_POSITIONS)} 个持仓，实际 {len(entry['positions'])}"
+
+    for sym, (expected_qty, expected_cost) in _PROJECTION_REGRESSION_POSITIONS.items():
+        pos = _position_of(entry, sym)
+        assert pos, f"持仓 {sym} 不存在"
+        assert pos["quantity"] == expected_qty, \
+            f"{sym} 数量应为 {expected_qty}，实际 {pos['quantity']}"
+        assert pos["avgCost"] == pytest.approx(expected_cost, abs=0.01), \
+            f"{sym} 成本应为 {expected_cost}，实际 {pos['avgCost']}"
 
 
 class TestProjectionRegression:
@@ -500,6 +486,12 @@ class TestProjectionRegression:
       - 追踪止损基准改为建仓后（跳过建仓前的 bar）
       - 紧急平仓只平触发标的（不连带清其他）
       - 负现金账户禁止开仓 + 买入额不超过可用现金+卖出回款
+
+    前置条件：
+      - 服务启动前写入测试账本，且 db_path 必须与服务一致（服务以 service/build
+        为工作目录，读 data/broker/ledger.json）。在仓库根目录执行：
+            python service/test/prepare.py projection_ledger --db-path service/build/data
+        否则服务启动时会走"从成交流水重建账本"分支，本策略不存在，查询返回 404。
     """
 
     @pytest.fixture(autouse=True)
@@ -508,61 +500,33 @@ class TestProjectionRegression:
         pass
 
     @pytest.fixture
-    def projection_strategy(self, auth_token):
-        """投影回归测试策略"""
-        name = "test_ledger_projection_regression"
-        yield name
-        # 清理测试账本文件
-        if LEDGER_FILE.exists():
-            LEDGER_FILE.unlink()
+    def projection_strategy(self):
+        """投影回归测试策略名"""
+        return "test_ledger_projection_regression"
 
     def test_projection_reads_ledger_after_restart(self, auth_token, projection_strategy):
         """重启后投影应看到账本里的 4 个持仓、现金 −332736"""
-        # 写入测试账本
-        _write_projection_test_ledger(
-            projection_strategy, _PROJECTION_REGRESSION_CASH, _PROJECTION_REGRESSION_POSITIONS
-        )
-
-        # 查询账本
-        entry = _ledger(auth_token, projection_strategy)
-
-        # 验证现金
-        assert abs(entry["cash"] - _PROJECTION_REGRESSION_CASH) < 1.0, \
-            f"现金应为 {_PROJECTION_REGRESSION_CASH}，实际 {entry['cash']}"
-
-        # 验证持仓数
-        assert len(entry["positions"]) == 4, \
-            f"应有 4 个持仓，实际 {len(entry['positions'])}"
-
-        # 验证每个持仓
-        for sym, (expected_qty, expected_cost) in _PROJECTION_REGRESSION_POSITIONS.items():
-            pos = _position_of(entry, sym)
-            assert pos, f"持仓 {sym} 不存在"
-            assert pos["quantity"] == expected_qty, \
-                f"{sym} 数量应为 {expected_qty}，实际 {pos['quantity']}"
-            assert abs(pos["avgCost"] - expected_cost) < 0.01, \
-                f"{sym} 成本应为 {expected_cost}，实际 {pos['avgCost']}"
+        # 假设 prepare.py projection_ledger 已写入（见类注释的前置条件）
+        _assert_projection_account(_ledger(auth_token, projection_strategy))
 
     def test_negative_cash_blocks_buy(self, auth_token, projection_strategy):
-        """负现金账户应禁止开新仓"""
-        # 写入测试账本（现金为负）
-        _write_projection_test_ledger(
-            projection_strategy, _PROJECTION_REGRESSION_CASH, _PROJECTION_REGRESSION_POSITIONS
-        )
+        """负现金账户的可用资金为负，权益按账本口径计算
 
-        # 查询资金
-        capital = _capital(auth_token)
-        assert projection_strategy in capital["strategies"], \
-            f"策略 {projection_strategy} 不存在"
-        strat_cap = capital["strategies"][projection_strategy]
+        action=capital 只有全局汇总，按策略明细走 action=ledger；
+        账本条目的 cash 即 LedgerStore::GetAvailable（两者同源）。
+        """
+        entry = _ledger(auth_token, projection_strategy)
+        _assert_projection_account(entry)
 
         # 验证可用资金为负（不再被截断为 0）
-        assert strat_cap["available"] < 0, \
-            f"可用资金应为负，实际 {strat_cap['available']}"
+        assert entry["cash"] < 0, f"可用资金应为负，实际 {entry['cash']}"
 
-        # 验证权益
-        assert abs(strat_cap["equity"] - _PROJECTION_REGRESSION_EQUITY) < 1000, \
-            f"权益应约为 {_PROJECTION_REGRESSION_EQUITY}，实际 {strat_cap['equity']}"
+        # 验证权益：cash + positionValue − borrowedCash
+        assert entry["equity"] == pytest.approx(_PROJECTION_REGRESSION_EQUITY, abs=1.0), \
+            f"权益应为 {_PROJECTION_REGRESSION_EQUITY}，实际 {entry['equity']}"
+        assert entry["equity"] == pytest.approx(
+            entry["cash"] + entry["positionValue"] - entry["borrowedCash"], abs=1e-6
+        )
 
     def test_emergency_close_only_triggered_symbols(self, auth_token, projection_strategy):
         """紧急平仓应只平触发标的（不连带清其他）
@@ -570,17 +534,8 @@ class TestProjectionRegression:
         注：这个测试需要触发风控，但当前测试框架无法直接触发。
         这里只验证账本状态，实际风控行为由单元测试覆盖。
         """
-        # 写入测试账本
-        _write_projection_test_ledger(
-            projection_strategy, _PROJECTION_REGRESSION_CASH, _PROJECTION_REGRESSION_POSITIONS
-        )
-
-        # 查询账本
-        entry = _ledger(auth_token, projection_strategy)
-
-        # 验证 4 个持仓都在
-        assert len(entry["positions"]) == 4, \
-            f"应有 4 个持仓，实际 {len(entry['positions'])}"
+        # 先确认账本快照完整，再说明风控行为本身未在本用例触发
+        _assert_projection_account(_ledger(auth_token, projection_strategy))
 
         # 注：实际的风控触发行为需要集成测试，这里只验证初始状态
 

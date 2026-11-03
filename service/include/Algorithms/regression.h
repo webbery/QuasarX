@@ -7,6 +7,14 @@
 ///   2. REST 接口（/v0/analysis/regression）——交互式分析
 ///   3. Python 训练侧（tools/ml_regression.py）——批量评估
 ///
+/// 分层（重要）：
+///   Algorithms/regression.{h,cpp}     纯数学内核，只依赖 Eigen + std。
+///                                     **不引入 JSON**——M3 的图内节点只用
+///                                     PanelData + 三个函数，不该背序列化依赖。
+///   Util/Spec/regression_spec.{h,cpp} JSON ⇄ PanelData 的编解码与 spec 校验，
+///                                     依赖 json.hpp + 本头文件。
+///   Handler/RegressionHandler         httplib 薄包装（解析 body → 调 spec → 写响应）。
+///
 /// 三类估计（估计单元不同，不能混在一个接口里）：
 ///   CrossSection  每个交易日 t，跨 N 个标的：y[i,t] = a_t + X[i,t]'b_t + e[i,t]
 ///                 产出逐日因子收益 b_t 与残差 e[i,t]（中性化的直接产物）

@@ -40,6 +40,7 @@
 #include "Handler/SignalHandler.h"
 #include "Handler/NonlinearHandler.h"
 #include "Handler/PCAHandler.h"
+#include "Handler/RegressionHandler.h"
 #include "Handler/CUSUMHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/NavHandler.h"
@@ -221,6 +222,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_SIMULATE_BAR    "/strategy/simulate/bar"
 #endif
 #define API_PCA             "/analysis/pca"
+#define API_ANALYSIS_REGRESSION "/analysis/regression"
 #define API_SR              "/sr/run"
 #define API_CAPITAL_STATUS  "/server/capital"
 #define API_STRATEGY_LOGS   "/strategy/logs"
@@ -485,6 +487,8 @@ void Server::Regist() {
     REGIST_GET(API_SIGNAL);
     REGIST_GET(API_NONLINEAR);
     REGIST_GET(API_PCA);
+    REGIST_GET(API_ANALYSIS_REGRESSION);
+    REGIST_POST(API_ANALYSIS_REGRESSION);
     REGIST_POST(API_SR);
     REGIST_POST(API_SERVER_CONFIG);
 
@@ -1672,6 +1676,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SIGNAL, SignalHandler);
     RegistHandler(API_NONLINEAR, NonlinearHandler);
     RegistHandler(API_PCA, PCAHandler);
+    RegistHandler(API_ANALYSIS_REGRESSION, RegressionHandler);
     RegistHandler(API_SR, SRHandler);
     RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
     RegistHandler(API_NODE_IO, NodeIOHandler);
