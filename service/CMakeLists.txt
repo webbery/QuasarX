@@ -352,6 +352,29 @@ endif()
 if(FFTW3_LIBRARY)
     target_link_libraries(${PROJECT_NAME} ${FFTW3_LIBRARY})
 endif()
+
+# ── OSQP v1.0 (二次规划求解器, PortfolioNode 的 MVO 均值-方差优化用) ──
+# 优先链静态库 libosqpstatic.a：服务二进制自带求解器，不依赖运行期 .so 的
+# 搜索路径（Release 只设了 -Wl,-rpath=. 指向 CWD，而 release tarball 把
+# 第三方 so 放在 lib/ 子目录）。找不到静态库才退回动态库。
+find_path(OSQP_INCLUDE_DIR osqp/osqp.h HINTS /usr/local/include /usr/include)
+find_library(OSQP_STATIC_LIBRARY NAMES osqpstatic HINTS /usr/local/lib /usr/lib)
+find_library(OSQP_SHARED_LIBRARY NAMES osqp HINTS /usr/local/lib /usr/lib)
+if(OSQP_INCLUDE_DIR AND OSQP_STATIC_LIBRARY)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${OSQP_INCLUDE_DIR})
+    target_link_libraries(${PROJECT_NAME} ${OSQP_STATIC_LIBRARY} m)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_OSQP=1)
+    message("-- OSQP v1.0: static ${OSQP_STATIC_LIBRARY}")
+elseif(OSQP_INCLUDE_DIR AND OSQP_SHARED_LIBRARY)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${OSQP_INCLUDE_DIR})
+    target_link_libraries(${PROJECT_NAME} ${OSQP_SHARED_LIBRARY})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_OSQP=1)
+    message("-- OSQP v1.0: shared ${OSQP_SHARED_LIBRARY}")
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_OSQP=0)
+    message("-- OSQP v1.0: NOT FOUND — MVO 优化器不可用")
+endif()
+
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
 endif()

@@ -11,7 +11,11 @@
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "Nodes/QuoteNode.h"
+#include "Nodes/Portfolio/PortfolioModel.h"
+#include "Algorithms/MVO/MvoTypes.h"
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
@@ -22,55 +26,29 @@ PortfolioNode::PortfolioNode(Server* server)
 PortfolioNode::~PortfolioNode() = default;
 
 bool PortfolioNode::Init(const nlohmann::json& config) {
+    const auto& params = config.contains("params") ? config["params"] : nlohmann::json::object();
+
     // 仓位比例
-    if (config["params"].contains("positionRatio")) {
-        _positionRatio = config["params"]["positionRatio"]["value"];
+    if (params.contains("positionRatio")) {
+        _positionRatio = params["positionRatio"]["value"];
     }
 
     // 是否允许做空
-    if (config["params"].contains("allowShort")) {
-        _allowShort = config["params"]["allowShort"]["value"];
+    if (params.contains("allowShort")) {
+        _allowShort = params["allowShort"]["value"];
     }
 
-    // ── 新增：仓位 sizing 方法（默认 Equal，保持原有行为） ──
-    // 支持中文键（前端格式）和英文键（toServerKey 转换后 / 嵌套格式）
-    if (config["params"].contains("仓位计算方法") || config["params"].contains("sizing_method")) {
-        String method;
-        if (config["params"].contains("仓位计算方法")) {
-            method = (String)config["params"]["仓位计算方法"]["value"];
-        } else {
-            method = (String)config["params"]["sizing_method"]["value"];
-        }
-        if (method == "kelly") {
-            _sizing_method = SizingMethod::Kelly;
-        } else if (method == "volatility_target") {
-            _sizing_method = SizingMethod::VolatilityTarget;
-        } else if (method == "strength") {
-            _sizing_method = SizingMethod::Strength;
-        } else {
-            _sizing_method = SizingMethod::Equal;
-        }
-    }
-    if (config["params"].contains("单标的上限") || config["params"].contains("max_single_pct")) {
-        if (config["params"].contains("单标的上限")) {
-            _max_single_pct = config["params"]["单标的上限"]["value"];
-        } else {
-            _max_single_pct = config["params"]["max_single_pct"]["value"];
-        }
-    }
-    if (config["params"].contains("总仓位上限") || config["params"].contains("max_total_pct")) {
-        if (config["params"].contains("总仓位上限")) {
-            _max_total_pct = config["params"]["总仓位上限"]["value"];
-        } else {
-            _max_total_pct = config["params"]["max_total_pct"]["value"];
-        }
-    }
-    if (config["params"].contains("波动率目标") || config["params"].contains("volatility_target")) {
-        if (config["params"].contains("波动率目标")) {
-            _vol_target = config["params"]["波动率目标"]["value"];
-        } else {
-            _vol_target = config["params"]["volatility_target"]["value"];
-        }
+    // ── 组合计算模型 ──
+    // 参数统一用英文键：sizing_method / max_single_pct / max_total_pct /
+    // volatility_target / mvo_*。只创建被选中的那一个模型，未选中的方案
+    // （以及它们的递推状态）完全不占内存。
+    const String method = params.contains("sizing_method")
+        ? static_cast<String>(params["sizing_method"]["value"])
+        : String("equal");
+    _sizing_model = portfolio::createPortfolioModel(portfolio::parseSizingMethod(method));
+    if (_sizing_model) {
+        _sizing_model->Init(config);
+        INFO("[PortfolioNode:{}] Sizing model = {}", _id, _sizing_model->name());
     }
 
     // 交易池 - 沿路径回溯获取上游标的池。
@@ -95,6 +73,13 @@ void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
         exchangeMgr->GetTotalAvailableFunds(context.getBacktestRunId()) :
         BACKTEST_INITIAL_CAPITAL;
     context.setInitialCapital(initialCapital);
+
+    // 模型内部状态（卡尔曼滤波器 / EWMA 协方差 / 上期权重）是跨 bar 递推的，
+    // 每次运行开始必须重置 —— 否则上一次回测的尾部状态会污染这一次。
+    if (_sizing_model) {
+        _sizing_model->Prepare();
+    }
+    _weights.clear();
 }
 
 NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& context) {
@@ -174,21 +159,53 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         targetCapital = 0.0;
     }
 
-    // ── 新增：仓位 sizing 调整 ──
-    applySizingWeights(context, decisions, targetCapital);
+    // ── 价格 / 持仓来源 adapter ──
+    // live 与 backtest 各一套，通过 adapter 注入 generatePlan。
+    // 必须提到 applySizingWeights 之前 —— MVO 要读当前持仓判定"新买入"，
+    // 并用上期权重做换手惩罚。
+    const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
 
-    // 3. 生成执行计划（合并 live/backtest，通过 adapter 注入持仓与价格来源）
-    ExecutionPlan newPlan;
-    if (_server->GetRunningMode() != RuningType::Backtest) {
-        // Live adapter
-        auto getQuotePrice = [&](symbol_t symbol) -> double {
-            const QuoteInfo* q = context.GetQuote(symbol);
+    HistorySimulationBase* histExchange = nullptr;
+    BacktestContext* btContext = nullptr;
+    if (isBacktest) {
+        auto* exchangeMgr = _server->GetExchangeManager();
+        for (auto type : context.getExchangeTypes()) {
+            histExchange = dynamic_cast<HistorySimulationBase*>(
+                exchangeMgr->GetExchangeByType(type));
+            if (histExchange) break;
+        }
+        btContext = histExchange ?
+            histExchange->getBacktestContext(context.getBacktestRunId()) : nullptr;
+    }
+
+    std::function<double(symbol_t)> getQuotePrice;
+    std::function<int64_t(symbol_t)> getPositionQuantity;
+
+    if (isBacktest) {
+        getQuotePrice = [histExchange, btContext](symbol_t symbol) -> double {
+            if (!histExchange || !btContext) return 0.0;
+            uint32_t curIndex = btContext->getCurIndex(symbol);
+            if (curIndex > 0) {
+                return histExchange->GetPrimitivePrice(symbol, curIndex - 1);
+            }
+            return 0.0;
+        };
+
+        getPositionQuantity = [histExchange](symbol_t symbol) -> int64_t {
+            if (!histExchange) return 0;
+            return histExchange->GetPositionQuantity(symbol);
+        };
+    } else {
+        Server* server = _server;
+        DataContext* ctx = &context;
+        getQuotePrice = [server, ctx](symbol_t symbol) -> double {
+            const QuoteInfo* q = ctx->GetQuote(symbol);
             if (q && q->_close > 0) return q->_close;
             if (q && q->_open > 0) return q->_open;
 
-            auto* exchangeMgr = _server->GetExchangeManager();
+            auto* exchangeMgr = server->GetExchangeManager();
             ExchangeInterface* exchange = nullptr;
-            for (auto type : context.getExchangeTypes()) {
+            for (auto type : ctx->getExchangeTypes()) {
                 exchange = exchangeMgr->GetExchangeByType(type);
                 if (exchange) break;
             }
@@ -203,44 +220,22 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             return 0.0;
         };
 
-        auto getPositionQuantity = [&](symbol_t symbol) -> int64_t {
-            auto* broker = _server->GetBrokerSubSystem();
+        getPositionQuantity = [server, &strategy](symbol_t symbol) -> int64_t {
+            auto* broker = server->GetBrokerSubSystem();
             auto* capital = broker->GetStrategyCapital(strategy);
             // 点查：不要为了取一个数量把整张持仓表拷一遍
             return capital->getHoldingQuantity(symbol);
         };
-
-        newPlan = generatePlan(strategy, context, decisions, targetCapital,
-                               getQuotePrice, getPositionQuantity, "live");
-    } else {
-        // Backtest adapter
-        auto* exchangeMgr = _server->GetExchangeManager();
-        HistorySimulationBase* histExchange = nullptr;
-        for (auto type : context.getExchangeTypes()) {
-            histExchange = dynamic_cast<HistorySimulationBase*>(
-                exchangeMgr->GetExchangeByType(type));
-            if (histExchange) break;
-        }
-        BacktestContext* btContext = histExchange ?
-            histExchange->getBacktestContext(context.getBacktestRunId()) : nullptr;
-
-        auto getQuotePrice = [&](symbol_t symbol) -> double {
-            if (!histExchange || !btContext) return 0.0;
-            uint32_t curIndex = btContext->getCurIndex(symbol);
-            if (curIndex > 0) {
-                return histExchange->GetPrimitivePrice(symbol, curIndex - 1);
-            }
-            return 0.0;
-        };
-
-        auto getPositionQuantity = [&](symbol_t symbol) -> int64_t {
-            if (!histExchange) return 0;
-            return histExchange->GetPositionQuantity(symbol);
-        };
-
-        newPlan = generatePlan(strategy, context, decisions, targetCapital,
-                               getQuotePrice, getPositionQuantity, "backtest");
     }
+
+    // ── 组合计算模型调整仓位权重 ──
+    applySizingWeights(strategy, context, decisions, targetCapital,
+                       getQuotePrice, getPositionQuantity);
+
+    // 3. 生成执行计划
+    ExecutionPlan newPlan = generatePlan(strategy, context, decisions, targetCapital,
+                                         getQuotePrice, getPositionQuantity,
+                                         isBacktest ? "backtest" : "live");
 
     // 4. 检查是否有变化
     newPlan._hasChanged = isPlanChanged(newPlan);
@@ -345,11 +340,13 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         output["plan_items"] = plan_arr;
         output["skipped"] = skipped;
 
-        switch (_sizing_method) {
-            case SizingMethod::Equal: meta["sizing_method"] = "equal"; break;
-            case SizingMethod::Kelly: meta["sizing_method"] = "kelly"; break;
-            case SizingMethod::VolatilityTarget: meta["sizing_method"] = "volatility_target"; break;
-            case SizingMethod::Strength: meta["sizing_method"] = "strength"; break;
+        meta["sizing_method"] = _sizing_model ? _sizing_model->name() : "equal";
+        if (!_weights.empty()) {
+            nlohmann::json weights_json = nlohmann::json::object();
+            for (const auto& [sym, w] : _weights) {
+                weights_json[get_symbol(sym)] = w;
+            }
+            meta["sizing_weights"] = weights_json;
         }
     );
 
@@ -635,122 +632,55 @@ void PortfolioNode::applyRiskContext(DataContext& context, Map<symbol_t, TradeAc
     }
 }
 
-// ── 按 sizing_method 调整仓位权重 ──
-void PortfolioNode::applySizingWeights(DataContext& context, Map<symbol_t, TradeAction>& decisions, double targetCapital) {
-    // 默认 Equal 模式：不改变现有行为
-    if (_sizing_method == SizingMethod::Equal) {
+// ── 按组合计算模型调整仓位权重 ──
+void PortfolioNode::applySizingWeights(
+        const String& strategy,
+        DataContext& context,
+        Map<symbol_t, TradeAction>& decisions,
+        double targetCapital,
+        const std::function<double(symbol_t)>& getQuotePrice,
+        const std::function<int64_t(symbol_t)>& getPositionQuantity) {
+
+    _weights.clear();
+    if (!_sizing_model) {
         return;
     }
 
-    // 获取可用标的列表（仅 BUY 信号）
-    Vector<symbol_t> buySymbols;
+    portfolio::PortfolioContext model_ctx;
+    model_ctx._data = &context;
+    model_ctx._symbol_pool = &_pool;
+    model_ctx._target_capital = targetCapital;
+    model_ctx._get_quote_price = getQuotePrice;
+    model_ctx._get_position_qty = getPositionQuantity;
+    model_ctx._buy_symbols.reserve(decisions.size());
     for (const auto& [symbol, action] : decisions) {
         if (action == TradeAction::BUY) {
-            buySymbols.push_back(symbol);
+            model_ctx._buy_symbols.push_back(symbol);
         }
     }
-    if (buySymbols.empty()) {
-        return;
-    }
 
-    Map<symbol_t, double> weights;
-
-    if (_sizing_method == SizingMethod::Kelly) {
-        // Kelly 公式: w* = (bp - q) / (b * σ²)
-        // 简化版：使用历史胜率估算
-        for (const auto& symbol : buySymbols) {
-            String key = get_symbol(symbol) + ".win_rate";
-            if (context.exist(key)) {
-                auto wr_var = context.get<Vector<double>>(key);
-                if (!wr_var.empty()) {
-                    double win_rate = wr_var.back();
-                    double avg_win = 0.02;  // TODO: 从上下文读取
-                    double avg_loss = 0.02; // TODO: 从上下文读取
-                    if (avg_loss > 0) {
-                        double b = avg_win / avg_loss;
-                        double q = 1.0 - win_rate;
-                        double kelly_pct = (b * win_rate - q) / b;
-                        weights[symbol] = std::max(0.0, kelly_pct);
-                    }
-                }
-            } else {
-                // 无数据，等权分配
-                weights[symbol] = 1.0 / buySymbols.size();
-            }
-        }
-    } else if (_sizing_method == SizingMethod::VolatilityTarget) {
-        // 目标波动率: w = vol_target / σ
-        for (const auto& symbol : buySymbols) {
-            String key = get_symbol(symbol) + ".volatility";
-            if (context.exist(key)) {
-                auto vol_var = context.get<Vector<double>>(key);
-                if (!vol_var.empty()) {
-                    double sigma = vol_var.back();
-                    if (sigma > 0) {
-                        weights[symbol] = _vol_target / sigma;
-                    }
-                }
-            } else {
-                weights[symbol] = 1.0 / buySymbols.size();
-            }
-        }
-    } else if (_sizing_method == SizingMethod::Strength) {
-        // 信号强度加权: 读取 {symbol}.strength → 归一化
-        // strength 值由上游节点写入（XGBoost/Signal/Formula 等均可）
-        // 只取正值（负值表示做空信号，不在 BUY 列表中）
-        double total_strength = 0.0;
-        for (const auto& symbol : buySymbols) {
-            String key = get_symbol(symbol) + ".strength";
-            double strength = 0.0;
-            if (context.exist(key)) {
-                auto s_var = context.get<Vector<double>>(key);
-                if (!s_var.empty()) {
-                    strength = s_var.back();
-                }
-            }
-            // 负值或零值给一个最小权重，避免完全排除
-            strength = std::max(strength, 1e-6);
-            weights[symbol] = strength;
-            total_strength += strength;
-        }
-        // 归一化
-        if (total_strength > 0) {
-            for (auto& [symbol, w] : weights) {
-                w /= total_strength;
-            }
+    const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
+    model_ctx._warn = [&strategy, isBacktest](const String& msg) {
+        if (isBacktest) {
+            WARN("[PortfolioNode] {}", msg);
         } else {
-            // 全部为零时回退等权
-            for (const auto& symbol : buySymbols) {
-                weights[symbol] = 1.0 / buySymbols.size();
-            }
+            STRATEGY_WARN(strategy, "{}", msg);
         }
-    }
+    };
 
-    if (weights.empty()) {
-        return;
-    }
-
-    // 截断：单标的上限
-    double total_weight = 0.0;
-    for (auto& [symbol, w] : weights) {
-        w = std::min(w, _max_single_pct);
-        total_weight += w;
-    }
-
-    // 截断：总仓位上限
-    if (total_weight > _max_total_pct) {
-        double scale = _max_total_pct / total_weight;
-        for (auto& [symbol, w] : weights) {
-            w *= scale;
-        }
-    }
-
-    // 存入成员变量，供 generatePlan 使用
-    _weights = std::move(weights);
+    _weights = _sizing_model->compute(model_ctx);
 }
 
+
 const nlohmann::json PortfolioNode::getParams() {
-    return {"positionRatio", "pool", "allowShort", "sizing_method", "max_single_pct", "max_total_pct", "volatility_target", "strength"};
+    return {"positionRatio", "pool", "allowShort", "sizing_method",
+            "max_single_pct", "max_total_pct", "volatility_target", "strength",
+            // MVO
+            "mvo_mean_method", "mvo_cov_method",
+            "mvo_risk_aversion", "mvo_turnover_penalty", "mvo_turnover_horizon",
+            "mvo_cost_rate", "mvo_max_weight",
+            "mvo_vol_target", "mvo_vol_target_enabled",
+            "mvo_min_samples", "mvo_min_names"};
 }
 
 Map<String, ArgType> PortfolioNode::out_elements() {

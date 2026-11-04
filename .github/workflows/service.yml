@@ -91,6 +91,26 @@ jobs:
           sudo cp -r deps-cache/duckdb/install/include/duckdb* /usr/local/include/
           sudo ldconfig
 
+      # OSQP v1.0（MVO 均值-方差优化的二次规划求解器）
+      # 静态库 libosqpstatic.a 是构建期依赖（CMakeLists 优先链它）；
+      # 共享库 libosqp.so 随 runtime-libs 一起发布，供 release 包补齐 lib/。
+      - name: Cache OSQP build
+        uses: actions/cache@v4
+        id: cache-osqp
+        with:
+          path: |
+            deps-cache/osqp/install
+          key: ${{ runner.os }}-osqp-v1.0.0
+          restore-keys: |
+            ${{ runner.os }}-osqp-
+
+      - name: Install OSQP from cache
+        if: steps.cache-osqp.outputs.cache-hit == 'true'
+        run: |
+          sudo cp -r deps-cache/osqp/install/include/osqp /usr/local/include/
+          sudo cp -P deps-cache/osqp/install/lib/libosqp* /usr/local/lib/
+          sudo ldconfig
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -138,6 +158,26 @@ jobs:
           sudo cp -P ${{ github.workspace }}/deps-cache/duckdb/install/lib/libduckdb* /usr/local/lib/
           sudo cp -r ${{ github.workspace }}/deps-cache/duckdb/install/include/duckdb* /usr/local/include/
           sudo ldconfig
+
+      - name: Build OSQP (if cache miss)
+        if: steps.cache-osqp.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.0.0 https://github.com/osqp/osqp
+          cd osqp
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DOSQP_BUILD_SHARED_LIB=ON \
+                -DOSQP_BUILD_STATIC_LIB=ON \
+                -DOSQP_BUILD_EXAMPLES=OFF \
+                -DOSQP_BUILD_TESTS=OFF \
+                -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/deps-cache/osqp/install ..
+          make -j$(nproc)
+          make install
+          sudo cp -r ${{ github.workspace }}/deps-cache/osqp/install/include/osqp /usr/local/include/
+          sudo cp -P ${{ github.workspace }}/deps-cache/osqp/install/lib/libosqp.so* /usr/local/lib/
+          sudo cp -P ${{ github.workspace }}/deps-cache/osqp/install/lib/libosqpstatic.a /usr/local/lib/ 2>/dev/null || true
+          sudo ldconfig
+          ls -la /usr/local/lib/libosqp*
 
       - name: Cache ONNX-runtime build
         uses: actions/cache@v4
@@ -253,7 +293,7 @@ jobs:
           echo "=== third_party/libs/unix ==="
           ls -la service/third_party/libs/unix/ || echo "DIR NOT FOUND"
           echo "=== /usr/local/lib ==="
-          ls -la /usr/local/lib/libxgboost.* /usr/local/lib/libduckdb.so* /usr/local/lib/libnng.so* /usr/local/lib/libta_lib.* /usr/local/lib/libfftw3* 2>&1 || true
+          ls -la /usr/local/lib/libxgboost.* /usr/local/lib/libduckdb.so* /usr/local/lib/libnng.so* /usr/local/lib/libta_lib.* /usr/local/lib/libfftw3* /usr/local/lib/libosqp.* 2>&1 || true
 
       - name: Upload runtime libs
         uses: actions/upload-artifact@v4
@@ -266,6 +306,7 @@ jobs:
             /usr/local/lib/libnlopt.so*
             /usr/local/lib/libfftw3*
             /usr/local/lib/libonnxruntime*
+            /usr/local/lib/libosqp.so*
             service/third_party/libs/unix/libfastsptraderapi.so
             service/third_party/libs/unix/libfasttraderapi.so
             service/third_party/libs/unix/libsptraderapi.so

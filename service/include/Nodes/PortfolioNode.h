@@ -4,7 +4,17 @@
 #include "Nodes/ExecutionPlan.h"
 #include "RiskContext.h"
 
+#include <memory>
+
 class BacktestContext;
+
+// 组合计算模型（等权 / Kelly / 目标波动率 / 强度加权 / MVO）通过基类指针
+// 持有：Init 时按 sizing_method 只创建被选中的那一个，未选中的模型及其
+// 递推状态都不占内存。
+namespace portfolio {
+class PortfolioModel;
+}
+
 class PortfolioNode : public QNode {
 public:
     RegistClassName(PortfolioNode);
@@ -31,30 +41,28 @@ private:
         const String& source);
     bool isPlanChanged(const ExecutionPlan& newPlan);
 
-    // ── 仓位 sizing 方法（默认关闭，保持原有等权行为） ──
-    enum class SizingMethod {
-        Equal,              // 默认：等权分配
-        Kelly,              // Kelly 公式
-        VolatilityTarget,   // 目标波动率反推
-        Strength            // 信号强度加权（读取 {symbol}.strength → 归一化权重）
-    };
-    SizingMethod _sizing_method = SizingMethod::Equal;
-    double _max_single_pct = 1.0;     // 单标的上限（默认不限制）
-    double _max_total_pct = 1.0;      // 总仓位上限（默认不限制）
-    double _vol_target = 0.02;        // 日波动目标（VolatilityTarget 模式用）
-
-    // Strength 模式：归一化后的权重（applySizingWeights 计算，generatePlan 使用）
-    Map<symbol_t, double> _weights;
-
     // 风控短路检查：RiskContext.triggered 为 true 时，将 decisions 全部改为 SELL
     void applyRiskContext(DataContext& context, Map<symbol_t, TradeAction>& decisions);
-    // 按 sizing_method 调整仓位权重
-    void applySizingWeights(DataContext& context, Map<symbol_t, TradeAction>& decisions, double targetCapital);
+
+    // 按当前的组合计算模型调整仓位权重
+    void applySizingWeights(const String& strategy,
+                            DataContext& context,
+                            Map<symbol_t, TradeAction>& decisions,
+                            double targetCapital,
+                            const std::function<double(symbol_t)>& getQuotePrice,
+                            const std::function<int64_t(symbol_t)>& getPositionQuantity);
 
 private:
-    Server*              _server;
-    double               _positionRatio;      // 仓位比例 (0.0~1.0)
-    Set<symbol_t>        _pool;              // 交易池（自动去重）
-    ExecutionPlan        _lastPlan;           // 上一次的执行计划
-    bool                 _allowShort = false; // 是否允许做空
+    Server*                                  _server;
+    double                                   _positionRatio;   // 仓位比例 (0.0~1.0)
+    Set<symbol_t>                            _pool;            // 交易池（自动去重）
+    ExecutionPlan                            _lastPlan;        // 上一次的执行计划
+    bool                                     _allowShort = false; // 是否允许做空
+
+    // 组合计算模型（Init 时创建，只保留被选中的那一个）
+    std::unique_ptr<portfolio::PortfolioModel> _sizing_model;
+
+    // 模型算出的权重（占 targetCapital 的比例），generatePlan 使用。
+    // 空 map = 不调整，按等权均分。
+    Map<symbol_t, double> _weights;
 };
