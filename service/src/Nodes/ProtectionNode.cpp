@@ -330,10 +330,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     // 从 Server 同步持仓
     syncPositions(strategy, context);
 
-    DEBUG_INFO("[ProtectionNode] Process: epoch={}, _entry_info.size={}", context.GetEpoch(), _entry_info.size());
-
     if (_entry_info.empty()) {
-        DEBUG_INFO("[ProtectionNode] _entry_info is empty, returning early");
         return NodeProcessResult::Success;
     }
 
@@ -396,8 +393,6 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         // 1. 检查止损: current < entry * (1 - percent)
         if (_sl.enabled) {
             double sl_price = info._avg_price * (1.0 - _sl.percent);
-            DEBUG_INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}",
-                 get_symbol(symbol), info._avg_price, current_price, sl_price, _sl.enabled);
             if (current_price <= sl_price) {
                 INFO("[ProtectionNode] StopLoss TRIGGERED!");
                 hit = RiskTriggerType::StopLoss;

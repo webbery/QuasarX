@@ -798,7 +798,9 @@ void init_logger() {
 #ifdef _DEBUG
     combined_logger->set_level(spdlog::level::debug);
 #else
-    combined_logger->set_level(spdlog::level::trace);
+    // Release 下编译期已裁掉 DEBUG/TRACE 级宏，运行时级别收到 info 即可；
+    // 原先写 trace 比 debug 更啰嗦，与实际可输出的级别不匹配。
+    combined_logger->set_level(spdlog::level::info);
 #endif
     // 警告则刷新
     combined_logger->flush_on(spdlog::level::warn);

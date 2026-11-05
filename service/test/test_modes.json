@@ -48,6 +48,7 @@
         "test_sectorquote",
         "test_tick_record",
         "test_data",
+        "test_ledger",
         "test_decision"
       ]
     },

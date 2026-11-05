@@ -112,9 +112,6 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     symbolsStr);
                 _server->SendEmail(emailContent);
             }
-        } else {
-            INFO("[ExecuteNode] Emergency close triggered: type={} symbols={}",
-                 to_string(rc->_trigger_type), rc->_trigger_symbols.size());
         }
 
         // 修改 plan：为触发标的的持仓添加平仓腿
@@ -166,7 +163,6 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                             item._targetValue = 0.0;
                             item._isEmergencyClose = true;
                             plan._items.push_back(item);
-                            INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
                         }
                     }
                 }
@@ -236,9 +232,6 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
 
             if (_server->GetRunningMode() != RuningType::Backtest) {
                 STRATEGY_INFO(strategy, "ExecuteNode: {} {} {} shares @ {}",
-                    (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
-            } else {
-                INFO("ExecuteNode: {} {} {} shares @ {}",
                     (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
             }
         }

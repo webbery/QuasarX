@@ -1337,7 +1337,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             perfStat.totalMs += nodeMs;
             if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
         )
-        if (epch % 50 == 0) {
+        if (epch % 200 == 0) {
             DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
                        epch, node->id(), nodeType, (int)result, nodeMs);
         }

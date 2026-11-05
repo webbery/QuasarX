@@ -422,8 +422,8 @@ ExecutionPlan PortfolioNode::generatePlan(
             } else if (currentQty > 0) {
                 // 已有多仓，跳过
                 if (_server->GetRunningMode() == RuningType::Backtest) {
-                    INFO("Symbol {} already has position {}, skipping buy",
-                         get_symbol(item._symbol), currentQty);
+                    DEBUG_INFO("Symbol {} already has position {}, skipping buy",
+                               get_symbol(item._symbol), currentQty);
                 }
                 continue;
             } else {
@@ -434,7 +434,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                         STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}",
                                       quantity, get_symbol(item._symbol));
                     } else {
-                        WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                        DEBUG_INFO("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
                     }
                     // 仍然更新 signal 的 quantity/price，让 ExecuteNode 知道此 signal 已被评估
                     auto* signal = context.getSignalBySymbol(symbol);
@@ -460,12 +460,6 @@ ExecutionPlan PortfolioNode::generatePlan(
                 item._targetValue = currentQty * price;
                 plan._items.push_back(item);
                 plan._usedCapital += item._targetValue;
-                if (_server->GetRunningMode() == RuningType::Backtest) {
-                    INFO("[PortfolioNode] SELL action for {}, currentQty={}, price={:.2f}, allowShort={}",
-                         get_symbol(item._symbol), currentQty, price, _allowShort);
-                    INFO("[PortfolioNode] -> SELL {} added to plan: qty={}, price={:.2f}",
-                         get_symbol(item._symbol), currentQty, price);
-                }
             } else if (currentQty == 0 && _allowShort) {
                 // 做空（开仓）
                 int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
@@ -476,10 +470,6 @@ ExecutionPlan PortfolioNode::generatePlan(
                     item._targetValue = quantity * price;
                     plan._items.push_back(item);
                     plan._usedCapital += item._targetValue;
-                    if (_server->GetRunningMode() == RuningType::Backtest) {
-                        INFO("[PortfolioNode] -> SHORT {} added to plan: qty={}, price={:.2f}",
-                             get_symbol(item._symbol), quantity, price);
-                    }
                 } else {
                     // 预算不足一手时开空会被丢弃。这里必须显式告警：BUY 分支至少有
                     // "Quantity 0 too small" 可查，空头此前完全静默 —— 决策集里只会看到
@@ -490,9 +480,9 @@ ExecutionPlan PortfolioNode::generatePlan(
                                       quantity, get_symbol(item._symbol),
                                       getSymbolCapital(symbol), price);
                     } else {
-                        WARN("Short quantity {} too small for symbol {} (budget={:.0f}, price={:.2f})",
-                             quantity, get_symbol(item._symbol),
-                             getSymbolCapital(symbol), price);
+                        DEBUG_INFO("Short quantity {} too small for symbol {} (budget={:.0f}, price={:.2f})",
+                                   quantity, get_symbol(item._symbol),
+                                   getSymbolCapital(symbol), price);
                     }
                     // 与 BUY 分支一致：写回已评估的 quantity/price，
                     // 让 ExecuteNode 知道这条 signal 已被评估过。
@@ -504,8 +494,8 @@ ExecutionPlan PortfolioNode::generatePlan(
                 }
             } else {
                 if (_server->GetRunningMode() == RuningType::Backtest) {
-                    INFO("[PortfolioNode] -> SELL {} skipped: currentQty={}, allowShort={}",
-                         get_symbol(item._symbol), currentQty, _allowShort);
+                    DEBUG_INFO("[PortfolioNode] -> SELL {} skipped: currentQty={}, allowShort={}",
+                               get_symbol(item._symbol), currentQty, _allowShort);
                 }
             }
         }
@@ -662,7 +652,7 @@ void PortfolioNode::applySizingWeights(
     const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
     model_ctx._warn = [&strategy, isBacktest](const String& msg) {
         if (isBacktest) {
-            WARN("[PortfolioNode] {}", msg);
+            DEBUG_INFO("[PortfolioNode] {}", msg);
         } else {
             STRATEGY_WARN(strategy, "{}", msg);
         }

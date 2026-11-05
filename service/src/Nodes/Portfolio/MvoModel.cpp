@@ -153,9 +153,11 @@ Map<symbol_t, double> MvoModel::compute(PortfolioContext& ctx) {
     }
 
     if (static_cast<int>(candidates.size()) < _min_names) {
-        ctx.warn(fmt::format(
-            "MVO skipped: {} fresh BUY candidate(s) < min {}; fallback to equal weight",
-            candidates.size(), _min_names));
+        if (!candidates.empty()) {
+            ctx.warn(fmt::format(
+                "MVO skipped: {} fresh BUY candidate(s) < min {}; fallback to equal weight",
+                candidates.size(), _min_names));
+        }
         return {};
     }
 

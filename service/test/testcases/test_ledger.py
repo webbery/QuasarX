@@ -225,6 +225,13 @@ def require_live_mode(is_backtest):
         pytest.skip("账本用例需要非回测模式（OrderDesk 手动回写分支），当前为回测模式")
 
 
+@pytest.fixture(scope="module")
+def require_backtest_mode(is_backtest):
+    """投影回归测试不需要手动回写，只在回测模式下运行"""
+    if not is_backtest:
+        pytest.skip("投影回归测试只需要回测模式，当前为非回测模式")
+
+
 @pytest.fixture
 def strategy(auth_token):
     """现金账户策略（marginRatio = 1.0）"""
@@ -506,7 +513,7 @@ def _seeded_projection_ledger(auth_token):
     _reload_ledger(auth_token)
 
 
-@pytest.mark.usefixtures("_seeded_projection_ledger")
+@pytest.mark.usefixtures("_seeded_projection_ledger", "require_backtest_mode")
 class TestProjectionRegression:
     """2026-11-03 账本投影失明事故回归
 
@@ -538,11 +545,6 @@ class TestProjectionRegression:
             预灌的账户就此消失。CI 里 test_decision 的 autouse fixture 就调了
             reclaim_all，查询因此返回 404（2026-11-03 CI 失败）。
     """
-
-    @pytest.fixture(autouse=True)
-    def _allow_backtest_mode(self):
-        """投影回归测试不需要手动回写，可以在回测模式下运行"""
-        pass
 
     @pytest.fixture
     def projection_strategy(self):

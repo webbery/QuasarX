@@ -214,7 +214,9 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
         if (idx >= 0 && idx < (int)vec.size()) {
             return vec[idx];
         } else {
-            WARN("getHistoricalValue - index out of range, idx={}, size={}", idx, vec.size());
+            if (!context.IsInWarmup()) {
+                WARN("getHistoricalValue - index out of range, idx={}, size={}", idx, vec.size());
+            }
             // 之前回退到 vec.back()/vec.front() 会让 ma_short[t-1]==ma_short[t] 等恒等式成立，
             // 进而触发金叉/死叉冲突消解、把全部信号丢弃（decisions=0）。
             // 越界时必须返回 NaN，让比较运算符统一返回 false，使 SignalNode 产生 HOLD。
