@@ -104,7 +104,13 @@ KNOWN_PARAMS = {
     "debug": {"suffix", "mode", "file_path"},
     "signal": {"buy", "sell", "allowShort"},
     "portfolio": {"positionRatio", "allowShort", "max_single_pct", "max_total_pct",
-                  "sizing_method", "volatility_target"},
+                  "sizing_method", "volatility_target",
+                  # MVO 分支参数（service/doc/mvo.md 第四节）
+                  "mvo_mean_method", "mvo_cov_method",
+                  "mvo_risk_aversion", "mvo_turnover_penalty",
+                  "mvo_turnover_horizon", "mvo_cost_rate", "mvo_max_weight",
+                  "mvo_vol_target", "mvo_vol_target_enabled",
+                  "mvo_min_samples", "mvo_min_names"},
     "spread": {"method", "window", "beta", "symbolA", "priceField"},
     "pair": {"entryZ", "exitZ", "stopZ", "maxHoldBars", "zField", "allowShort"},
     # 成本四项在 StrategySubSystem.cpp 读取，slippageModel 在 Strategy.cpp 读取
@@ -245,18 +251,34 @@ def signal_node(nid, symbol, *, buy="true", sell="false", allow_short=None,
 
 
 def portfolio_node(nid, *, position_ratio=1.0, allow_short=None, label="投资组合",
-                   sizing_method=None, position=None):
+                   sizing_method=None, max_single_pct=None, max_total_pct=None,
+                   mvo=None, position=None):
     """投资组合节点。position_ratio 是仓位比例 (0.0~1.0)。
 
     `sizing_method` 服务端取值：equal（默认）/ kelly / volatility_target /
-    strength。strength 按上游发布的 ``{symbol}.strength`` 归一化分配资金，
-    配对策略用它实现按对冲系数分配两腿名义金额。
+    strength / mvo。strength 按上游发布的 ``{symbol}.strength`` 归一化分配
+    资金，配对策略用它实现按对冲系数分配两腿名义金额。
+
+    `mvo` 是 MVO 分支参数字典（键名即服务端 config 里的英文键，见
+    ``service/doc/mvo.md`` 第四节）。值类型由 ``P.of`` 推断：bool→boolean、
+    int/float→number、str→text。示例::
+
+        portfolio_node("4", sizing_method="mvo",
+                       mvo={"mvo_risk_aversion": 0.0,
+                            "mvo_turnover_penalty": 0.0,
+                            "mvo_max_weight": 0.6})
     """
     params = {"positionRatio": P.number(position_ratio)}
     if allow_short is not None:
         params["allowShort"] = P.boolean(allow_short)
     if sizing_method is not None:
         params["sizing_method"] = P.select(sizing_method)
+    if max_single_pct is not None:
+        params["max_single_pct"] = P.number(max_single_pct)
+    if max_total_pct is not None:
+        params["max_total_pct"] = P.number(max_total_pct)
+    for key, value in (mvo or {}).items():
+        params[key] = P.of(value)
     return _node(nid, "portfolio", label, params, position)
 
 

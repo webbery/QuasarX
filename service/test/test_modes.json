@@ -34,7 +34,8 @@
         "test_shortable",
         "test_provenance",
         "test_stability",
-        "test_credit"
+        "test_credit",
+        "test_portfolio"
       ]
     },
     "tickflow": {

@@ -47,6 +47,7 @@ python run_tests.py --dry-run
 | `test_trade_history.py` | 交易历史查询（分页/时间过滤/回测场景） |
 | `test_user.py` | 服务状态、指数行情、配置获取/更新、权限测试 |
 | `test_mc.py` | 空文件（预留） |
+| `test_portfolio.py` | PortfolioNode 仓位算法端到端测试（等权基线 / MVO 回退 / 权重结构 / 换手惩罚 / 分支算法） |
 
 > 💡 **test_strategy.py 按模式拆分**: 通过登录响应中的 `mode` 字段判断运行模式，回测模式仅运行策略列表/部署/批量回测测试，非回测模式运行策略生命周期管理测试。
 
