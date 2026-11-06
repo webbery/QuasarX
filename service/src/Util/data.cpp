@@ -244,7 +244,7 @@ static Map<String, Vector<double>> loadCsvData(
         if (dot_pos != String::npos) {
             String code = etf_code.substr(0, dot_pos);
             String exchange = etf_code.substr(dot_pos + 1);
-            String etf_formatted = exchange + "." + code;
+            String etf_formatted = code + "." + exchange;  // CODE.EXCHANGE 格式 (如 510300.SH)
 
             // 后复权数据（指标计算用，与回测一致）
             search_paths.push_back(base_dir + "/etf_hfq/5m/" + etf_formatted + ".csv");
@@ -966,7 +966,7 @@ DownloadSymbolResult DownloadAndImportSymbol(
     }
 
     // 构建下载命令
-    String cmd = interpreter + " tools/download_etf_bs.py "
+    String cmd = interpreter + " tools/download_quote_bs.py "
                     + symbol + " " + quote_dir
                     + " --freq " + freq
                     + " --asset-type " + asset_type;

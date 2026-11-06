@@ -9,16 +9,16 @@
 
 用法:
   # 日线数据（完整历史）
-  python download_etf_bs.py 510300.SH build/data --freq daily
+  python download_quote_bs.py 510300.SH build/data --freq daily
 
   # 30分钟数据（默认回溯 5 年）
-  python download_etf_bs.py 510300.SH build/data --freq 30m
+  python download_quote_bs.py 510300.SH build/data --freq 30m
 
   # 多只标的
-  python download_etf_bs.py "510300.SH,159919.SZ" build/data --freq 5m
+  python download_quote_bs.py "510300.SH,159919.SZ" build/data --freq 5m
 
   # 指定日期范围
-  python download_etf_bs.py 510300.SH build/data --freq 5m --start 2024-01-01 --end 2024-12-31
+  python download_quote_bs.py 510300.SH build/data --freq 5m --start 2024-01-01 --end 2024-12-31
 """
 import argparse
 import os
@@ -96,7 +96,7 @@ def to_code_exchange(symbol: str) -> str:
     # BaoStock 格式: sh.510300 -> 510300.SH
     exchange_map = {"sh": "SH", "sse": "SH", "sz": "SZ", "szse": "SZ", "bj": "BJ"}
     exchange = exchange_map.get(left.lower(), right)
-    return f"{left}.{exchange}"
+    return f"{right}.{exchange}"
 
 
 # ============================================================

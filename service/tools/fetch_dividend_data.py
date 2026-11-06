@@ -43,7 +43,7 @@ except ImportError:
 
 
 # ============================================================
-# 代码格式转换 (复用 download_etf_bs.py 的逻辑)
+# 代码格式转换 (复用 download_quote_bs.py 的逻辑)
 # ============================================================
 
 def convert_to_baostock_code(symbol: str) -> str:

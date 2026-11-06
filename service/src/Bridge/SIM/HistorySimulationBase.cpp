@@ -607,7 +607,7 @@ void HistorySimulationBase::destroyBacktestContext(run_id_t run_id) {
 }
 
 bool HistorySimulationBase::stepForward(BacktestContext* context) {
-    auto symbols = context->getSymbols();
+    auto& symbols = context->getSymbols();
     if (symbols.empty()) {
         WARN("[stepForward] context has no symbols!");
         return false;
@@ -768,11 +768,18 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
 
         for (auto symbol : symbols) {
             int64_t position = context->getPosition(symbol);
-            if (position <= 0) {
+            if (position == 0) {
                 assetValues[symbol] = 0.0;
                 continue;
             }
 
+            // 空头仓位（position < 0）必须计入负市值（融券负债）。
+            // 早前用 position <= 0 直接跳过，配对交易 / 做空策略下空头腿负债
+            // 被整条漏掉：卖出腿所得计入 cash 而对应负债不进权益，
+            // 建仓当天权益凭空跳增（实测配对策略出现 +50% 的单日收益），
+            // 且高估幅度 = 空头市值，会随仓位放大并正反馈。
+            // 纯做多策略不受影响（position 恒 > 0）。
+            //
             // 使用原始价格估值（与 cash 扣减同一价格体系，消除 ratio 漂移导致的虚假收益）
             auto org_itr = _org_csvs.find(symbol);
             if (org_itr == _org_csvs.end() || org_itr->second.empty()) continue;
@@ -782,7 +789,7 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
             if (priceIndex < data.size()) {
                 double origClose = data._close[priceIndex];
-                double assetValue = position * origClose;
+                double assetValue = static_cast<double>(position) * origClose;
                 assetValues[symbol] = assetValue;
                 totalMarketValue += assetValue;
             }
@@ -1025,22 +1032,33 @@ bool HistorySimulationBase::GetAllETFSymbols(List<SymbolInfo>& symbols) {
         for (auto& entry : std::filesystem::directory_iterator(dataDir)) {
             if (entry.is_regular_file() && entry.path().extension() == ".csv") {
                 SymbolInfo info;
-                info._code = entry.path().stem().string();
+                String filename = entry.path().stem().string();
+                info._code = filename;
                 info._name = info._code;  // 暂无名称，使用代码
 
-                // 根据代码判断交易所：6位数字代码
-                if (info._code.size() >= 8) {
-                    String prefix = info._code.substr(0, 2);
-                    if (prefix == "sh") {
+                // 解析 CODE.EXCHANGE 格式 (如 510300.SH)
+                auto dot_pos = filename.find('.');
+                if (dot_pos != String::npos && dot_pos > 0) {
+                    String code_part = filename.substr(0, dot_pos);
+                    String exchange_part = filename.substr(dot_pos + 1);
+                    
+                    // 转换为大写进行比较
+                    std::transform(exchange_part.begin(), exchange_part.end(), 
+                                   exchange_part.begin(), ::toupper);
+                    
+                    if (exchange_part == "SH" || exchange_part == "SSE") {
                         info._exchange = MT_Shanghai;
-                    } else if (prefix == "sz") {
+                        info._code = code_part;  // 只保留代码部分
+                    } else if (exchange_part == "SZ" || exchange_part == "SZSE") {
                         info._exchange = MT_Shenzhen;
+                        info._code = code_part;  // 只保留代码部分
                     } else {
-                        continue;
+                        continue;  // 无法识别的交易所格式
                     }
                 } else {
-                    // 纯6位数字代码，根据首位判断
-                    char firstDigit = info._code[0];
+                    // 兼容旧格式：纯6位数字代码，根据首位判断
+                    if (filename.size() < 6) continue;
+                    char firstDigit = filename[0];
                     if (firstDigit == '5' || firstDigit == '6') {
                         info._exchange = MT_Shanghai;
                     } else if (firstDigit == '0' || firstDigit == '1' || firstDigit == '3') {

@@ -33,7 +33,7 @@ HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 # 原始价格数据（用于实际交易撮合）
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
 
-# 股票分钟频数据路径（按频率分层，与 download_etf_bs.py --asset-type stock 的输出同构）
+# 股票分钟频数据路径（按频率分层，与 download_quote_bs.py --asset-type stock 的输出同构）
 # 导入侧：conftest.py 的 upload_test_data 扫 stock_hfq/{freq}/ → 表 stock_{freq}
 INTRADAY_HFQ_ROOT = SERVICE_DATA_DIR / "stock_hfq"
 INTRADAY_ORG_ROOT = SERVICE_DATA_DIR / "stock_org"

@@ -121,7 +121,7 @@ struct DownloadSymbolResult {
 
 /// 下载单个标的 (ETF/Stock) 并导入 QuoteDB（同步、无 SSE、无线程）
 ///
-/// 流程: RunCommand(download_etf_bs.py) → 扫描 CSV → QuoteDB::importCsv → 删除 CSV
+/// 流程: RunCommand(download_quote_bs.py) → 扫描 CSV → QuoteDB::importCsv → 删除 CSV
 /// 自动从 symbol 推断 asset_type: sh.5xxxxx/sh.58xxxx → etf, 其余 → stock
 ///
 /// @param symbol       baostock 格式 (如 "sh.510050", "sh.600519")

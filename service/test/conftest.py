@@ -37,11 +37,9 @@ def upload_test_data(auth_api, is_backtest):
     """
     回测模式下，扫描 script/ 目录提取策略引用的标的，只导入这些标的的数据到 DuckDB。
     测试结束后自动清理导入的数据。
-    """
-    if not is_backtest:
-        yield
-        return
 
+    tickflow 模式下，导入实时模式测试（如 test_ledger）需要的标的数据。
+    """
     import re
     import sys
     sys.path.insert(0, str(Path(__file__).parent / "testcases"))
@@ -58,6 +56,13 @@ def upload_test_data(auth_api, is_backtest):
     # === 从策略脚本中提取引用的标的 ===
     stock_symbols = set()
     etf_symbols = set()
+
+    # 实时模式测试（如 test_ledger）需要的标的
+    # 这些测试在 tickflow 模式下运行，需要本地 QuoteDB 有数据
+    if not is_backtest:
+        # test_ledger 使用的标的
+        live_test_symbols = {"sz.900001"}
+        stock_symbols |= live_test_symbols
 
     def _extract_symbols(directory):
         """从目录中所有 JSON 文件提取标的，自动区分股票/ETF
@@ -79,28 +84,30 @@ def upload_test_data(auth_api, is_backtest):
                     stocks.add(sym)
         return stocks, etfs
 
-    # script/ 目录（集成测试策略）
-    s, e = _extract_symbols(script_dir)
-    stock_symbols |= s
-    etf_symbols |= e
+    # 回测模式：从策略脚本目录提取标的
+    if is_backtest:
+        # script/ 目录（集成测试策略）
+        s, e = _extract_symbols(script_dir)
+        stock_symbols |= s
+        etf_symbols |= e
 
-    # metric_test_data/ 目录（指标验证测试策略）
-    metric_dir = Path(__file__).parent / "testcases" / "metric_test_data"
-    s, e = _extract_symbols(metric_dir)
-    stock_symbols |= s
-    etf_symbols |= e
+        # metric_test_data/ 目录（指标验证测试策略）
+        metric_dir = Path(__file__).parent / "testcases" / "metric_test_data"
+        s, e = _extract_symbols(metric_dir)
+        stock_symbols |= s
+        etf_symbols |= e
 
-    # node_test_data/ 目录（节点单元/集成测试策略）
-    node_dir = Path(__file__).parent / "testcases" / "node_test_data"
-    s, e = _extract_symbols(node_dir)
-    stock_symbols |= s
-    etf_symbols |= e
+        # node_test_data/ 目录（节点单元/集成测试策略）
+        node_dir = Path(__file__).parent / "testcases" / "node_test_data"
+        s, e = _extract_symbols(node_dir)
+        stock_symbols |= s
+        etf_symbols |= e
 
-    # ai_test_data/ 目录（AI 模型训练测试策略）
-    ai_dir = Path(__file__).parent / "testcases" / "ai_test_data"
-    s, e = _extract_symbols(ai_dir)
-    stock_symbols |= s
-    etf_symbols |= e
+        # ai_test_data/ 目录（AI 模型训练测试策略）
+        ai_dir = Path(__file__).parent / "testcases" / "ai_test_data"
+        s, e = _extract_symbols(ai_dir)
+        stock_symbols |= s
+        etf_symbols |= e
 
     if not stock_symbols and not etf_symbols:
         print("\n[upload_test_data] 未找到策略引用的标的，跳过")
@@ -181,10 +188,20 @@ def upload_test_data(auth_api, is_backtest):
         """查找 {root_name}/{freq}/ 下的标的 CSV，找不到返回 None
 
         兼容两种命名：合成数据用 {symbol}.csv（sz.900007.csv），
-        download_etf_bs.py 的产物用 CODE.EXCHANGE.csv（000423.SZ.csv）。
+        download_quote_bs.py 的产物用 CODE.EXCHANGE.csv（900007.SZ.csv）。
         """
-        code, _, market = symbol.partition(".")
-        names = [symbol] + ([f"{code}.{market.upper()}"] if code else [])
+        # 生成两种格式：exchange.code 和 code.EXCHANGE
+        names = [symbol]
+        if "." in symbol:
+            parts = symbol.split(".", 1)
+            left, right = parts[0], parts[1]
+            # 如果左边是交易所前缀 (sz/sh/bj)，生成 CODE.EXCHANGE 格式
+            if left.lower() in ("sz", "sh", "bj"):
+                names.append(f"{right}.{left.upper()}")
+            # 如果右边是交易所后缀 (SZ/SH/BJ)，生成 exchange.code 格式
+            elif right.upper() in ("SZ", "SH", "BJ", "SSE", "SZSE"):
+                names.append(f"{left.lower()}.{right}")
+        
         for d in _csv_search_dirs:
             for n in names:
                 p = d / root_name / freq / f"{n}.csv"
@@ -210,7 +227,7 @@ def upload_test_data(auth_api, is_backtest):
                 fail_count += 1
 
         # 分钟频：stock_hfq|stock_org/{freq}/{symbol}.csv → stock_{freq}
-        # 目录约定与 download_etf_bs.py --asset-type stock 的输出同构
+        # 目录约定与 download_quote_bs.py --asset-type stock 的输出同构
         for freq in stock_freqs:
             freq_hfq = _freq_csv("stock_hfq", freq, symbol)
             if freq_hfq is None:
