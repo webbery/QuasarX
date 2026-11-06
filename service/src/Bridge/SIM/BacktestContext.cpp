@@ -87,28 +87,32 @@ void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price,
     // 普通卖单（credit=None）在无持仓时仍然被拒绝 —— 现有多头回测行为不变。
     bool allowShort = (credit == CreditAction::ShortSell);
 
-    // 调用 StockPositionManager 执行持仓变动，返回费用明细
-    TradeFees fees = _positionMgr.AdjustPosition(symbol, delta, price, allowShort);
+    // 调用 StockPositionManager 执行持仓变动，返回费用明细与实际成交量
+    int64_t filled = 0;
+    TradeFees fees = _positionMgr.AdjustPosition(symbol, delta, price, allowShort, &filled);
 
-    // 从账本扣/加资金
-    if (_ledger && !_strategyNameForCapital.empty()) {
-        double amount = std::abs(delta) * price;
-        if (delta > 0) {
+    // 从账本扣/加资金 —— 必须用实际成交量 filled，不能用入参 delta。
+    // 委托可能被拒（无多仓且不允许做空）或因 T+1 / 持仓不足而缩减；
+    // 早前按 delta 记账，配对策略的卖空腿被拒后现金仍照加卖出所得、
+    // 而持仓没有对应的负仓 → 权益凭空多出整个空头名义金额
+    if (_ledger && !_strategyNameForCapital.empty() && filled != 0) {
+        double amount = std::abs(static_cast<double>(filled)) * price;
+        if (filled > 0) {
             // 买入：扣资金 = amount + fees
             // 融资买入只占用保证金部分，其余为借入现金（不占用可用资金）
             double cashOut = (credit == CreditAction::MarginBuy)
                                  ? amount * std::clamp(marginRatio, 0.0, 1.0)
                                  : amount;
             _ledger->UpdateAvailable(_strategyNameForCapital, -(cashOut + fees.total()));
-        } else if (delta < 0) {
+        } else {
             // 卖出：加资金 = amount - fees
             _ledger->UpdateAvailable(_strategyNameForCapital, amount - fees.total());
         }
     }
 
     // 信用敞口回写（融资余额 / 在借股数 / 开空均价）
-    if (credit != CreditAction::None) {
-        applyCreditFill(get_symbol(symbol), credit, std::abs(delta), price, marginRatio);
+    if (credit != CreditAction::None && filled != 0) {
+        applyCreditFill(get_symbol(symbol), credit, std::abs(filled), price, marginRatio);
     }
 }
 
@@ -247,7 +251,6 @@ double BacktestContext::getProgress() const {
 }
 
 void BacktestContext::addSymbol(symbol_t symbol) {
-    std::lock_guard<std::mutex> lock(_symbolsMtx);
     _symbols.insert(symbol);
 }
 

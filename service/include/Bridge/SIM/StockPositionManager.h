@@ -47,8 +47,11 @@ public:
     SellResult Sell(symbol_t symbol, int64_t qty, double price, bool allowShort = false);
 
     /// @brief 调整持仓（通用：delta > 0 买入，delta < 0 卖出）
+    /// @param filledDelta 输出实际成交的 delta（正=买入，负=卖出）。
+    ///        被拒（无仓且 allowShort=false）、受 T+1 限制或持仓不足时都会与入参不同，
+    ///        调用方必须用它而不是入参 delta 做资金记账，否则未成交的委托也会动现金。
     TradeFees AdjustPosition(symbol_t symbol, int64_t delta, double price,
-                            bool allowShort = false);
+                            bool allowShort = false, int64_t* filledDelta = nullptr);
 
     /// @brief 应用持仓事件（分红/送股等被动事件，不走 Buy/Sell 路径）
     /// 不产生佣金/印花税，不触发 T+1

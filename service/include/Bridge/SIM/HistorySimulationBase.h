@@ -139,10 +139,24 @@ protected:
     virtual void OnDataLoaded() {}
 
     // === 共同工具方法 ===
+    /// 构建 OHLCV 序列。
+    ///
+    /// 同一时间戳的重复行会被合并（保留最后一次的值），不会产生重复 bar。
+    /// 重复 bar 不只是"多一根"：stepForward 只推进当前时间等于 minTime 的标的，
+    /// 重复日期会让该标的在原地多走 N 步、其余标的被冻结在旧价上，于是价差/β
+    /// 是用不同交易日拼出来的（实测 2024-01-10 出现 11 根，β 从 3.59 滑到 1.82）。
     void BuildOHLCVDataFromMap(
         const Map<String, Vector<double>>& data,
         const Vector<String>& dates,
         OHLCVData& out);
+
+    /// 校验复权序列与原始序列逐 bar 对齐（长度 + 每个时间戳）。
+    ///
+    /// stepForward 用同一个 curIndex 去取 _csvs 与 _org_csvs，一旦两者行数不同
+    /// 就会静默用错位的价格撮合。返回 false 表示数据不可用，调用方应放弃该标的
+    /// 而不是继续按 index 硬对齐。
+    bool ValidateSeriesAlignment(symbol_t symbol) const;
+
     void matchOrders(BacktestContext* context, symbol_t symbol);
     bool OrderReport(BacktestContext* context, order_id id, const TradeReport& report);
     TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);

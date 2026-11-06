@@ -5,6 +5,15 @@
 #include "std_header.h"
 #include <cmath>
 
+namespace {
+
+// 止损锁（_blocked）挡掉入场的 bar 数。线程局部：回测循环固定跑在一个计算线程上。
+// 止损后策略要求 |z| 回落到 exitZ 以内才允许重开，这段"什么都不做"的状态过去
+// 既不写 signal 也不写日志 —— 排查"为什么这里没开仓"时完全无从下手。
+thread_local int t_blockedBars = 0;
+
+}  // namespace
+
 PairNode::PairNode(Server* server) : SignalNodeBase(server) {
 }
 
@@ -49,6 +58,7 @@ void PairNode::Prepare(const String& strategy, DataContext& context) {
     // 每次 run 开始时复位状态机：持有 bar 数与止损锁
     _barsHeld = 0;
     _blocked = false;
+    t_blockedBars = 0;
 }
 
 bool PairNode::readLast(DataContext& context, const String& key, double& out) {
@@ -139,6 +149,13 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
         }
     } else {
         double absZ = std::fabs(z);
+        // 止损后需等价差回到 exitZ 之内才允许再次开仓。
+        // 缺这一步时 _blocked 只会在"持仓分支"里被复位，而止损后已经是空仓，
+        // 永远进不到那个分支 → 一次止损就把策略永久锁死
+        if (_blocked && absZ <= _exitZ) {
+            _blocked = false;
+            t_blockedBars = 0;
+        }
         if (absZ >= _entryZ && !_blocked) {
             // z>0：分子腿偏贵 → 空分子腿、多分母腿；z<0 反之
             symbol_t shortLeg = (z > 0) ? _legA : _legB;
@@ -153,6 +170,16 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
                 actions.push_back({_legA, (z > 0) ? TradeAction::SELL : TradeAction::BUY});
                 actions.push_back({_legB, (z > 0) ? TradeAction::BUY : TradeAction::SELL});
                 _barsHeld = 0;
+            }
+        } else if (_blocked && absZ >= _entryZ) {
+            // 已越过入场阈值却因为止损锁而空仓等待 —— 每个锁定区间只提示一次，
+            // 之后只累加计数，避免在阈值附近来回震荡时刷屏
+            ++t_blockedBars;
+            if (t_blockedBars == 1) {
+                WARN("[PairNode:{}] 入场被止损锁抑制：|z|={:.2f} >= entryZ={:.2f}，"
+                     "但上次止损后 |z| 尚未回落到 exitZ={:.2f} 以内；"
+                     "在 z 回归前不会重复开仓",
+                     _id, absZ, _entryZ, _exitZ);
             }
         }
     }

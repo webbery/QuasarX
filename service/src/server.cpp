@@ -701,10 +701,13 @@ std::pair<bool, String> Server::ValidateStrategyConfig(const nlohmann::json& con
 
         // 2. 验证图的完整性：必须包含 Input/Signal/Portfolio/Execution 节点
         // 统计各类节点数量
+        // 按 SignalNodeBase 判定而非 SignalNode：PairNode 等信号类节点直接继承
+        // SignalNodeBase，若按 SignalNode 判定，配对交易图会被误判为
+        // "Signal(信号节点) is lost"。
         int inputCount = 0, signalCount = 0, portfolioCount = 0, executionCount = 0;
         for (auto* node : nodes) {
             if (dynamic_cast<QuoteInputNode*>(node)) inputCount++;
-            else if (dynamic_cast<SignalNode*>(node)) signalCount++;
+            else if (dynamic_cast<SignalNodeBase*>(node)) signalCount++;
             else if (dynamic_cast<PortfolioNode*>(node)) portfolioCount++;
             else if (dynamic_cast<ExecuteNode*>(node)) executionCount++;
         }
@@ -759,7 +762,7 @@ std::pair<bool, String> Server::ValidateStrategyConfig(const nlohmann::json& con
                 if (!visited.count(node)) {
                     String nodeType = "unknown";
                     if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "input";
-                    else if (dynamic_cast<SignalNode*>(node)) nodeType = "signal";
+                    else if (dynamic_cast<SignalNodeBase*>(node)) nodeType = "signal";
                     else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "portfolio";
                     else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "execution";
                     else if (dynamic_cast<FunctionNode*>(node)) nodeType = "function";
@@ -782,7 +785,7 @@ std::pair<bool, String> Server::ValidateStrategyConfig(const nlohmann::json& con
         // 4. 检查 Input 是否能到达 Signal/Portfolio/Execution
         bool canReachSignal = false, canReachPortfolio = false, canReachExecution = false;
         for (auto* node : visited) {
-            if (dynamic_cast<SignalNode*>(node)) canReachSignal = true;
+            if (dynamic_cast<SignalNodeBase*>(node)) canReachSignal = true;
             else if (dynamic_cast<PortfolioNode*>(node)) canReachPortfolio = true;
             else if (dynamic_cast<ExecuteNode*>(node)) canReachExecution = true;
         }

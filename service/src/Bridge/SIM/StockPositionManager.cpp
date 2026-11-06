@@ -167,11 +167,18 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
 }
 
 TradeFees StockPositionManager::AdjustPosition(symbol_t symbol, int64_t delta, double price,
-                                               bool allowShort) {
+                                               bool allowShort, int64_t* filledDelta) {
+    if (filledDelta) *filledDelta = 0;
     if (delta > 0) {
-        return Buy(symbol, delta, price);
+        TradeFees fees = Buy(symbol, delta, price);
+        if (filledDelta) *filledDelta = delta;   // 买入不受 T+1 / 持仓限制
+        return fees;
     } else if (delta < 0) {
         auto result = Sell(symbol, -delta, price, allowShort);
+        // 被拒（无仓且不允许做空）时 actualQty=0；T+1 或持仓不足时会小于请求量
+        if (filledDelta && result.actualQty > 0) {
+            *filledDelta = -result.actualQty;
+        }
         return result.fees;
     }
     return TradeFees{};

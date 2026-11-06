@@ -23,6 +23,7 @@
 #include <exception>
 #include <stdexcept>
 #include <typeinfo>
+#include <cmath>
 #include <thread>
 #include <algorithm>
 #include <chrono>
@@ -544,6 +545,48 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                     }
                 }
                 if (endNode) {
+                    // ── 信号 / 计划 / 成交 三方对账 ──
+                    // 单位统一为"腿"：一个配对开仓会写两条 signal、生成两个 plan item、
+                    // 产生两笔成交。三者不等说明有信号在中途被丢弃 —— 这类问题过去只能
+                    // 靠"少了一笔成交"反推，因为丢单分支全是 DEBUG_INFO（Release 下展开为空）。
+                    int64_t nSignal = 0;
+                    int64_t nPlanned = 0;
+                    int64_t nFilled = 0;
+                    if (btContext) {
+                        auto* broker = _handle->GetBrokerSubSystem();
+                        for (const auto& sym : btContext->getSymbols()) {
+                            const String base = get_symbol(sym);
+
+                            const String sigKey = base + ".signal";
+                            if (context.exist(sigKey)) {
+                                for (double v : context.get<Vector<double>>(sigKey)) {
+                                    if (v != 0.0) ++nSignal;
+                                }
+                            }
+
+                            const String planKey = base + ".plan_action";
+                            if (context.exist(planKey)) {
+                                for (double v : context.get<Vector<double>>(planKey)) {
+                                    if (v != 0.0) ++nPlanned;
+                                }
+                            }
+
+                            if (broker) {
+                                for (const auto& trans : broker->GetHistoryTrades(runId, sym)) {
+                                    nFilled += static_cast<int64_t>(trans._deal._reports.size());
+                                }
+                            }
+                        }
+                    }
+                    if (nSignal != nFilled) {
+                        WARN("[Backtest] {} 信号/计划/成交不一致: signals={} planned={} filled={} "
+                             "（差额 {} 条腿，查 [PortfolioNode]/[ExecuteNode] 的 dropped 日志）",
+                             strategy, nSignal, nPlanned, nFilled, nSignal - nFilled);
+                    } else {
+                        INFO("[Backtest] {} 信号/计划/成交对账通过: signals={} planned={} filled={}",
+                             strategy, nSignal, nPlanned, nFilled);
+                    }
+
                     ComputeBacktestMetrics(strategy, flow, btContext, exchangeMgr);
                 }
                 guard.dismiss();
@@ -850,7 +893,12 @@ void FlowSubsystem::ComputeBacktestMetrics(
                     for (int i = 1; i < T; i++) {
                         double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
                         double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
-                        if (prevVal > 0.0) {
+                        // 空头仓位的资产值为负（负债）。用 |prevVal| 做分母判定，
+                        // 收益率符号自动正确：空头市值 -50 → -45（标的价格涨 10%）
+                        // 得 (-45+50)/(-50) = -10%，即空头腿亏损 10%。
+                        // 早前用 prevVal > 0 判定会把空头腿整段记 0，
+                        // Monte Carlo 的波动估计因此丢掉空头腿的信息。
+                        if (std::abs(prevVal) > 0.0) {
                             assetReturns[j].push_back((currVal - prevVal) / prevVal);
                         } else {
                             assetReturns[j].push_back(0.0);

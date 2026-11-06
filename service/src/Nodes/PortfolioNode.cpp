@@ -17,6 +17,30 @@
 #include <cmath>
 #include <limits>
 
+namespace {
+
+// ── 丢单告警限频 ──
+// generatePlan 的每个丢弃分支每根 bar 都可能命中（例如 300 只标的的预算都不足一手），
+// 无条件 WARN 会刷屏；但原先用 DEBUG_INFO 等于不存在 —— Release 下它展开成空，
+// 一次开仓被无声吃掉后没有任何痕迹。这里用线程局部计数器：每次运行只打前 N 条明细。
+thread_local int t_dropWarned = 0;
+constexpr int kDropWarnLimit = 20;
+
+/// 本次丢单是否还要打印明细（超过上限后折叠，只提示一次）
+inline bool ShouldWarnDrop(const String& strategy, uint32_t nodeId) {
+    ++t_dropWarned;
+    if (t_dropWarned <= kDropWarnLimit) {
+        return true;
+    }
+    if (t_dropWarned == kDropWarnLimit + 1) {
+        WARN("[PortfolioNode:{}@{}] 丢单告警已达 {} 条上限，后续丢单不再逐条打印",
+             strategy, nodeId, kDropWarnLimit);
+    }
+    return false;
+}
+
+}  // namespace
+
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
     , _positionRatio(0.5)
@@ -80,6 +104,9 @@ void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
         _sizing_model->Prepare();
     }
     _weights.clear();
+
+    // 丢单告警限频计数器按运行复位，保证每次回测都能看到前若干条明细
+    t_dropWarned = 0;
 }
 
 NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& context) {
@@ -421,20 +448,22 @@ ExecutionPlan PortfolioNode::generatePlan(
                 plan._items.push_back(item);
             } else if (currentQty > 0) {
                 // 已有多仓，跳过
-                if (_server->GetRunningMode() == RuningType::Backtest) {
-                    DEBUG_INFO("Symbol {} already has position {}, skipping buy",
-                               get_symbol(item._symbol), currentQty);
+                if (ShouldWarnDrop(strategy, _id)) {
+                    WARN("[PortfolioNode:{}@{}] BUY {} 未生成执行项：已持多仓 {} 股，不再加仓",
+                         strategy, _id, get_symbol(item._symbol), currentQty);
                 }
                 continue;
             } else {
                 // 无仓，BUY = 开多
                 int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
                 if (quantity < 100) {
-                    if (_server->GetRunningMode() != RuningType::Backtest) {
-                        STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}",
-                                      quantity, get_symbol(item._symbol));
-                    } else {
-                        DEBUG_INFO("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                    // 预算不足一手 —— 这是"开仓被静默丢弃"最常见的原因：
+                    // targetCapital 为 0（现金为负被收敛）时两只腿都会走到这里
+                    if (ShouldWarnDrop(strategy, _id)) {
+                        WARN("[PortfolioNode:{}@{}] BUY {} 未生成执行项：数量 {} < 100 股"
+                             "（预算={:.0f}, 价格={:.2f}）",
+                             strategy, _id, get_symbol(item._symbol), quantity,
+                             getSymbolCapital(symbol), price);
                     }
                     // 仍然更新 signal 的 quantity/price，让 ExecuteNode 知道此 signal 已被评估
                     auto* signal = context.getSignalBySymbol(symbol);
@@ -471,18 +500,12 @@ ExecutionPlan PortfolioNode::generatePlan(
                     plan._items.push_back(item);
                     plan._usedCapital += item._targetValue;
                 } else {
-                    // 预算不足一手时开空会被丢弃。这里必须显式告警：BUY 分支至少有
-                    // "Quantity 0 too small" 可查，空头此前完全静默 —— 决策集里只会看到
-                    // 上一根 bar 的旧值，排查时看不出是资金口径问题。
-                    if (_server->GetRunningMode() != RuningType::Backtest) {
-                        STRATEGY_WARN(strategy, "Short quantity {} too small for symbol {} "
-                                      "(budget={:.0f}, price={:.2f})",
-                                      quantity, get_symbol(item._symbol),
-                                      getSymbolCapital(symbol), price);
-                    } else {
-                        DEBUG_INFO("Short quantity {} too small for symbol {} (budget={:.0f}, price={:.2f})",
-                                   quantity, get_symbol(item._symbol),
-                                   getSymbolCapital(symbol), price);
+                    // 预算不足一手时开空会被丢弃 —— 与 BUY 分支同一类丢单
+                    if (ShouldWarnDrop(strategy, _id)) {
+                        WARN("[PortfolioNode:{}@{}] SELL(开空) {} 未生成执行项：数量 {} < 100 股"
+                             "（预算={:.0f}, 价格={:.2f}）",
+                             strategy, _id, get_symbol(item._symbol), quantity,
+                             getSymbolCapital(symbol), price);
                     }
                     // 与 BUY 分支一致：写回已评估的 quantity/price，
                     // 让 ExecuteNode 知道这条 signal 已被评估过。
@@ -493,9 +516,12 @@ ExecutionPlan PortfolioNode::generatePlan(
                     }
                 }
             } else {
-                if (_server->GetRunningMode() == RuningType::Backtest) {
-                    DEBUG_INFO("[PortfolioNode] -> SELL {} skipped: currentQty={}, allowShort={}",
-                               get_symbol(item._symbol), currentQty, _allowShort);
+                // 空仓且不允许做空 → SELL 无处落地，整条腿被丢弃。
+                // 配对策略里这会退化成"只有多头腿"的裸多仓位
+                if (ShouldWarnDrop(strategy, _id)) {
+                    WARN("[PortfolioNode:{}@{}] SELL {} 未生成执行项：无持仓且未开启做空"
+                         "（allowShort={}），该腿被丢弃",
+                         strategy, _id, get_symbol(item._symbol), _allowShort);
                 }
             }
         }

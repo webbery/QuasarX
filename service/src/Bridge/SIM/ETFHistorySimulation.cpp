@@ -64,6 +64,13 @@ bool ETFHistorySimulation::LoadData(const String& code) {
 
     BuildOHLCVDataFromMap(orgData, orgDates, _org_csvs[symbol]);
 
+    // 复权/原始序列必须逐 bar 对齐，否则撮合会按 curIndex 取到错位价格
+    if (!ValidateSeriesAlignment(symbol)) {
+        _csvs.erase(symbol);
+        _org_csvs.erase(symbol);
+        return false;
+    }
+
     return true;
 }
 

@@ -80,7 +80,8 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             auto* broker = _server->GetBrokerSubSystem();
             auto* capital = broker->GetStrategyCapital(strategy);
             for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
-                if (pos._quantity > 0 && should_close(symbol)) {
+                // 含空头仓位（配对交易 / 做空策略）
+                if (pos._quantity != 0 && should_close(symbol)) {
                     closedSymbols.push_back(get_symbol(symbol));
                 }
             }
@@ -120,11 +121,16 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             auto* broker = _server->GetBrokerSubSystem();
             auto* capital = broker->GetStrategyCapital(strategy);
             for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
-                if (pos._quantity > 0 && should_close(symbol)) {
+                // 空头仓位也要纳入：pos._quantity > 0 只覆盖多头，
+                // 配对交易 / 做空策略的空头腿在紧急平仓时会被漏掉。
+                if (pos._quantity != 0 && should_close(symbol)) {
                     ExecutionItem item;
                     item._symbol = symbol;
-                    item._action = TradeAction::SELL;
-                    item._quantity = static_cast<int>(pos._quantity);
+                    // 多头平仓 = 卖出；空头平仓 = 买回。数量统一取绝对值，
+                    // 方向由 action 表达（下游要求 _quantity > 0）。
+                    const bool isLong = pos._quantity > 0;
+                    item._action = isLong ? TradeAction::SELL : TradeAction::BUY;
+                    item._quantity = static_cast<int>(std::abs(pos._quantity));
                     item._flag = 1; // 平仓
                     // 决策价：当前 Bar 原始价（与 PortfolioNode 的 limitPrice 同口径）
                     double price = context.GetRawPrice(symbol);
@@ -139,7 +145,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     // 决策链下游不再自己摸账本（回测路径没有账本，就只能显示"—"）。
                     item._costPrice = pos._avgPrice;
                     plan._items.push_back(item);
-                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={} @ {} (cost={:.2f})",
+                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close: {} qty={} @ {} (cost={:.2f})",
                                   get_symbol(symbol), pos._quantity, price, pos._avgPrice);
                 }
             }
@@ -153,11 +159,13 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 if (btCtx) {
                     for (const auto& symbol : btCtx->getSymbols()) {
                         int64_t qty = btCtx->getPosition(symbol);
-                        if (qty > 0 && should_close(symbol)) {
+                        // 同上：空头仓位（qty < 0）也要平掉，
+                        // 多头 SELL / 空头 BUY，数量取绝对值。
+                        if (qty != 0 && should_close(symbol)) {
                             ExecutionItem item;
                             item._symbol = symbol;
-                            item._action = TradeAction::SELL;
-                            item._quantity = static_cast<int>(qty);
+                            item._action = (qty > 0) ? TradeAction::SELL : TradeAction::BUY;
+                            item._quantity = static_cast<int>(std::abs(qty));
                             item._flag = 1; // 平仓
                             item._limitPrice = 0.0; // 回测模式下价格由 BacktestContext 提供
                             item._targetValue = 0.0;
@@ -184,11 +192,19 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
         }
 
         // 对于不在 plan 中的 signal（PortfolioNode 评估后跳过，如 quantity < 100），
-        // 将其 action 改为 HOLD，避免 ConsumeSignals 时触发无效订单
+        // 将其 action 改为 HOLD，避免 ConsumeSignals 时触发无效订单。
+        //
+        // 这里是整条决策链的最后一道闸门：PortfolioNode 没放进 plan 的 BUY/SELL
+        // 会在这里被无条件吞掉。此前完全无日志，事后只能靠"少了一笔成交"反推，
+        // 排查配对/组合策略丢单时看不出是预算、可做空名单还是计划没变化。
         const auto& allSignals = context.getAllSignals();
         for (const auto& [sym, signal] : allSignals) {
             if (plannedSymbols.count(sym) == 0) {
                 if (signal->GetAction() == TradeAction::BUY || signal->GetAction() == TradeAction::SELL) {
+                    WARN("[ExecuteNode:{}] signal dropped: {} {} qty={} 不在执行计划中"
+                         "（PortfolioNode 未生成该标的的 plan item），降级为 HOLD",
+                         _id, (signal->GetAction() == TradeAction::BUY ? "BUY" : "SELL"),
+                         get_symbol(sym), signal->GetQuantity());
                     signal->SetAction(TradeAction::HOLD);
                 }
             }
@@ -260,6 +276,12 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             auto it = planned.find(sym);
             if (it == planned.end()) {
                 if (signal->GetQuantity() <= 0) {
+                    // 计划本轮无变化，且该标的压根不在计划里、也没有被评估过的数量 ——
+                    // 信号在这里被吞掉。与上面"计划变化"分支同一处闸门，同样必须留痕
+                    WARN("[ExecuteNode:{}] signal dropped: {} {} qty={} 不在执行计划中"
+                         "（计划未变化且未评估数量），降级为 HOLD",
+                         _id, (signal->GetAction() == TradeAction::BUY ? "BUY" : "SELL"),
+                         get_symbol(sym), signal->GetQuantity());
                     signal->SetAction(TradeAction::HOLD);
                 }
                 continue;

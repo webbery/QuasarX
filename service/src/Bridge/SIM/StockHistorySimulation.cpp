@@ -97,6 +97,15 @@ bool StockHistorySimulation::LoadData(const String& code) {
 
         BuildOHLCVDataFromMap(orgData, orgDates, _org_csvs[symbol]);
 
+        // 两份序列必须逐 bar 对齐，否则 stepForward 会按同一个 curIndex 取到
+        // 不同日期的价格去撮合。这里宁可让该标的加载失败（Login 会打 WARN 并跳过），
+        // 也不要带着错位的价格跑完整个回测
+        if (!ValidateSeriesAlignment(symbol)) {
+            _csvs.erase(symbol);
+            _org_csvs.erase(symbol);
+            return false;
+        }
+
         return true;
     } catch (const std::exception& e) {
         WARN("[StockHistorySimulation] Failed to load {}: {}, skipping", code, e.what());

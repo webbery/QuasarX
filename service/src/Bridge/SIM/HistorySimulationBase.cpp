@@ -289,16 +289,60 @@ void HistorySimulationBase::BuildOHLCVDataFromMap(
     const Vector<String>& dates,
     OHLCVData& out)
 {
-    out._datetime.reserve(dates.size());
-    out._open.reserve(dates.size());
-    out._close.reserve(dates.size());
-    out._high.reserve(dates.size());
-    out._low.reserve(dates.size());
-    out._volume.reserve(dates.size());
+    static const char* kFields[] = {"open", "close", "high", "low", "volume"};
 
-    for (size_t i = 0; i < dates.size(); ++i) {
+    // 字段缺失/长度不足时先收敛到安全行数：下面按下标逐列取值，越界不会抛异常，
+    // 只会读到脏内存或崩溃
+    size_t rows = dates.size();
+    for (const char* field : kFields) {
+        auto it = data.find(field);
+        if (it == data.end()) {
+            WARN("BuildOHLCVDataFromMap: 缺少字段 '{}'，放弃本次构建", field);
+            out = OHLCVData{};
+            return;
+        }
+        rows = std::min(rows, it->second.size());
+    }
+    if (rows < dates.size()) {
+        WARN("BuildOHLCVDataFromMap: 字段长度({}) < 日期长度({})，按 {} 行截断",
+             rows, dates.size(), rows);
+    }
+
+    out._datetime.reserve(rows);
+    out._open.reserve(rows);
+    out._close.reserve(rows);
+    out._high.reserve(rows);
+    out._low.reserve(rows);
+    out._volume.reserve(rows);
+
+    // 同一时间戳只保留一根 bar（后出现的值覆盖先出现的）。
+    //
+    // 重复 bar 的破坏力不止"多算一根"：stepForward 只推进当前时间等于 minTime 的
+    // 标的，某标的在同一天有 N 行时它会原地走 N 步，其余标的停在旧价，
+    // 价差/β/成交量全部来自不同交易日的拼接。日志里表现为同一天反复出现、
+    // 且两腿比例系数在同一根 bar 内剧烈漂移（实测 β 3.59→1.82）。
+    Map<time_t, size_t> seen;          // 时间戳 → 输出下标
+    size_t dupMerged = 0;
+    String firstDup;
+    for (size_t i = 0; i < rows; ++i) {
         const char* fmt = (dates[i].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
-        out._datetime.emplace_back(FromStr(dates[i], fmt));
+        time_t ts = FromStr(dates[i], fmt);
+
+        auto hit = seen.find(ts);
+        if (hit != seen.end()) {
+            size_t pos = hit->second;
+            out._open[pos] = data.at("open")[i];
+            out._close[pos] = data.at("close")[i];
+            out._high[pos] = data.at("high")[i];
+            out._low[pos] = data.at("low")[i];
+            out._volume[pos] = static_cast<int64_t>(data.at("volume")[i]);
+            if (dupMerged == 0) firstDup = dates[i];
+            ++dupMerged;
+            continue;
+        }
+
+        seen.emplace(ts, out._datetime.size());
+        out._datetime.emplace_back(ts);
         out._open.emplace_back(data.at("open")[i]);
         out._close.emplace_back(data.at("close")[i]);
         out._high.emplace_back(data.at("high")[i]);
@@ -306,9 +350,75 @@ void HistorySimulationBase::BuildOHLCVDataFromMap(
         out._volume.emplace_back(static_cast<int64_t>(data.at("volume")[i]));
     }
 
+    if (dupMerged > 0) {
+        WARN("BuildOHLCVDataFromMap: 合并 {} 条重复时间戳（首次 {}），"
+             "原始 {} 行 → {} 根 bar。请检查数据源是否重复导入",
+             dupMerged, firstDup, rows, out.size());
+    }
+
     if (out._datetime.empty()) {
         WARN("BuildOHLCVDataFromMap: empty dates");
+        return;
     }
+
+    // stepForward 依赖时间戳严格递增。乱序数据不会被上面的去重合并，
+    // 这里显式排序一次，避免整条回测时间轴错乱
+    if (!std::is_sorted(out._datetime.begin(), out._datetime.end())) {
+        WARN("BuildOHLCVDataFromMap: 时间戳非递增，已按时间排序");
+        Vector<size_t> order(out.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(),
+                  [&](size_t a, size_t b) { return out._datetime[a] < out._datetime[b]; });
+
+        OHLCVData sorted;
+        sorted._datetime.reserve(order.size());
+        sorted._open.reserve(order.size());
+        sorted._close.reserve(order.size());
+        sorted._high.reserve(order.size());
+        sorted._low.reserve(order.size());
+        sorted._volume.reserve(order.size());
+        for (size_t idx : order) {
+            sorted._datetime.emplace_back(out._datetime[idx]);
+            sorted._open.emplace_back(out._open[idx]);
+            sorted._close.emplace_back(out._close[idx]);
+            sorted._high.emplace_back(out._high[idx]);
+            sorted._low.emplace_back(out._low[idx]);
+            sorted._volume.emplace_back(out._volume[idx]);
+        }
+        out = std::move(sorted);
+    }
+}
+
+bool HistorySimulationBase::ValidateSeriesAlignment(symbol_t symbol) const {
+    auto adjIt = _csvs.find(symbol);
+    auto orgIt = _org_csvs.find(symbol);
+    if (adjIt == _csvs.end() || orgIt == _org_csvs.end()) {
+        WARN("[{}] 复权/原始序列缺失（adj={}, org={}），跳过该标的",
+             get_symbol(symbol), adjIt != _csvs.end(), orgIt != _org_csvs.end());
+        return false;
+    }
+
+    const auto& adj = adjIt->second;
+    const auto& org = orgIt->second;
+
+    if (adj.size() != org.size()) {
+        WARN("[{}] 复权/原始序列长度不一致（adj={} org={}）："
+             "stepForward 用同一个 curIndex 取两份序列，会静默用错位的价格撮合。"
+             "请检查数据源是否在同一天有重复或缺失行",
+             get_symbol(symbol), adj.size(), org.size());
+        return false;
+    }
+
+    for (size_t i = 0; i < adj.size(); ++i) {
+        if (adj._datetime[i] != org._datetime[i]) {
+            WARN("[{}] 第 {} 根 bar 时间戳不一致（adj={} org={}），撮合价会错位",
+                 get_symbol(symbol), i,
+                 ToString(adj._datetime[i]), ToString(org._datetime[i]));
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // ============ 订单撮合 ============
