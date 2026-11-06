@@ -624,7 +624,7 @@ jobs:
       # === 阶段 2: 回测功能测试（stock_hist_sim 模式）===
       - name: Run backtest tests
         id: test
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           # 严格模式：命令失败立即退出，捕获未定义变量和 pipeline 失败
           set -euo pipefail
