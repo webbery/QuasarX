@@ -26,6 +26,17 @@ namespace {
 thread_local int t_dropWarned = 0;
 constexpr int kDropWarnLimit = 20;
 
+/// 读 context 里某个标量序列的最新值；不存在 / 非有限（浮点）返回 false
+template <typename T>
+bool ReadLastScalar(DataContext& context, const String& key, T& out) {
+    if (!context.exist(key)) return false;
+    const auto& var = context.get(key);
+    const auto* vec = std::get_if<Vector<T>>(&var);
+    if (vec == nullptr || vec->empty()) return false;
+    out = vec->back();
+    return std::isfinite(static_cast<double>(out));
+}
+
 /// 本次丢单是否还要打印明细（超过上限后折叠，只提示一次）
 inline bool ShouldWarnDrop(const String& strategy, uint32_t nodeId) {
     ++t_dropWarned;
@@ -264,10 +275,13 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
                                          getQuotePrice, getPositionQuantity,
                                          isBacktest ? "backtest" : "live");
 
-    // 4. 检查是否有变化
+    // 4. 两腿原子下单：配对开仓必须两腿齐全，否则整组取消（见函数注释）
+    enforcePairAtomicity(strategy, context, newPlan);
+
+    // 5. 检查是否有变化
     newPlan._hasChanged = isPlanChanged(newPlan);
 
-    // 5. 如果有变化或首次执行，输出执行计划
+    // 6. 如果有变化或首次执行，输出执行计划
     if (newPlan._hasChanged || _lastPlan._items.empty()) {
         _lastPlan._items = std::move(newPlan._items);
         _lastPlan._totalCapital = newPlan._totalCapital;
@@ -281,7 +295,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         context.GetExecutionPlan()._hasChanged = false;
     }
 
-    // 6. 保存执行计划摘要到 context（每次 Process 都写入，确保数据完整）
+    // 7. 保存执行计划摘要到 context（每次 Process 都写入，确保数据完整）
     // 格式: {symbol}.plan_action (1=BUY, -1=SELL, 0=HOLD), {symbol}.plan_qty, {symbol}.plan_price
     // 构建当前 bar 所有 symbol 的 action/qty/price 映射
     std::map<symbol_t, std::tuple<int, int64_t, double>> symData;
@@ -602,6 +616,87 @@ ExecutionPlan PortfolioNode::generatePlan(
     }
 
     return plan;
+}
+
+// ── 两腿原子下单：开仓 all-or-none ──
+//
+// generatePlan 是逐 symbol 独立生成执行项的：任一腿可能因为数量不足一手、
+// 价格无效、不允许融券、实盘资金闸门缩减而被单独丢掉，另一条腿却照常下发
+// → 账户里留下一条未对冲的裸腿。PairNode 每根 bar 会发布 {sym}.pair_id
+// （两腿同值），这里按分组做最后一道闸门：
+//   - 开仓组：必须两腿齐全、全部是开仓、多空方向都有，否则整组降级 HOLD；
+//   - 平仓组：允许单腿 —— 平仓不新增敞口，PairNode 的裸腿清理也只能发一条腿。
+// 资金闸门（generatePlan 末尾）先跑，它缩减后产生的单腿同样会被这里拦下。
+void PortfolioNode::enforcePairAtomicity(const String& strategy,
+                                         DataContext& context,
+                                         ExecutionPlan& plan) {
+    // pair_id -> 计划项下标。没有 pair_id 的标的（非配对策略）不参与。
+    Map<uint64_t, Vector<size_t>> groups;
+    for (size_t i = 0; i < plan._items.size(); ++i) {
+        const auto& item = plan._items[i];
+        if (item._action != TradeAction::BUY && item._action != TradeAction::SELL) {
+            continue;
+        }
+        double pairId = 0.0;
+        if (!ReadLastScalar(context, get_symbol(item._symbol) + ".pair_id", pairId)) {
+            continue;
+        }
+        groups[static_cast<uint64_t>(pairId)].push_back(i);
+    }
+
+    for (auto& [pairId, idxs] : groups) {
+        // 纯平仓组直接放行
+        bool allClose = true;
+        for (auto i : idxs) {
+            if (plan._items[i]._flag == 0) {
+                allClose = false;
+                break;
+            }
+        }
+        if (allClose) continue;
+
+        // 开仓组：≥2 条腿、全部开仓、多空方向都有
+        size_t buys = 0, sells = 0;
+        bool ok = idxs.size() >= 2;
+        for (auto i : idxs) {
+            const auto& item = plan._items[i];
+            if (item._flag != 0) ok = false;
+            if (item._action == TradeAction::BUY) {
+                ++buys;
+            } else {
+                ++sells;
+            }
+        }
+        ok = ok && buys > 0 && sells > 0;
+        if (ok) continue;
+
+        String detail;
+        for (auto i : idxs) {
+            const auto& item = plan._items[i];
+            if (!detail.empty()) detail += ", ";
+            detail += get_symbol(item._symbol);
+            detail += (item._action == TradeAction::BUY) ? " BUY" : " SELL";
+        }
+        if (ShouldWarnDrop(strategy, _id)) {
+            WARN("[PortfolioNode:{}@{}] 配对开仓腿不全（pair_id={}, plan 内腿数={}: {}），"
+                 "整组降级为 HOLD —— 单腿开仓会留下未对冲的裸腿",
+                 strategy, _id, pairId, idxs.size(), detail);
+        }
+        for (auto i : idxs) {
+            auto& item = plan._items[i];
+            item._action = TradeAction::HOLD;
+            item._quantity = 0;
+            item._targetValue = 0.0;
+        }
+    }
+
+    // 重算已用资金（generatePlan 与上面的降级都按 BUY 名义金额统计）
+    plan._usedCapital = 0.0;
+    for (const auto& item : plan._items) {
+        if (item._action == TradeAction::BUY) {
+            plan._usedCapital += item._targetValue;
+        }
+    }
 }
 
 bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {

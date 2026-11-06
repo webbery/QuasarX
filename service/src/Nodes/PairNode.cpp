@@ -104,6 +104,16 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
     publishScalar(context, get_symbol(_legA), "strength", 1.0);
     publishScalar(context, get_symbol(_legB), "strength", beta);
 
+    // ── 配对分组标识 ──
+    // 两腿同值。pair_leg 只有 ±1，一个策略里存在多个 PairNode 时，
+    // 下游无法判断哪条 B 属于哪条 A —— PortfolioNode 的两腿原子下单
+    // （开仓要么两腿都下、要么都不下）按这个 key 分组。
+    // 取 symbol 的 31 位哈希：double 能精确表示，且不依赖 symbol_t 的内部布局。
+    const double pairId = static_cast<double>(
+        std::hash<symbol_t>{}(_legA) & 0x7FFFFFFFull);
+    publishScalar(context, get_symbol(_legA), "pair_id", pairId);
+    publishScalar(context, get_symbol(_legB), "pair_id", pairId);
+
     // ── 当前偏离度 ──
     double z = std::nan("");
     readLast(context, get_symbol(_legA) + "." + _zField, z);
@@ -123,6 +133,22 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
     if (!std::isfinite(z)) {
         // 偏离度不可用（warmup 未满 / 一条腿停牌）→ 不动作
         _barsHeld = 0;
+    } else if (inPosition && (qA == 0) != (qB == 0)) {
+        // ── 裸腿自愈 ──
+        // 配对只剩一条腿在账上：上一根 bar 的另一腿被拒（融券无券源 / 资金不足 /
+        // 涨跌停）或被 T+1 缩减。此时持仓是未对冲的方向暴露，不能按"持有中"
+        // 等 |z| 回归 —— 立刻平掉残余腿回到空仓。成交在 bar 末才确定，下一根
+        // bar 的 PairNode 是最早能拿到真实持仓的节点，所以这里就是最早的自愈点。
+        if (qA > 0) actions.push_back({_legA, TradeAction::SELL});
+        if (qA < 0) actions.push_back({_legA, TradeAction::BUY});
+        if (qB > 0) actions.push_back({_legB, TradeAction::SELL});
+        if (qB < 0) actions.push_back({_legB, TradeAction::BUY});
+        WARN("[PairNode:{}] 配对出现裸腿：A({}) qty={}, B({}) qty={}；"
+             "已发出平掉残余腿的指令，并在 |z| 回落到 exitZ={} 之前禁止重新开仓",
+             _id, get_symbol(_legA), qA, get_symbol(_legB), qB, _exitZ);
+        _barsHeld = 0;
+        _blocked = true;
+        t_blockedBars = 0;
     } else if (inPosition) {
         double absZ = std::fabs(z);
         bool exit = false;
@@ -203,6 +229,8 @@ Map<String, ArgType> PairNode::out_elements() {
     Map<String, ArgType> elems = SignalNodeBase::out_elements();
     for (auto& symbol : _pools) {
         elems[get_symbol(symbol) + ".strength"] = ArgType::Double_TimeSeries;
+        // 配对分组标识（两腿同值），供 PortfolioNode 做两腿原子下单
+        elems[get_symbol(symbol) + ".pair_id"] = ArgType::Double_TimeSeries;
     }
     return elems;
 }

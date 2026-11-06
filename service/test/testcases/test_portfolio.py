@@ -530,7 +530,8 @@ PAIR_STRENGTH_RATIO_HI = 2.20
 
 
 def _build_pair_strategy(strategy_id, sizing_method, *, position_ratio=1.0,
-                         max_single_pct=None, max_total_pct=None, mvo=None):
+                         max_single_pct=None, max_total_pct=None, mvo=None,
+                         portfolio_allow_short=None):
     """构造 配对交易 × sizing_method 的策略图。
 
     拓扑（strategy_builder.pair_trading_strategy）::
@@ -571,6 +572,15 @@ def _build_pair_strategy(strategy_id, sizing_method, *, position_ratio=1.0,
             params["max_total_pct"] = P.number(max_total_pct)
         for key, value in (mvo or {}).items():
             params[key] = P.of(value)
+
+    if portfolio_allow_short is not None:
+        # 必须改**根路径** margin.allowShort，不能只改节点参数：
+        # StrategySubSystem 会把根路径值注入并覆盖 signal / portfolio 节点的
+        # allowShort（StrategySubSystem.cpp:365-383）。`pair` 节点不在注入名单，
+        # 所以 PairNode 仍按节点参数（true）发出两腿信号，而 PortfolioNode 拿到的
+        # 是 false → 空头腿被丢。这正是"计划层必须 all-or-none"要覆盖的错配场景。
+        strat["margin"] = {"allowShort": portfolio_allow_short}
+
     # 组合节点 → 调试节点
     strat["edges"].append({
         "id": "6->8", "source": "6", "target": "8",
@@ -735,20 +745,62 @@ class TestPairEqualBaseline:
                 f"bar {row['bar']}: 等权下两腿名义比应为 ≈1，实际 {row['ratio']:.4f}"
             )
 
-    def test_legs_always_act_together(self, pair_equal):
-        """两腿动作永远成对出现：一腿动、另一腿必动，且方向相反。
+    def test_no_naked_leg_ever(self, pair_equal):
+        """任意 bar 上都不能出现「一腿有仓、另一腿为空」的裸腿。
 
         配对交易不允许留裸腿 —— 一腿平了另一腿还挂着，组合就不再中性。
+        这里不只是看同一 bar 的动作方向，而是顺着 plan_action / plan_qty
+        还原持仓，检查每一根 bar 的两腿仓位必须同时为 0 或同时非 0。
         """
         df, _ = pair_equal
         act_a = df[f"{PAIR_SYMBOL_A}.plan_action"].to_numpy(dtype=float)
+        qty_a = df[f"{PAIR_SYMBOL_A}.plan_qty"].to_numpy(dtype=float)
         act_b = df[f"{PAIR_SYMBOL_B}.plan_action"].to_numpy(dtype=float)
+        qty_b = df[f"{PAIR_SYMBOL_B}.plan_qty"].to_numpy(dtype=float)
         assert len(act_a) == len(act_b)
+
+        pos_a = pos_b = 0.0
         for i in range(len(act_a)):
-            assert act_a[i] == 0 or act_b[i] == 0 or act_a[i] != act_b[i], (
-                f"bar {i}: 两腿动作应同时为 0 或方向相反，"
-                f"实际 A={act_a[i]} B={act_b[i]}"
+            # plan_action 的符号是下单方向（BUY=+1 / SELL=-1），数量恒为正；
+            # HOLD 的 action=0 不会改变持仓。
+            if act_a[i] != 0 or act_b[i] != 0:
+                assert act_a[i] * act_b[i] <= 0, (
+                    f"bar {i}: 两腿动作应方向相反，实际 A={act_a[i]} B={act_b[i]}"
+                )
+            pos_a += act_a[i] * qty_a[i]
+            pos_b += act_b[i] * qty_b[i]
+            assert (pos_a == 0) == (pos_b == 0), (
+                f"bar {i}: 出现裸腿 —— A 持仓 {pos_a:.0f}，B 持仓 {pos_b:.0f}"
             )
+
+
+# ============================================================
+# 两腿原子下单
+# ============================================================
+
+class TestPairAtomicOpen:
+    """开仓要么两腿都下、要么都不下。
+
+    PairNode 允许做空时会正常发出两腿信号；如果执行层（PortfolioNode）
+    不允许做空，空头腿会被 generatePlan 丢掉。修复前多头腿仍会照开，
+    账户留下裸多；计划层的 all-or-none 必须把整组取消。
+    """
+
+    def test_short_leg_disabled_does_not_leave_naked_long(self, headers):
+        df, rows = _run_pair(headers, "strength_portfolio_noshort_pair",
+                             sizing_method="strength",
+                             portfolio_allow_short=False)
+
+        assert rows == [], (
+            f"PortfolioNode 禁止做空时仍然开了 {len(rows)} 次仓："
+            f"{[r['bar'] for r in rows]} —— 空头腿被丢后多头腿没有一起取消"
+        )
+        # 排除"配对根本没发出信号"导致用例空过的可能
+        sig_a = df[f"{PAIR_SYMBOL_A}.signal"].to_numpy(dtype=float)
+        sig_b = df[f"{PAIR_SYMBOL_B}.signal"].to_numpy(dtype=float)
+        assert ((sig_a != 0) | (sig_b != 0)).any(), (
+            "PairNode 全程没有发出任何信号，用例无效"
+        )
 
 
 # ============================================================

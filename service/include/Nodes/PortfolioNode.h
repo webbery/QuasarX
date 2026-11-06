@@ -41,6 +41,14 @@ private:
         const String& source);
     bool isPlanChanged(const ExecutionPlan& newPlan);
 
+    // 两腿原子下单：带 {sym}.pair_id 的配对腿在计划层做 all-or-none。
+    // 开仓组必须两腿齐全且方向相反，否则整组降级为 HOLD —— 单腿开仓等于
+    // 未对冲的方向暴露（融券腿被拒、预算不足一手、实盘资金闸门缩减都会造成）。
+    // 平仓组允许单腿：平仓不新增敞口，也为 PairNode 的裸腿清理留路。
+    void enforcePairAtomicity(const String& strategy,
+                              DataContext& context,
+                              ExecutionPlan& plan);
+
     // 风控短路检查：RiskContext.triggered 为 true 时，将 decisions 全部改为 SELL
     void applyRiskContext(DataContext& context, Map<symbol_t, TradeAction>& decisions);
 

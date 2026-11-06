@@ -2,7 +2,6 @@
 #include "DataContext.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
-#include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 
 bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& signal, const DataContext& context)
