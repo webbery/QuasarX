@@ -103,6 +103,13 @@ List<String> get_similar_words(const String& input, const List<String>& candidat
 
 String trim(const String& str);
 
+/**
+ * @brief 按分隔符拆分字符串列表：去首尾空白、丢弃空项、保持原序
+ * @param str 原始字符串
+ * @param delim 分隔符（默认逗号）
+ */
+Vector<String> split_list(const String& str, char delim = ',');
+
 String to_dot_string(double v, char dot = ',');
 
 String format_symbol(const String& symbol);

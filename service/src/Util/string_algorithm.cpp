@@ -52,6 +52,20 @@ std::string trim(const std::string& s) {
   return std::string(start, end + 1);
 }
 
+Vector<String> split_list(const String& str, char delim) {
+  Vector<String> result;
+  std::stringstream ss(str);
+  std::string token;
+  while (std::getline(ss, token, delim)) {
+    // 去首尾空白，空项直接丢弃
+    auto start = token.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) continue;
+    auto end = token.find_last_not_of(" \t\r\n");
+    result.push_back(token.substr(start, end - start + 1));
+  }
+  return result;
+}
+
 std::string to_dot_string(double v, char dot) {
   auto str = std::to_string(v);
   auto index = str.find_first_of('.');

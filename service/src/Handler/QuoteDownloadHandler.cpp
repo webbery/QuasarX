@@ -4,6 +4,7 @@
 #include "Util/PythonRunner.h"
 #include "Util/system.h"
 #include "Util/data.h"
+#include "Util/string_algorithm.h"
 #include "server.h"
 #include <filesystem>
 #include <fstream>
@@ -16,21 +17,6 @@
 #include <chrono>
 
 namespace fs = std::filesystem;
-
-// 辅助：按分隔符拆分字符串
-static std::vector<std::string> splitSymbols(const std::string& str, char delim = ',') {
-    std::vector<std::string> result;
-    std::istringstream ss(str);
-    std::string token;
-    while (std::getline(ss, token, delim)) {
-        // 去除前后空格
-        auto start = token.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) continue;
-        auto end = token.find_last_not_of(" \t\r\n");
-        result.push_back(token.substr(start, end - start + 1));
-    }
-    return result;
-}
 
 void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
@@ -73,7 +59,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     auto interpreter = pyEnv.resolve(env_name);
 
     // 按标的类型分组（ETF vs Stock）
-    auto sym_list = splitSymbols(symbols);
+    auto sym_list = split_list(symbols);
     std::vector<std::string> etf_syms, stock_syms;
     for (auto& s : sym_list) {
         std::string bs_sym = toInternalSymbol(s);

@@ -1,12 +1,22 @@
 #include "Handler/FinanceHandler.h"
 #include "Util/FinanceDB.h"
 #include "Util/PythonRunner.h"
+#include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "server.h"
 #include <filesystem>
 #include <thread>
 
 namespace fs = std::filesystem;
+
+// ═══════════════════════════════════════════════════════════
+//  任务 id
+// ═══════════════════════════════════════════════════════════
+
+String FinanceHandler::next_task_id() {
+    static std::atomic<uint64_t> seq{0};
+    return fmt::format("f_{}", ++seq);
+}
 
 // ═══════════════════════════════════════════════════════════
 //  POST /v0/finance — 触发下载 + 导入
@@ -22,10 +32,20 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
         return;
     }
 
+    // ── 标的来源：symbols（批量，优先）→ code（单标的，兼容旧客户端）──
     auto code = params.value("code", "");
-    if (code.empty()) {
+    auto symbols_param = params.value("symbols", "");
+
+    Vector<String> codes;
+    if (!symbols_param.empty()) {
+        codes = split_list(symbols_param);
+    } else if (!code.empty()) {
+        codes.push_back(code);
+    }
+
+    if (codes.empty()) {
         res.status = 400;
-        res.set_content(R"({"message":"missing 'code'"})", "application/json");
+        res.set_content(R"({"message":"missing 'symbols' or 'code'"})", "application/json");
         return;
     }
 
@@ -58,39 +78,11 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
     nng_socket sse_sock = _server->GetSocket();
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
+    auto task_id = next_task_id();
 
-    // 后台线程：下载 + 导入
-    std::thread([sse_sock, code, category, start, end, interpreter, csv_dir, finance_dir]() {
+    // 后台线程：逐标的下载 + 就地导入（结构同 QuoteDownloadHandler::runDownloadJob）
+    std::thread([sse_sock, codes, category, start, end, interpreter, csv_dir, task_id]() {
         SetCurrentThreadName("FinanceDownload");
-
-        std::string cmd = interpreter + " tools/fetch_finance_data.py"
-                        + " --code " + code
-                        + " --download"
-                        + " --data-dir " + csv_dir;
-        if (category != "all") cmd += " --category " + category;
-        if (!start.empty()) cmd += " --start " + start;
-        if (!end.empty()) cmd += " --end " + end;
-
-        SendSSE(sse_sock, "finance_download", {
-            {"status", "started"}, {"code", code}, {"category", category}
-        });
-
-        String output;
-        bool ok = RunCommand(cmd, output);
-
-        SendSSE(sse_sock, "finance_download", {
-            {"status", ok ? "downloaded" : "download_failed"},
-            {"output", output}
-        });
-
-        auto& financeDB = FinanceDB::instance();
-        if (!ok || !financeDB.isInitialized()) {
-            SendSSE(sse_sock, "finance_download", {
-                {"status", "aborted"},
-                {"reason", ok ? "FinanceDB shutting down" : "download failed"}
-            });
-            return;
-        }
 
         // 确定要导入的类别
         std::vector<std::string> categories;
@@ -100,42 +92,76 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
             categories = {category};
         }
 
-        // 扫描 CSV 并导入 DuckDB
+        auto& financeDB = FinanceDB::instance();
+        auto total = std::to_string(codes.size());
+
+        SendSSE(sse_sock, "finance_download", {
+            {"status", "started"}, {"task_id", task_id}, {"total", total}
+        });
+
         int total_rows = 0;
-        for (const auto& cat : categories) {
-            std::string cat_dir = csv_dir + "/" + cat;
-            if (!fs::exists(cat_dir)) continue;
+        int processed = 0;
+        int failed = 0;
 
-            for (auto& entry : fs::directory_iterator(cat_dir)) {
-                if (entry.path().extension() != ".csv") continue;
+        for (const auto& sym : codes) {
+            std::string cmd = interpreter + " tools/fetch_finance_data.py"
+                            + " --code " + sym
+                            + " --download"
+                            + " --data-dir " + csv_dir;
+            if (category != "all") cmd += " --category " + category;
+            if (!start.empty()) cmd += " --start " + start;
+            if (!end.empty()) cmd += " --end " + end;
 
-                int rows = financeDB.importCsv(entry.path().string(), cat);
-                if (rows > 0) {
-                    total_rows += rows;
-                    SendSSE(sse_sock, "finance_download", {
-                        {"status", "importing"},
-                        {"category", cat},
-                        {"file", entry.path().filename().string()},
-                        {"rows", std::to_string(rows)}
-                    });
-                }
-                fs::remove(entry.path());
+            String output;
+            bool ok = RunCommand(cmd, output);
+            processed++;
+
+            if (!ok || !financeDB.isInitialized()) {
+                failed++;
+                WARN("[FinanceHandler] {} download failed: {}", sym, output);
+                SendSSE(sse_sock, "finance_download", {
+                    {"status", "symbol_failed"}, {"task_id", task_id},
+                    {"code", sym}, {"error", "download failed"},
+                    {"downloaded", std::to_string(processed)}, {"total", total}
+                });
+                continue;
             }
+
+            // 就地导入该标的的 CSV：按标的精确定位，不扫全目录，
+            // 避免并发任务互相吞掉对方还没导入的 CSV
+            int rows = 0;
+            for (const auto& cat : categories) {
+                auto path = csv_dir + "/" + cat + "/" + sym + ".csv";
+                if (!fs::exists(path)) continue;
+                int n = financeDB.importCsv(path, cat);
+                if (n > 0) rows += n;
+                fs::remove(path);
+            }
+            total_rows += rows;
+
+            INFO("[FinanceHandler] {} done: {} rows", sym, rows);
+            SendSSE(sse_sock, "finance_download", {
+                {"status", "symbol_downloaded"}, {"task_id", task_id},
+                {"code", sym}, {"rows", std::to_string(rows)},
+                {"downloaded", std::to_string(processed)}, {"total", total}
+            });
         }
 
         SendSSE(sse_sock, "finance_download", {
-            {"status", "done"},
-            {"code", code},
-            {"category", category},
+            {"status", "done"}, {"task_id", task_id},
             {"total_rows", std::to_string(total_rows)},
-            {"success", ok ? "true" : "false"}
+            {"failed", std::to_string(failed)},
+            {"success", failed == 0 ? "true" : "false"}
         });
     }).detach();
 
     nlohmann::json resp;
     resp["status"] = "started";
-    resp["code"] = code;
+    resp["task_id"] = task_id;
+    resp["symbol_count"] = static_cast<int>(codes.size());
     resp["category"] = category;
+    if (!code.empty()) resp["code"] = code;                 // 旧客户端兼容
+    if (!symbols_param.empty()) resp["symbols"] = symbols_param;
     res.set_content(resp.dump(), "application/json");
 }
 

@@ -22,3 +22,42 @@
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
+
+/* ── 交易所徽标（沪 / 深 / 北）──────────────────────────────
+   用于把 sh./sz./bj. 前缀换成带背景色的中文简称。
+   用法：<span class="ex-badge ex-badge--sz">深</span>600000
+   颜色刻意避开红/绿（那两色在本项目里代表涨/跌）。 */
+.ex-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  margin-right: 4px;
+  border-radius: 3px;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.ex-badge--sh {
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  color: #60a5fa;
+}
+.ex-badge--sz {
+  background: rgba(167, 139, 250, 0.15);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  color: #a78bfa;
+}
+.ex-badge--bj {
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+
+/* 徽标 + 纯代码的组合（代码部分沿用父级颜色，方便各表自行着色） */
+.symbol-code-inline {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}

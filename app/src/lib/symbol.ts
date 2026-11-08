@@ -96,6 +96,77 @@ export function exchangeLower(symbol: string): string {
   return symbolToExchange(symbol).toLowerCase()
 }
 
+/** 交易所前缀 → 中文简称（用于界面徽标） */
+export const EXCHANGE_LABEL: Record<ExchangeCode, string> = {
+  sh: '沪',
+  sz: '深',
+  bj: '北'
+}
+
+/**
+ * 拆出交易所与纯代码：`sh.600000` / `600000.SH` / `600000` → `{ exchange: 'sh', code: '600000' }`。
+ * 无法判定交易所时 exchange 为 null（调用方自行决定是否显示徽标）。
+ */
+export function splitSymbol(raw: string): { exchange: ExchangeCode | null; code: string } {
+  const s = String(raw ?? '').trim()
+  if (!s) return { exchange: null, code: '' }
+
+  const parts = s.split('.')
+  if (parts.length === 2) {
+    const [a, b] = parts
+    if (EXCHANGE_RE.test(a)) return { exchange: a.toLowerCase() as ExchangeCode, code: b }
+    if (EXCHANGE_RE.test(b)) return { exchange: b.toLowerCase() as ExchangeCode, code: a }
+    return { exchange: null, code: s }
+  }
+
+  const m = s.match(/^(sh|sz|bj)(\d{6})$/i)
+  if (m) return { exchange: m[1].toLowerCase() as ExchangeCode, code: m[2] }
+
+  if (CODE_RE.test(s)) return { exchange: inferExchange(s), code: s }
+  return { exchange: null, code: s }
+}
+
+/**
+ * 解析搜索框输入：`600000.SH` / `sh.600000` / `sh600000` / `600000` / `沪`。
+ * 与 splitSymbol 不同：纯代码不推断交易所（`600000` 不限定为沪）。
+ */
+export function parseSymbolQuery(raw: string): { code: string; exchange: ExchangeCode | null } {
+  const s = String(raw ?? '').trim().toLowerCase()
+  if (!s) return { code: '', exchange: null }
+
+  if (s.length === 1) {
+    const hit = (Object.keys(EXCHANGE_LABEL) as ExchangeCode[]).find(k => EXCHANGE_LABEL[k] === s)
+    if (hit) return { code: '', exchange: hit }
+  }
+
+  const parts = s.split('.')
+  if (parts.length === 2) {
+    const [a, b] = parts
+    if (EXCHANGE_RE.test(a)) return { code: b, exchange: a.toLowerCase() as ExchangeCode }
+    if (EXCHANGE_RE.test(b)) return { code: a, exchange: b.toLowerCase() as ExchangeCode }
+    return { code: s, exchange: null }
+  }
+
+  const m = s.match(/^(sh|sz|bj)(\d{6})$/)
+  if (m) return { code: m[2], exchange: m[1] as ExchangeCode }
+
+  return { code: s, exchange: null }
+}
+
+/**
+ * 搜索框匹配：代码片段命中即算匹配；查询带交易所时再限定交易所。
+ * `600000` 匹配 `sz.600000`；`600000.SH` 只匹配沪市 600000；`沪` 匹配全部沪市标的。
+ */
+export function symbolMatches(symbol: string, query: string): boolean {
+  const q = parseSymbolQuery(query)
+  if (!q.code && !q.exchange) return true
+
+  const { exchange, code } = splitSymbol(symbol)
+  if (q.exchange && exchange !== q.exchange) return false
+  if (!q.code) return true
+  return code.toLowerCase().includes(q.code)
+}
+
 /** 转后缀格式 `600000.SH`；无法推断时用 fallback */
 export function toSuffixedSymbol(raw: string, fallback: ExchangeCode = 'sh'): string {
   const s = String(raw ?? '').trim()
@@ -116,4 +187,21 @@ export function toSuffixedSymbol(raw: string, fallback: ExchangeCode = 'sh'): st
   if (!exchange) exchange = inferExchange(s) ?? fallback
 
   return `${id}.${exchange.toUpperCase()}`
+}
+
+/**
+ * 是否为 A 股股票（基本面数据的有效标的）。
+ *
+ * BaoStock 只提供沪深 A 股的季频财报，ETF（5/1 开头）、北交所（4/8 开头）
+ * 查询结果为空或直接失败，提交进去只会白跑上百次 API 调用。
+ * 只接受后缀格式 `600519.SH` / `000001.SZ` / `430047.BJ`。
+ */
+export function isAShareStock(symbol: string): boolean {
+  const m = String(symbol ?? '').trim().toUpperCase().match(/^(\d{6})\.(SH|SZ|BJ)$/)
+  if (!m) return false
+  const code = m[1]
+  const exchange = m[2]
+  if (exchange === 'SH') return code.startsWith('6')
+  if (exchange === 'SZ') return /^[023]/.test(code)
+  return false   // BJ：BaoStock 不认 bj. 前缀
 }
