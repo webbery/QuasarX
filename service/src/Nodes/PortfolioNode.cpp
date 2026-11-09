@@ -13,9 +13,7 @@
 #include "Nodes/QuoteNode.h"
 #include "Nodes/Portfolio/PortfolioModel.h"
 #include "Algorithms/MVO/MvoTypes.h"
-#include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace {
 
@@ -183,8 +181,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
 
     // 负预算 = 超额占用，今天没有可买入的资金。
     // DataContext::getAvailableCapital() 现在会把负余额原样返回（不再被兜底值吞掉），
-    // 这里收敛成 0：负数继续流进 getSymbolCapital()/generatePlan() 只会得到
-    // "Quantity -500 too small" 这种读不懂的日志，而 0 预算本来就会让所有买单
+    // 这里收敛成 0， 0 预算本来就会让所有买单
     // 走 quantity < 100 分支被丢弃 —— 行为一致，但信号清楚得多。
     if (targetCapital < 0.0) {
         if (_server->GetRunningMode() != RuningType::Backtest) {
@@ -770,6 +767,87 @@ void PortfolioNode::applySizingWeights(
         }
     }
 
+    // ── 建仓腿：BUY 新开多 + SELL 新开空 ──
+    // 判定口径必须与 generatePlan 的建仓分支严格一致：
+    //   BUY  且当前无持仓        → 建多（getSymbolCapital 参与分配）
+    //   SELL 且当前无持仓 且允许做空 → 建空（同上）
+    //   其余（平仓、已有多仓不再加仓）→ 不占用资金，不能进权重归一化的分母。
+    // 少了这一段，配对的空头腿不在权重表里 → 走兜底 targetCapital/count
+    // → 两腿名义比恒为 1:2 而不是 1:β（FINDINGS.md ①-3）。
+    model_ctx._open_symbols.reserve(decisions.size());
+
+    // 建仓腿按 pair_id 分组：配对的两条腿是**同一组**（组内按 strength
+    // = 1 : β 拆分），非配对标的各自一组（单腿组）。
+    // 分组是"腿间拆分"与"组间总尺度"能分开的前提 —— 凯利 / 目标波动率
+    // 决定的是**组**该占多少预算，β 决定的是组内两腿各占多少。
+    Map<uint64_t, Vector<symbol_t>> legs_by_pair;
+    Map<uint64_t, Map<symbol_t, int>> dirs_by_pair;
+    Vector<symbol_t> singles;
+    Map<symbol_t, int> single_dirs;
+
+    for (const auto& [symbol, action] : decisions) {
+        if (action == TradeAction::HOLD) {
+            continue;
+        }
+        const int64_t qty = getPositionQuantity ? getPositionQuantity(symbol) : 0;
+        if (qty != 0) {
+            continue;   // 有持仓 → 这是平仓腿
+        }
+        int dir = 0;
+        if (action == TradeAction::BUY) {
+            dir = 1;
+        } else if (action == TradeAction::SELL && _allowShort) {
+            dir = -1;
+        }
+        if (dir == 0) {
+            continue;
+        }
+        model_ctx._open_symbols.push_back(symbol);
+
+        double pair_id = 0.0;
+        if (ReadLastScalar(context, get_symbol(symbol) + ".pair_id", pair_id) &&
+            pair_id > 0.0) {
+            const uint64_t pid = static_cast<uint64_t>(pair_id);
+            legs_by_pair[pid].push_back(symbol);
+            dirs_by_pair[pid][symbol] = dir;
+        } else {
+            singles.push_back(symbol);
+            single_dirs[symbol] = dir;
+        }
+    }
+
+    // 组内拆分依据 strength：PairNode 发布 {A}.strength = 1、{B}.strength = β
+    // （PairNode.cpp:104-105），归一化后就是 1 : β。
+    const auto makeGroup = [&](uint64_t pid, const Vector<symbol_t>& legs,
+                               const Map<symbol_t, int>& dirs) {
+        portfolio::PortfolioGroup group;
+        group._id = pid;
+        group._legs = legs;
+        group._dirs = dirs;
+        double strength_sum = 0.0;
+        for (const auto& symbol : legs) {
+            double strength = 0.0;
+            if (!ReadLastScalar(context, get_symbol(symbol) + ".strength", strength) ||
+                strength <= 0.0) {
+                strength = 1.0;   // 没有 strength 的标的按等权腿处理
+            }
+            group._strengths[symbol] = strength;
+            strength_sum += strength;
+        }
+        group._strength_sum = strength_sum;
+        group._key = portfolio::groupStatsKey(pid, legs.front());
+        model_ctx._groups.push_back(std::move(group));
+    };
+
+    for (const auto& [pid, legs] : legs_by_pair) {
+        makeGroup(pid, legs, dirs_by_pair[pid]);
+    }
+    for (const auto& symbol : singles) {
+        Map<symbol_t, int> dirs;
+        dirs[symbol] = single_dirs[symbol];
+        makeGroup(0, Vector<symbol_t>{symbol}, dirs);
+    }
+
     const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
     model_ctx._warn = [&strategy, isBacktest](const String& msg) {
         if (isBacktest) {
@@ -786,6 +864,8 @@ void PortfolioNode::applySizingWeights(
 const nlohmann::json PortfolioNode::getParams() {
     return {"positionRatio", "pool", "allowShort", "sizing_method",
             "max_single_pct", "max_total_pct", "volatility_target", "strength",
+            // Kelly
+            "kelly_min_samples",
             // MVO
             "mvo_mean_method", "mvo_cov_method",
             "mvo_risk_aversion", "mvo_turnover_penalty", "mvo_turnover_horizon",

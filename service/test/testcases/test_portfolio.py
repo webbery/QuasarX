@@ -482,18 +482,23 @@ class TestMvoBranches:
 # 预算分配口径（对照 src/Nodes/PortfolioNode.cpp 的 generatePlan）：
 #   perSymbolCapital = targetCapital / len(decisions)    ← 按**决策数**均分（配对是 2 条腿）
 #   getSymbolCapital(sym) = targetCapital * _weights[sym] ← 命中权重表时优先
-#   权重表只收录 **BUY** 腿（PortfolioContext::_buy_symbols）
+#   strength 的权重域 = PortfolioContext::_open_symbols（本轮**要建仓**的腿：
+#   BUY 新开多 + SELL 新开空）→ 配对的两条腿都在表里
 # 于是：
-#   equal            两腿各拿 targetCapital/2          → 多头腿权重 ≈ 0.50
-#   strength         BUY 腿拿满、SELL 腿拿 targetCapital/2 → 多头腿权重 ≈ 0.67，名义比 ≈ 2
-#   kelly / vol_tgt  同 strength（读不到 key → 回退 1/N_buys = 1.0）
+#   equal            两腿各拿 targetCapital/2               → 多头腿权重 ≈ 0.50，名义比 ≈ 1.0
+#   strength         两腿按 {sym}.strength 归一化（A=1、B=β）
+#                    → 多头腿权重 = β/(1+β)，名义比 = β
+#   kelly / vol_tgt  仍只看 BUY 腿（读不到 key → 回退 1/N_buys = 1.0）
+#                    → 多头腿拿满、空头腿 targetCapital/2，名义比 ≈ 2
 #   mvo              候选只有 1 条腿 < min_names=2 → 回退等权
 #
-# ⚠️ 由此得到一个反直觉但必须记录的事实：配对策略里 strength sizing
-# **并没有**实现"按对冲系数 β 分配两腿名义金额"。PairNode 发布的
-# {B}.strength = β 确实进了权重表，但权重表是**只对 BUY 腿归一化**的，
-# 空头腿压根不在表里 —— 于是多头腿拿 100%、空头腿拿 50%。
-# test_strength_long_leg_gets_full_budget 锁的就是这个**当前行为**。
+# ⚠️ strength 现在**真正**实现了"按对冲系数 β 分配两腿名义金额"：
+# PairNode 发布的 {B}.strength = β 进权重表，两腿一起归一化 →
+# weight_A = 1/(1+β)、weight_B = β/(1+β)，与 backtest_pair.py 的
+# not_a = E/(1+β)、not_b = E·β/(1+β) 同口径；两腿名义合计回到 100% 预算，
+# 不再是修复前的 150%（多头腿拿满 + 空头腿拿一半）。
+# kelly / volatility_target 仍是旧口径 —— 修它们属于 FINDINGS.md ①-3
+# 修复设计表的第 4、5 步（腿间拆分层 + 配对级凯利输入），尚未实施。
 #
 # 数据与前置条件
 # --------------
@@ -521,12 +526,16 @@ PAIR_DEBUG_LABEL = "plan"
 
 # 容差：整手取整（100 股）造成的相对误差
 PAIR_WEIGHT_TOL = 0.03        # 等权基线 |w - 0.50|
-PAIR_STRENGTH_WEIGHT = 0.67   # strength 的多头腿权重中心值
-PAIR_STRENGTH_TOL = 0.03      # |w - 0.67|
 PAIR_RATIO_LO = 0.90          # 等权：多头名义 / 空头名义
 PAIR_RATIO_HI = 1.12
-PAIR_STRENGTH_RATIO_LO = 1.90  # strength：多头名义 ≈ 2× 空头名义
-PAIR_STRENGTH_RATIO_HI = 2.20
+# strength 按 β 配权后，名义比不再有固定中心值 —— 逐 bar 对回归 β 断言。
+# 名义比的容差不用拍脑袋的固定值，而是按**整手取整的实际误差上界**算
+# （见 _ratio_error_bound）：腿 i 的名义 = 100×px_i×floor(w_i×TC/px_i/100)，
+# 取整误差 ≤ 一手名义/该腿名义，名义比相对误差 ≤ 两腿之和（实测 19%~20%）。
+PAIR_BETA_WEIGHT_TOL = 0.05
+# kelly / volatility_target 仍是"只看 BUY 腿"的旧口径：多头拿满、空头拿一半
+PAIR_BUY_ONLY_RATIO_LO = 1.90
+PAIR_BUY_ONLY_RATIO_HI = 2.20
 
 
 def _build_pair_strategy(strategy_id, sizing_method, *, position_ratio=1.0,
@@ -650,6 +659,8 @@ def _pair_open_rows(df):
             else abs(qty_b[i] * px_b[i])
         short_not = abs(qty_b[i] * px_b[i]) if long_sym == PAIR_SYMBOL_A \
             else abs(qty_a[i] * px_a[i])
+        long_px = px_a[i] if long_sym == PAIR_SYMBOL_A else px_b[i]
+        short_px = px_b[i] if long_sym == PAIR_SYMBOL_A else px_a[i]
         total = long_not + short_not
         rows.append({
             "bar": i,
@@ -657,11 +668,27 @@ def _pair_open_rows(df):
             "short_symbol": short_sym,
             "long_notional": long_not,
             "short_notional": short_not,
+            "long_price": long_px,
+            "short_price": short_px,
+            "qty_a": qty_a[i],
+            "qty_b": qty_b[i],
             "total_notional": total,
             "long_weight": long_not / total if total else 0.0,
             "ratio": long_not / short_not if short_not else float("inf"),
         })
     return rows
+
+
+def _ratio_error_bound(row):
+    """名义比相对期望值的**误差上界**（整手取整造成的）。
+
+    腿 i 的名义 = 100 × px_i × floor(w_i × TC / px_i / 100)，
+    取整误差上界 = 一手名义 / 该腿名义；名义比的相对误差 ≤ 两腿之和。
+    """
+    lot_long = 100.0 * row["long_price"]
+    lot_short = 100.0 * row["short_price"]
+    return (lot_long / row["long_notional"]
+            + lot_short / row["short_notional"] + 0.01)
 
 
 def _assert_open_bars(rows, note, min_count=5):
@@ -701,6 +728,40 @@ def _rolling_beta(symbol_a, symbol_b, window):
         var = sum((x - mx) ** 2 for x in xs)
         out.append(cov / var if var > 1e-12 else float("nan"))
     return out
+
+
+def _expected_strength_weights(beta, max_single_pct=1.0, max_total_pct=1.0):
+    """StrengthModel 在配对下应给出的权重（复刻 StrengthModel::compute + applyCaps）。
+
+    PairNode 发布 {A}.strength = 1.0、{B}.strength = β → 两腿一起归一化得
+    weight_A = 1/(1+β)、weight_B = β/(1+β)；applyCaps 再按单标的上限截断、
+    总和超上限则整体缩放（PortfolioModel.cpp:80-97）。
+    """
+    w = {PAIR_SYMBOL_A: 1.0 / (1.0 + beta),
+         PAIR_SYMBOL_B: beta / (1.0 + beta)}
+    total = 0.0
+    for sym in w:
+        w[sym] = min(w[sym], max_single_pct)
+        total += w[sym]
+    if total > max_total_pct and total > 0.0:
+        scale = max_total_pct / total
+        for sym in w:
+            w[sym] *= scale
+    return w
+
+
+def _expected_strength_split(beta, long_symbol, max_single_pct=1.0,
+                             max_total_pct=1.0):
+    """返回 (多头腿权重占比, 多头/空头名义比)。
+
+    名义比 = 权重比：notional_i = qty_i × px_i，而 qty_i 是
+    floor(w_i × TC / px_i / 100) × 100 → 名义 ∝ w_i（整手取整除外）。
+    """
+    w = _expected_strength_weights(beta, max_single_pct, max_total_pct)
+    short_symbol = (PAIR_SYMBOL_B if long_symbol == PAIR_SYMBOL_A
+                    else PAIR_SYMBOL_A)
+    total = w[PAIR_SYMBOL_A] + w[PAIR_SYMBOL_B]
+    return w[long_symbol] / total, w[long_symbol] / w[short_symbol]
 
 
 # ============================================================
@@ -808,43 +869,102 @@ class TestPairAtomicOpen:
 # ============================================================
 
 class TestPairStrength:
-    """strength 在配对策略下与等权**明显不同**。
+    """strength 在配对策略下按对冲系数 β 分配两腿名义金额。
 
-    这是配对策略相对信号策略的价值：信号链路里 .strength 没人写，
-    strength 恒等于等权；配对链路里 PairNode 会发布 .strength，
-    于是 strength 真正跑起来 —— 也因此暴露出"权重表只算 BUY 腿"这件事。
+    PairNode 发布 {A}.strength = 1.0、{B}.strength = β；StrengthModel 把
+    **两条腿**一起归一化 → weight_A = 1/(1+β)、weight_B = β/(1+β)。
+    这与 backtest_pair.py 的 not_a = E/(1+β)、not_b = E·β/(1+β) 同口径
+    （FINDINGS.md ①-3）。
+
+    修复前权重表只收录 BUY 腿 → 多头腿拿满、空头腿拿一半 → 名义比恒为 2，
+    与 β 无关；两腿名义合计 150% 预算。
     """
 
-    def test_strength_differs_from_equal(self, pair_equal, pair_strength):
-        """strength 的多头腿权重明显偏离等权的 0.50。"""
-        _, eq_rows = pair_equal
-        _, st_rows = pair_strength
-        _assert_open_bars(st_rows, "strength")
-        for row in st_rows:
-            assert abs(row["long_weight"] - 0.5) > 0.10, (
-                f"bar {row['bar']}: strength 的多头腿权重 {row['long_weight']:.4f} "
-                "与等权（0.50）几乎一样 —— strength 根本没生效"
-            )
-            assert abs(row["long_weight"] - PAIR_STRENGTH_WEIGHT) < PAIR_STRENGTH_TOL, (
-                f"bar {row['bar']}: strength 的多头腿权重应为 ≈{PAIR_STRENGTH_WEIGHT}，"
-                f"实际 {row['long_weight']:.4f}"
-            )
+    def test_strength_weights_legs_by_beta(self, pair_strength):
+        """两腿名义金额之比 = 回归 β（或 1/β，取决于哪条腿做多）。
 
-    def test_strength_long_leg_gets_full_budget(self, pair_strength):
-        """多头腿拿满预算、空头腿只拿一半 → 名义金额比 ≈ 2。
+        这是本次修复的核心断言：修复前该比值恒为 2（= 100% / 50%），
+        与 β 无关；修复后应当跟着滚动回归的 β 走。
 
-        ⚠️ 这条锁的是**当前实现状态**，不是"期望行为"。见文件头注释：
-        权重表只收录 BUY 腿，所以 {B}.strength = β 这个对冲系数实际上
-        没有参与两腿的名义分配。想让配对策略真正按 β 配平，需要把
-        权重表的口径从"BUY 腿归一化"改成"两腿一起归一化"。
+        容差不是拍脑袋定的，而是**整手取整的实际误差上界**：
+        腿 i 的名义 = 100 × px_i × floor(w_i × TC / px_i / 100)，
+        取整误差 ≤ 一手名义 / 该腿名义，名义比的相对误差 ≤ 两腿之和。
+        （实测 3%~9%，上界 19%~20%）
         """
         _, rows = pair_strength
         _assert_open_bars(rows, "strength")
+        beta = _rolling_beta(PAIR_SYMBOL_A, PAIR_SYMBOL_B, PAIR_BETA_WINDOW)
         for row in rows:
-            assert PAIR_STRENGTH_RATIO_LO < row["ratio"] < PAIR_STRENGTH_RATIO_HI, (
-                f"bar {row['bar']}: strength 下多头/空头名义比应 ≈2，"
-                f"实际 {row['ratio']:.4f}（多头腿拿满预算、空头腿拿一半）"
+            i = row["bar"]
+            b = beta[i]
+            want = b if row["long_symbol"] == PAIR_SYMBOL_B else 1.0 / b
+            rel = abs(row["ratio"] - want) / want
+            bound = _ratio_error_bound(row)
+            assert rel <= bound, (
+                f"bar {i}: 两腿名义比应为 {want:.4f}（回归 β={b:.4f}），"
+                f"实际 {row['ratio']:.4f}（相对误差 {rel:.1%} > 整手取整上界 "
+                f"{bound:.1%}）"
             )
+
+    def test_strength_long_weight_matches_beta_split(self, pair_strength):
+        """多头腿占两腿名义之和的比例 = β/(1+β)（或 1/(1+β)）。"""
+        _, rows = pair_strength
+        _assert_open_bars(rows, "strength")
+        beta = _rolling_beta(PAIR_SYMBOL_A, PAIR_SYMBOL_B, PAIR_BETA_WINDOW)
+        for row in rows:
+            i = row["bar"]
+            w = _expected_strength_weights(beta[i])
+            want = w[row["long_symbol"]] / (w[PAIR_SYMBOL_A] + w[PAIR_SYMBOL_B])
+            assert abs(row["long_weight"] - want) < PAIR_BETA_WEIGHT_TOL, (
+                f"bar {i}: 多头腿权重应为 {want:.4f}（β={beta[i]:.4f}），"
+                f"实际 {row['long_weight']:.4f}"
+            )
+
+    def test_strength_total_notional_not_overcommitted(self, pair_strength, pair_equal):
+        """两腿名义合计 ≈ 预算本身，不再是 150% 超配。
+
+        修复前多头腿拿满 targetCapital、空头腿走兜底拿 targetCapital/2
+        → 合计 150%；回测下资金闸门被跳过 → 账本现金转负。
+        开仓 bar 上两腿的名义合计应当等于预算本身（与等权同口径）。
+        """
+        _, st_rows = pair_strength
+        _, eq_rows = pair_equal
+        st0 = st_rows[0]["total_notional"]
+        eq0 = eq_rows[0]["total_notional"]
+        assert st0 < eq0 * 1.15, (
+            f"首个开仓 bar 上 strength 的两腿名义合计 {st0:,.0f} 明显超过"
+            f"等权的 {eq0:,.0f}（>1.15×）—— 仍是超配"
+        )
+
+    def test_strength_differs_from_equal(self, pair_equal, pair_strength):
+        """strength 按 β 配权、等权不按 —— 两者必须分开。
+
+        ⚠️ 不能逐 bar 比较名义比：100 股取整会让个别 bar 上两者的股数**完全
+        相同**（实测 bar 147/151：strength 与 equal 都是 900/1200 股，名义比
+        都是 0.9361 —— 不是 strength 没生效，是两套预算差不到一手）。
+        所以这里断言两件事：
+          1) 等权的名义比恒 ≈1（与 β 无关）；
+          2) 至少有一根 bar 的两腿股数与等权不同 —— sizing 确实在起作用。
+        """
+        _, eq_rows = pair_equal
+        _, st_rows = pair_strength
+        _assert_open_bars(st_rows, "strength")
+        _assert_open_bars(eq_rows, "equal")
+
+        for row in eq_rows:
+            assert abs(row["ratio"] - 1.0) < 0.12, (
+                f"bar {row['bar']}: 等权的两腿名义比应 ≈1，实际 {row['ratio']:.4f}"
+            )
+
+        eq_by_bar = {r["bar"]: r for r in eq_rows}
+        diff = [r["bar"] for r in st_rows
+                if r["bar"] in eq_by_bar
+                and (r["qty_a"] != eq_by_bar[r["bar"]]["qty_a"]
+                     or r["qty_b"] != eq_by_bar[r["bar"]]["qty_b"])]
+        assert diff, (
+            "strength 与 equal 在所有开仓 bar 上的两腿股数完全相同 —— "
+            "sizing 没有起作用"
+        )
 
     def test_strength_value_comes_from_spread_beta(self, pair_strength):
         """PairNode 发布的 .strength 就是价差节点回归出来的 β。
@@ -876,42 +996,70 @@ class TestPairStrength:
 # ============================================================
 
 class TestPairDeadKeyModels:
-    """kelly / volatility_target 在配对下与 strength 同形（但仍与等权不同）。
+    """kelly / volatility_target 也走**组**结构：腿间按 β 拆、总尺度由模型定。
 
-    这两个模型分别要读 .win_rate / .volatility，全项目没有节点写这两个
-    key → 回退 1/N_buys。配对策略里 N_buys = 1 → 回退权重 = 1.0，
-    与 strength（单条 BUY 腿归一化后也是 1.0）撞成同一个数。
+    这两个模型分别要读 .win_rate / .volatility。组级统计的键是
+    "pair.<pair_id>.xxx"（由 PairNode 发布），单腿组沿用 "{symbol}.xxx"。
+    合成配对数据只有 5 笔往返、且全是盈利（avg_loss = 0）→ 凯利判定"赔率
+    不可估"、目标波动率拿不到 σ → 两者都退回"每组均分" → 与 strength 同形。
+
+    所以这里能断言的是**腿间拆分**（空头腿不再被饿死 = "支持做空组合"），
+    总尺度的差异需要有"既有盈又有亏、且笔数够"的组级统计才会出现。
     """
 
     @pytest.mark.parametrize("method", ["kelly", "volatility_target"])
-    def test_dead_key_models_match_strength(self, headers, method, pair_strength):
-        """kelly / volatility_target 与 strength 给出完全相同的执行计划。"""
+    def test_dead_key_models_split_legs_by_beta(self, headers, method):
+        """两腿名义比 = 回归 β —— 空头腿不再被饿死。
+
+        这是"凯利支持做空组合"的核心：修复前这两个模型只看 BUY 腿，空头腿
+        走兜底公式 → 名义比恒为 2（与 β 无关）。
+        """
+        _, rows = _run_pair(headers, f"{method}_pair", sizing_method=method)
+        _assert_open_bars(rows, method)
+        beta = _rolling_beta(PAIR_SYMBOL_A, PAIR_SYMBOL_B, PAIR_BETA_WINDOW)
+        for row in rows:
+            i = row["bar"]
+            b = beta[i]
+            want = b if row["long_symbol"] == PAIR_SYMBOL_B else 1.0 / b
+            rel = abs(row["ratio"] - want) / want
+            assert rel <= _ratio_error_bound(row), (
+                f"bar {i}: {method} 的两腿名义比应为 {want:.4f}（β={b:.4f}），"
+                f"实际 {row['ratio']:.4f}（相对误差 {rel:.1%} > 整手取整上界）"
+            )
+
+    @pytest.mark.parametrize("method", ["kelly", "volatility_target"])
+    def test_dead_key_models_match_strength_without_stats(self, headers, method,
+                                                          pair_strength):
+        """拿不到组级统计时，它们与 strength 同形（都退回"组内按 β 拆 + 组均分"）。"""
         _, st_rows = pair_strength
         _, rows = _run_pair(headers, f"{method}_pair", sizing_method=method)
         _assert_open_bars(rows, method)
-        assert len(rows) == len(st_rows), \
-            f"{method} 的开仓 bar 数 {len(rows)} 与 strength {len(st_rows)} 不一致"
-        for got, want in zip(rows, st_rows):
-            assert got["bar"] == want["bar"]
-            assert got["long_symbol"] == want["long_symbol"]
+        st_by_bar = {r["bar"]: r for r in st_rows}
+        compared = 0
+        for got in rows:
+            want = st_by_bar.get(got["bar"])
+            if want is None:
+                continue
+            compared += 1
             assert abs(got["long_weight"] - want["long_weight"]) < 1e-9, \
                 f"bar {got['bar']}: {method} 的权重 {got['long_weight']:.4f} " \
-                f"与 strength {want['long_weight']:.4f} 不一致"
+                f"与 strength 的 {want['long_weight']:.4f} 不一致"
+        assert compared > 0, "两个模型没有任何共同的 bar，无法比较"
 
     @pytest.mark.parametrize("method", ["kelly", "volatility_target"])
-    def test_dead_key_models_differ_from_equal(self, headers, method, pair_equal):
-        """反过来：它们与等权**必须不同**（回退权重是 1.0 而不是 1/N）。
-
-        这条是配对策略相对信号策略的关键增量：信号链路里 N_buys = 标的数，
-        回退权重恰好等于等权，两个模型怎么配都区分不出来。
-        """
-        _, eq_rows = pair_equal
-        _, rows = _run_pair(headers, f"{method}_pair", sizing_method=method)
+    def test_dead_key_models_no_naked_leg(self, headers, method):
+        """组结构不能让任一条腿落单（组权重展开后两腿都拿资金）。"""
+        df, rows = _run_pair(headers, f"{method}_pair", sizing_method=method)
         _assert_open_bars(rows, method)
-        for row in rows:
-            assert abs(row["long_weight"] - 0.5) > 0.10, (
-                f"bar {row['bar']}: {method} 的多头腿权重 {row['long_weight']:.4f} "
-                "与等权重合 —— 说明回退权重按标的数均分了，而不是按 BUY 腿数"
+        act_a = df[f"{PAIR_SYMBOL_A}.plan_action"].to_numpy(dtype=float)
+        qty_a = df[f"{PAIR_SYMBOL_A}.plan_qty"].to_numpy(dtype=float)
+        act_b = df[f"{PAIR_SYMBOL_B}.plan_action"].to_numpy(dtype=float)
+        qty_b = df[f"{PAIR_SYMBOL_B}.plan_qty"].to_numpy(dtype=float)
+        pos_a = np.cumsum(np.where(act_a > 0, qty_a, np.where(act_a < 0, -qty_a, 0.0)))
+        pos_b = np.cumsum(np.where(act_b > 0, qty_b, np.where(act_b < 0, -qty_b, 0.0)))
+        for i in range(len(df)):
+            assert (pos_a[i] == 0) == (pos_b[i] == 0), (
+                f"bar {i}: {method} 出现裸腿（A={pos_a[i]:.0f}, B={pos_b[i]:.0f}）"
             )
 
 
@@ -940,7 +1088,7 @@ class TestPairMvo:
 
         单候选时 QP 退化成"给这一个名字多少"，结果被 mvo_max_weight
         （默认 0.60）卡住 → 多头腿拿 60% 预算、空头腿仍走等权兜底 50%
-        → 名义比 ≈ 1.2，落在等权（≈1.0）与 strength（≈2.0）之间。
+        → 名义比 ≈ 1.2。
 
         这条顺带证明 MVO 真的跑了（否则与回退等权无异）。
         """
@@ -954,20 +1102,20 @@ class TestPairMvo:
             )
 
     def test_mvo_max_weight_controls_single_candidate(self, headers):
-        """单候选时权重由 mvo_max_weight 决定：放到 1.0 就等于 strength。
+        """单候选时权重由 mvo_max_weight 决定：放到 1.0 → 该腿拿满预算。
 
-        max_weight=1.0 时单候选拿满 100% 预算 → 与 strength 的权重分配
-        完全一致（strength 的回退权重也是 1.0）。
+        MVO 的候选集是"BUY 且无持仓"，配对下只有 1 条腿 → 单候选拿
+        w_max=1.0 → 它拿满 targetCapital，另一条腿走兜底 targetCapital/2
+        → 名义比 ≈ 2。这是"只看 BUY 腿"的旧口径（MVO 仍是），与 strength
+        现在的 β 配权不同形。
         """
-        _, st_rows = _run_pair(headers, "strength", sizing_method="strength")
         _, rows = _run_pair(headers, "mvo_min1_maxw1_pair", sizing_method="mvo",
                             mvo={"mvo_min_names": 1, "mvo_max_weight": 1.0})
         _assert_open_bars(rows, "mvo(min_names=1,max_weight=1.0)")
-        for got, want in zip(rows, st_rows):
-            assert got["bar"] == want["bar"]
-            assert abs(got["long_weight"] - want["long_weight"]) < 1e-6, (
-                f"bar {got['bar']}: max_weight=1.0 的单候选 MVO 应与 strength 同形，"
-                f"{got['long_weight']:.4f} vs {want['long_weight']:.4f}"
+        for row in rows:
+            assert PAIR_BUY_ONLY_RATIO_LO < row["ratio"] < PAIR_BUY_ONLY_RATIO_HI, (
+                f"bar {row['bar']}: 单候选 max_weight=1.0 应是"
+                "「多头拿满、空头拿一半」，名义比 ≈2，实际 {row['ratio']:.4f}"
             )
 
 
@@ -976,47 +1124,83 @@ class TestPairMvo:
 # ============================================================
 
 class TestPairSizingCaps:
-    """max_single_pct / max_total_pct 只作用在**权重表里的标的**上。"""
+    """max_single_pct / max_total_pct 作用在**权重表里的标的**上。
 
-    def test_max_single_pct_caps_strength_long_leg(self, headers):
-        """strength + max_single_pct=0.5 → 多头腿被截回 50%，与等权同形。"""
+    strength 的权重表现在**包含两条腿** → 上限对两腿同时生效。
+    修复前空头腿不在权重表里（走兜底 targetCapital/count），不受上限约束。
+    """
+
+    def test_max_single_pct_caps_strength_both_legs(self, headers):
+        """strength + max_single_pct=0.5 → 两腿都被截到 ≤0.5，β 比例被压平。
+
+        β≈1.25 时 w_B = β/(1+β) ≈ 0.556 > 0.5 → 被截到 0.5，
+        而 w_A = 1/(1+β) ≈ 0.444 不受影响 → 名义比从 β 变成 ≈1.13。
+        这条同时记录了"单标的上限会破坏 β 比例"这个副作用
+        （FINDINGS.md ①-3 的坑 #3）。
+        """
         _, rows = _run_pair(headers, "strength_cap50_pair", sizing_method="strength",
                             max_single_pct=0.5)
         _assert_open_bars(rows, "strength+cap0.5")
+        beta = _rolling_beta(PAIR_SYMBOL_A, PAIR_SYMBOL_B, PAIR_BETA_WINDOW)
         for row in rows:
-            assert abs(row["long_weight"] - 0.5) < PAIR_WEIGHT_TOL, (
-                f"bar {row['bar']}: 上限 0.5 之下多头腿权重应回到 0.50，"
+            i = row["bar"]
+            want_w, want_ratio = _expected_strength_split(
+                beta[i], row["long_symbol"], max_single_pct=0.5)
+            assert abs(row["long_weight"] - want_w) < PAIR_BETA_WEIGHT_TOL, (
+                f"bar {i}: 上限 0.5 之下多头腿权重应为 {want_w:.4f}，"
                 f"实际 {row['long_weight']:.4f}"
             )
+            rel = abs(row["ratio"] - want_ratio) / want_ratio
+            assert rel <= _ratio_error_bound(row), (
+                f"bar {i}: 上限 0.5 之下名义比应为 {want_ratio:.4f}，"
+                f"实际 {row['ratio']:.4f}（相对误差 {rel:.1%} > 整手取整上界）"
+            )
 
-    def test_max_single_pct_small_makes_short_leg_bigger(self, headers):
-        """strength + max_single_pct=0.3 → 多头腿只拿 30% 预算，反而小于空头腿。
+    def test_max_single_pct_small_makes_legs_equal(self, headers):
+        """strength + max_single_pct=0.3 → 两腿都被截到 0.3 → 名义比 = 1。
 
-        因为空头腿不在权重表里，走的是 perSymbolCapital（50%），不受上限约束。
-        这条锁住"上限只截权重表、不截等权兜底"这个实现细节。
+        修复前空头腿不在权重表里、走 50% 兜底 → 多头 30% 比空头 50% 小。
+        现在两腿都在表里且都被截断 → 一样多，比值回到 1。
+
+        容差放宽：两腿都被截到 30% 预算时，一手占该腿名义的比例变大
+        （实测 |w-0.5| ≤ 0.030、|ratio-1| ≤ 0.116），仍用整手取整误差上界。
         """
         _, rows = _run_pair(headers, "strength_cap30_pair", sizing_method="strength",
                             max_single_pct=0.3)
         _assert_open_bars(rows, "strength+cap0.3")
         for row in rows:
-            assert row["long_weight"] < 0.45, (
-                f"bar {row['bar']}: 上限 0.3 之下多头腿权重应明显小于 0.45，"
+            assert abs(row["long_weight"] - 0.5) < 0.05, (
+                f"bar {row['bar']}: 两腿都被截到 0.3 后多头腿权重应为 0.50，"
                 f"实际 {row['long_weight']:.4f}"
             )
-            assert row["ratio"] < 1.0, (
-                f"bar {row['bar']}: 多头腿被截到 30% 预算后应小于空头腿的 50%，"
-                f"实际名义比 {row['ratio']:.4f}"
+            rel = abs(row["ratio"] - 1.0)
+            assert rel <= _ratio_error_bound(row), (
+                f"bar {row['bar']}: 两腿都被截断后名义比应为 ≈1，"
+                f"实际 {row['ratio']:.4f}（偏差 {rel:.1%} > 整手取整上界）"
             )
 
     def test_max_total_pct_caps_strength(self, headers):
-        """strength + max_total_pct=0.5 → 权重表整体缩到 50%，与等权同形。"""
+        """strength + max_total_pct=0.5 → 权重表整体缩到 50%，但**比例不变**。
+
+        总上限对两腿等比缩放 → 名义比仍是 β、多头腿占比仍是 β/(1+β)；
+        变的只是总预算（与 strength 不加上限时同形）。
+        """
         _, rows = _run_pair(headers, "strength_total50_pair", sizing_method="strength",
                             max_total_pct=0.5)
         _assert_open_bars(rows, "strength+max_total 0.5")
+        beta = _rolling_beta(PAIR_SYMBOL_A, PAIR_SYMBOL_B, PAIR_BETA_WINDOW)
         for row in rows:
-            assert abs(row["long_weight"] - 0.5) < PAIR_WEIGHT_TOL, (
-                f"bar {row['bar']}: 总仓位上限 0.5 之下多头腿权重应回到 0.50，"
+            i = row["bar"]
+            want_w, want_ratio = _expected_strength_split(
+                beta[i], row["long_symbol"], max_total_pct=0.5)
+            assert abs(row["long_weight"] - want_w) < PAIR_BETA_WEIGHT_TOL, (
+                f"bar {i}: 总上限 0.5 之下多头腿权重应为 {want_w:.4f}，"
                 f"实际 {row['long_weight']:.4f}"
+            )
+            rel = abs(row["ratio"] - want_ratio) / want_ratio
+            assert rel <= _ratio_error_bound(row), (
+                f"bar {i}: 总上限是等比缩放，名义比应仍是 {want_ratio:.4f}，"
+                f"实际 {row['ratio']:.4f}（相对误差 {rel:.1%} > 整手取整上界）"
             )
 
     def test_equal_ignores_caps(self, headers, pair_equal):

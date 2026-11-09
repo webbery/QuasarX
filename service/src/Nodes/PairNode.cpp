@@ -1,5 +1,6 @@
 #include "Nodes/PairNode.h"
 #include "DataContext.h"
+#include "Nodes/Portfolio/PortfolioModel.h"
 #include "Util/log.h"
 #include "Util/system.h"
 #include "std_header.h"
@@ -59,6 +60,9 @@ void PairNode::Prepare(const String& strategy, DataContext& context) {
     _barsHeld = 0;
     _blocked = false;
     t_blockedBars = 0;
+    // 往返统计也要复位 —— 否则上一次回测的尾部统计会污染这一次
+    _stats = PairTradeStats{};
+    _in_trade = false;
 }
 
 bool PairNode::readLast(DataContext& context, const String& key, double& out) {
@@ -68,6 +72,90 @@ bool PairNode::readLast(DataContext& context, const String& key, double& out) {
     if (!vec || vec->empty()) return false;
     out = vec->back();
     return std::isfinite(out);
+}
+
+bool PairNode::readPrevPrice(DataContext& context, const String& symbol, double& out) {
+    // 成交价取的是**上一根 bar** 的收盘价，成交发生在本根 bar
+    // （PortfolioNode 的 getQuotePrice → GetPrimitivePrice(symbol, curIndex-1)）。
+    // 统计盈亏必须同一口径 → 取序列的倒数第二个值。
+    for (const char* prop : {"org_close_w", "close"}) {
+        const String key = symbol + "." + prop;
+        if (!context.exist(key)) continue;
+        const auto& var = context.get(key);
+        const auto* vec = std::get_if<Vector<double>>(&var);
+        if (vec == nullptr || vec->size() < 2) continue;
+        const double v = (*vec)[vec->size() - 2];
+        if (std::isfinite(v) && v > 0.0) {
+            out = v;
+            return true;
+        }
+    }
+    return false;
+}
+
+void PairNode::recordTradeOpen(DataContext& context, double beta, int dirA, int dirB) {
+    double pxA = 0.0;
+    double pxB = 0.0;
+    if (!readPrevPrice(context, get_symbol(_legA), pxA) ||
+        !readPrevPrice(context, get_symbol(_legB), pxB)) {
+        _in_trade = false;
+        return;
+    }
+    _in_trade = true;
+    _entry_px_a = pxA;
+    _entry_px_b = pxB;
+    _dir_a = dirA;
+    _dir_b = dirB;
+    _trade_beta = beta;
+}
+
+void PairNode::recordTradeClose(DataContext& context) {
+    if (!_in_trade) {
+        return;
+    }
+    double pxA = 0.0;
+    double pxB = 0.0;
+    const bool ok = readPrevPrice(context, get_symbol(_legA), pxA) &&
+                    readPrevPrice(context, get_symbol(_legB), pxB);
+    const double beta = _trade_beta;
+    const int dirA = _dir_a;
+    const int dirB = _dir_b;
+    const double entryA = _entry_px_a;
+    const double entryB = _entry_px_b;
+    _in_trade = false;
+    if (!ok) {
+        return;
+    }
+
+    // equity-unit 组合收益：π = (dir_A·r_A + β·dir_B·r_B) / (1 + β)
+    const double rA = pxA / entryA - 1.0;
+    const double rB = pxB / entryB - 1.0;
+    const double pi = (dirA * rA + beta * dirB * rB) / (1.0 + beta);
+    if (!std::isfinite(pi)) {
+        return;
+    }
+    ++_stats._trades;
+    if (pi > 0.0) {
+        ++_stats._wins;
+        _stats._sum_win += pi;
+    } else {
+        _stats._sum_loss += -pi;
+    }
+}
+
+void PairNode::publishTradeStats(DataContext& context, uint64_t pairId) {
+    if (_stats._trades <= 0) {
+        return;
+    }
+    const String key = portfolio::groupStatsKey(pairId, _legA);
+    const double p = static_cast<double>(_stats._wins) / static_cast<double>(_stats._trades);
+    const int losses = _stats._trades - _stats._wins;
+    const double avg_win = (_stats._wins > 0) ? _stats._sum_win / _stats._wins : 0.0;
+    const double avg_loss = (losses > 0) ? _stats._sum_loss / losses : 0.0;
+    publishScalar(context, key, "win_rate", p);
+    publishScalar(context, key, "avg_win", avg_win);
+    publishScalar(context, key, "avg_loss", avg_loss);
+    publishScalar(context, key, "samples", static_cast<double>(_stats._trades));
 }
 
 NodeProcessResult PairNode::Process(const String& strategy, DataContext& context) {
@@ -220,6 +308,24 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
             decisions[item.first] = item.second;
         }
     }
+
+    // ── 往返统计（凯利的输入来源）──
+    // 必须在门控**之后**记：门控可能把一条腿降级成 HOLD，那种情况下仓位
+    // 根本没建起来/没平掉，记进去就是一笔假交易。
+    // 判定：两腿都在 decisions 里、且方向一多一空 = 完整的一腿开仓或平仓。
+    if (decisions.size() == 2 && decisions.count(_legA) && decisions.count(_legB)) {
+        const bool aBuy = decisions[_legA] == TradeAction::BUY;
+        const bool bBuy = decisions[_legB] == TradeAction::BUY;
+        if (aBuy != bBuy) {
+            if (inPosition) {
+                recordTradeClose(context);
+            } else {
+                recordTradeOpen(context, beta, aBuy ? 1 : -1, bBuy ? 1 : -1);
+            }
+        }
+    }
+    publishTradeStats(context, static_cast<uint64_t>(pairId));
+
     writeSignals(context, decisions);
 
     return NodeProcessResult::Success;
