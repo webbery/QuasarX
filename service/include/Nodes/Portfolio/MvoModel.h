@@ -25,16 +25,19 @@ namespace portfolio {
  * s.t.  Σ w_i = e,  0 ≤ w_i ≤ w_max
  * ```
  *
- * ── 阶段一（当前实现）：买入侧 ──
- * 候选集 = 有 BUY 信号**且当前无持仓**的标的。已持仓标的不参与求解 ——
- * generatePlan 对"已持仓的 BUY"会直接跳过（不加仓），把权重分给它们等于
- * 浪费预算。因此本阶段的换手惩罚作用于"MVO 权重的变化速度"，而不是真实
- * 持仓换手。
+ * ── 阶段一（当前实现）：多头腿求解 + 组尺度折算 ──
+ * QP 仍然是 long-only，候选 = 本轮开仓的**多头腿**（腿表里只有新开仓，
+ * 不再需要按持仓过滤）。求解后按组折算：
  *
- * TODO(阶段二): 候选集扩到「BUY ∪ 已持仓未清仓」，w_prev 换成真实持仓漂移
- *   权重，并给 generatePlan 加"部分减仓"能力（现在 SELL 分支写死全清）。
- *   理由见 README 结论 #3：换手主要来自信号驱动的进出场，仅靠本层的软惩罚
- *   压不住；要降换手需要换手预算硬约束 + 只动变化的名字。
+ *     scale[g] = 组内已定价腿的 QP 权重之和
+ *
+ * 独立腿精确等于 QP 权重；配对组只有多头腿进 QP → 空头腿由 distribute
+ * 按 share（= β）生成，两腿名义合计 = QP 权重，不会超预算。
+ * 纯空头组（组内没有多头腿）拿剩余预算等分，避免做空腿完全没有权重。
+ *
+ * TODO(阶段二): QP 支持带符号权重（Σ|w| = e），或把配对组当合成资产
+ *   （价差收益）进 QP。理由：`Σw = e` 只约束多头名义，配对的风险口径
+ *   仍是"单标的名义"而不是"价差敞口"。
  */
 class MvoModel final : public PortfolioModel {
 public:
@@ -42,11 +45,13 @@ public:
     ~MvoModel() override;
 
     void Prepare() override;
-    Map<symbol_t, double> compute(PortfolioContext& ctx) override;
     const char* name() const override { return "mvo"; }
 
 protected:
     bool onInit(const nlohmann::json& config) override;
+    void onUniverse(const Set<symbol_t>& universe) override;
+    Vector<double> computeScales(PortfolioContext& ctx) override;
+    bool capsOnOutput() const override { return false; }
 
 private:
     // ── 分支算法参数 ──
@@ -64,12 +69,18 @@ private:
     int    _min_samples = 60;              // 收益样本不足 → 回退等权
     int    _min_names = 2;                 // 候选数不足 → 回退等权
 
+    // ── 模型专属输入 ──
+    // 因子剥离要用全池等权收益做市场代理，所以需要节点交易池。
+    // 它在 Init 时一次性给出（onUniverse），不进共享的 PortfolioContext。
+    Set<symbol_t> _universe;
+
     // ── 运行时状态（跨 bar 保持，Prepare 重置）──
     // 裸指针 + 前向声明：把 kalman/OSQP 头文件挡在 MvoModel.cpp 里，
     // 工厂（PortfolioModel.cpp）和 PortfolioNode.h 都不必解析它们。
     mvo::MeanEstimator* _estimator = nullptr;
     mvo::RiskModel*     _risk = nullptr;
     Map<symbol_t, double> _prev_weights;   // 上一期 MVO 权重（换手惩罚的 w_prev）
+    bool _warned_short_only = false;       // "纯空头组"告警限频
 };
 
 }  // namespace portfolio

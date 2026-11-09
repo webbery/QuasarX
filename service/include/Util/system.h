@@ -514,3 +514,9 @@ double getProcessRSS();
 
 void strategy_error(const String& strategy, const String& info);
 void strategy_log(const String & strategy, const String & info);
+
+// ── 节点配置读取 ─────────────────────────────────────────────
+double readNumber(const nlohmann::json& params, const char* key, double dflt);
+int readInt(const nlohmann::json& params, const char* key, int dflt);
+bool readBool(const nlohmann::json& params, const char* key, bool dflt);
+String readString(const nlohmann::json& params, const char* key, const String& dflt = "");

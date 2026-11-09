@@ -5,8 +5,10 @@
 #include "Nodes/Portfolio/VolatilityTargetModel.h"
 #include "Nodes/Portfolio/StrengthModel.h"
 #include "Nodes/Portfolio/MvoModel.h"
+#include "Util/system.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace portfolio {
 
@@ -31,126 +33,141 @@ SizingMethod parseSizingMethod(const String& text) {
     return SizingMethod::Equal;
 }
 
-// ── 配置读取（统一英文键）──────────────────────────────────
+// ── 组的腿区间 ───────────────────────────────────────────────
 
-namespace {
-
-const nlohmann::json* findValue(const nlohmann::json& params, const char* key) {
-    if (!params.contains(key)) return nullptr;
-    const auto& node = params[key];
-    return (node.is_object() && node.contains("value")) ? &node["value"] : nullptr;
+Vector<size_t> groupOffsets(const Vector<PortfolioLeg>& legs) {
+    Vector<size_t> offsets;
+    if (legs.empty()) {
+        return offsets;
+    }
+    offsets.push_back(0);
+    for (size_t i = 1; i < legs.size(); ++i) {
+        // 同组 = 非 0 且与上一条腿相同；_group == 0 的腿各自成组
+        const bool same_group =
+            legs[i]._group != 0 && legs[i]._group == legs[i - 1]._group;
+        if (!same_group) {
+            offsets.push_back(i);
+        }
+    }
+    offsets.push_back(legs.size());
+    return offsets;
 }
 
-}  // namespace
-
-double readNumber(const nlohmann::json& params, const char* key, double dflt) {
-    const auto* v = findValue(params, key);
-    return (v && v->is_number()) ? v->get<double>() : dflt;
-}
-
-int readInt(const nlohmann::json& params, const char* key, int dflt) {
-    const auto* v = findValue(params, key);
-    return (v && v->is_number()) ? v->get<int>() : dflt;
-}
-
-bool readBool(const nlohmann::json& params, const char* key, bool dflt) {
-    const auto* v = findValue(params, key);
-    return (v && v->is_boolean()) ? v->get<bool>() : dflt;
-}
-
-String readString(const nlohmann::json& params, const char* key, const String& dflt) {
-    const auto* v = findValue(params, key);
-    return (v && v->is_string()) ? static_cast<String>(*v) : dflt;
+size_t groupCount(const Vector<PortfolioLeg>& legs) {
+    const auto offsets = groupOffsets(legs);
+    return offsets.empty() ? 0 : offsets.size() - 1;
 }
 
 // ── PortfolioModel ────────────────────────────────────────────
 
-Map<symbol_t, double> expandGroupWeights(
-    const Vector<PortfolioGroup>& groups,
-    const Vector<double>& group_weights) {
-    Map<symbol_t, double> weights;
-    const size_t n = std::min(groups.size(), group_weights.size());
-    for (size_t i = 0; i < n; ++i) {
-        const auto& group = groups[i];
-        const double group_weight = group_weights[i];
-        for (const auto& symbol : group._legs) {
-            weights[symbol] = group_weight * group.shareOf(symbol);
-        }
-    }
-    return weights;
-}
-
-GroupStats readGroupStats(DataContext& context, const String& key) {
-    GroupStats stats;
-    const auto readOne = [&](const char* field, double& out) -> bool {
-        const String k = key + "." + field;
-        if (!context.exist(k)) {
-            return false;
-        }
-        const auto& var = context.get(k);
-        const auto* vec = std::get_if<Vector<double>>(&var);
-        if (vec == nullptr || vec->empty()) {
-            return false;
-        }
-        out = vec->back();
-        return std::isfinite(out);
-    };
-
-    double win_rate = 0.0;
-    if (!readOne("win_rate", win_rate)) {
-        return stats;
-    }
-    stats._win_rate = std::clamp(win_rate, 0.0, 1.0);
-    // avg_win / avg_loss 缺失时按对称赔率 1:1 处理 —— 硬编码 2%/2% 是错的：
-    // 配对的单笔盈亏幅度差一个数量级（实测 +5.9% / −7.6%），赔率直接决定
-    // 凯利比例，猜错等于把仓位算错。
-    double avg_win = 0.0;
-    double avg_loss = 0.0;
-    const bool has_win = readOne("avg_win", avg_win);
-    const bool has_loss = readOne("avg_loss", avg_loss);
-    stats._avg_win = has_win ? std::max(avg_win, 0.0) : 0.02;
-    stats._avg_loss = has_loss ? std::max(avg_loss, 0.0) : 0.02;
-    double samples = 0.0;
-    if (readOne("samples", samples)) {
-        stats._samples = static_cast<int>(std::max(samples, 0.0));
-    } else {
-        // 没有样本数时按 1 笔处理 —— 调用方（KellyModel）会用自己的最小样本
-        // 门槛再挡一次，不会拿 1 笔的胜率当结论。
-        stats._samples = 1;
-    }
-    stats._valid = true;
-    return stats;
-}
-
-bool PortfolioModel::Init(const nlohmann::json& config) {
+bool PortfolioModel::Init(const nlohmann::json& config, const Set<symbol_t>& universe) {
+    onUniverse(universe);
     if (!config.contains("params")) {
         return onInit(config);
     }
     const auto& params = config["params"];
 
     _max_single_pct = readNumber(params, "max_single_pct", _max_single_pct);
-    _max_total_pct = readNumber(params, "max_total_pct", _max_total_pct);
+    // 旧键 max_total_pct 的语义本来就是"总敞口 Σ|w|"，保留兼容；
+    // 新键 max_gross_pct 更直白，同时给出时以新键为准。
+    _max_gross_pct = readNumber(params, "max_total_pct", _max_gross_pct);
+    _max_gross_pct = readNumber(params, "max_gross_pct", _max_gross_pct);
+    _max_net_pct = readNumber(params, "max_net_pct", _max_net_pct);
 
     return onInit(config);
 }
 
-Map<symbol_t, double> PortfolioModel::applyCaps(Map<symbol_t, double> weights) const {
+Map<symbol_t, double> PortfolioModel::compute(PortfolioContext& ctx) {
+    const size_t groups = groupCount(ctx._legs);
+
+    Vector<double> scales = computeScales(ctx);
+    if (scales.size() != groups) {
+        if (!scales.empty()) {
+            ctx.warn(fmt::format("{}: computeScales returned {} scale(s) for {} group(s); "
+                                 "fallback to equal deployment",
+                                 name(), scales.size(), groups));
+        }
+        scales.assign(groups, groups > 0 ? 1.0 / static_cast<double>(groups) : 0.0);
+    }
+
+    Map<symbol_t, double> weights = distribute(ctx, scales);
+    return capsOnOutput() ? applyCaps(std::move(weights), ctx) : weights;
+}
+
+Map<symbol_t, double> PortfolioModel::distribute(const PortfolioContext& ctx,
+                                                 const Vector<double>& scales) {
+    Map<symbol_t, double> weights;
+    const auto offsets = groupOffsets(ctx._legs);
+    const size_t groups = offsets.empty() ? 0 : offsets.size() - 1;
+    const size_t limit = std::min(groups, scales.size());
+
+    for (size_t g = 0; g < limit; ++g) {
+        const double scale = scales[g];
+        for (size_t i = offsets[g]; i < offsets[g + 1]; ++i) {
+            const auto& leg = ctx._legs[i];
+            weights[leg._symbol] = scale * static_cast<double>(leg._share);
+        }
+    }
+    return weights;
+}
+
+Map<symbol_t, double> PortfolioModel::applyCaps(Map<symbol_t, double> weights,
+                                                const PortfolioContext& ctx) const {
     if (weights.empty()) {
         return weights;
     }
 
-    double total = 0.0;
-    for (auto& [symbol, w] : weights) {
-        w = std::min(w, _max_single_pct);
-        total += w;
+    // 方向查表：净敞口要按 dir 求和，腿表是唯一权威来源
+    Map<symbol_t, int> dirs;
+    for (const auto& leg : ctx._legs) {
+        dirs[leg._symbol] = leg._dir;
     }
 
-    if (total > _max_total_pct && total > 0.0) {
-        const double scale = _max_total_pct / total;
+    double gross = 0.0;
+    for (auto& [symbol, w] : weights) {
+        w = std::min(float(w), _max_single_pct);
+        gross += w;
+    }
+
+    // 总敞口上限（多空合并的 Σ|w|）
+    if (gross > _max_gross_pct && gross > 0.0) {
+        const double scale = _max_gross_pct / gross;
         for (auto& [symbol, w] : weights) {
             w *= scale;
         }
+        gross = _max_gross_pct;
     }
+
+    // 净敞口上限 |Σ dir·w|：把超过的一侧等比压回去，组内比例不变
+    if (_max_net_pct > 0.0) {
+        double long_gross = 0.0;
+        double short_gross = 0.0;
+        for (const auto& [symbol, w] : weights) {
+            const auto it = dirs.find(symbol);
+            const int dir = (it != dirs.end()) ? it->second : 1;
+            (dir >= 0 ? long_gross : short_gross) += w;
+        }
+
+        const double net = long_gross - short_gross;
+        if (std::fabs(net) > _max_net_pct) {
+            const bool long_excess = net > 0.0;
+            const double big = long_excess ? long_gross : short_gross;
+            const double small = long_excess ? short_gross : long_gross;
+            // 大边压到 max_net + small，净敞口正好落在上限上
+            const double target = std::max(0.0, _max_net_pct + small);
+            if (big > 0.0) {
+                const double scale = std::min(1.0, target / big);
+                for (auto& [symbol, w] : weights) {
+                    const auto it = dirs.find(symbol);
+                    const int dir = (it != dirs.end()) ? it->second : 1;
+                    if ((dir >= 0) == long_excess) {
+                        w *= scale;
+                    }
+                }
+            }
+        }
+    }
+
     return weights;
 }
 

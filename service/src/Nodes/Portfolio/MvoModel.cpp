@@ -126,48 +126,56 @@ bool MvoModel::onInit(const nlohmann::json& config) {
     return true;
 }
 
+void MvoModel::onUniverse(const Set<symbol_t>& universe) {
+    _universe = universe;
+}
+
 void MvoModel::Prepare() {
     // 卡尔曼滤波器 / EWMA 协方差 / 上期权重都是跨 bar 递推的，每次运行开始
     // 必须重置 —— 否则上一次回测的尾部状态会污染这一次。
     if (_estimator) _estimator->reset();
     if (_risk) _risk->reset();
     _prev_weights.clear();
+    _warned_short_only = false;
 }
 
-Map<symbol_t, double> MvoModel::compute(PortfolioContext& ctx) {
-    if (ctx._data == nullptr) {
+Vector<double> MvoModel::computeScales(PortfolioContext& ctx) {
+    DataContext& context = ctx._data;
+
+    const auto offsets = groupOffsets(ctx._legs);
+    const size_t groups = offsets.empty() ? 0 : offsets.size() - 1;
+    if (groups == 0) {
         return {};
     }
-    DataContext& context = *ctx._data;
 
-    // ── 候选集：有 BUY 信号且当前无持仓 ──
-    // 已持仓的 BUY 标的在 generatePlan 里会走 "already has position, skipping
-    // buy"，拿不到资金；把它们纳入优化只会把预算稀释到不会被执行的名字上。
+    // ── 候选 = 多头腿 ──
+    // QP 是 long-only：空头腿不参与求解，由基类 distribute() 按组内 share
+    // （配对即对冲比 β）生成。腿表只含"新开仓"，不再需要持仓过滤。
     Vector<symbol_t> candidates;
-    candidates.reserve(ctx._buy_symbols.size());
-    for (const auto& symbol : ctx._buy_symbols) {
-        if (ctx._get_position_qty && ctx._get_position_qty(symbol) != 0) {
-            continue;
+    Vector<size_t>   candidate_leg;   // 候选在 ctx._legs 里的下标
+    for (size_t i = 0; i < ctx._legs.size(); ++i) {
+        if (ctx._legs[i]._dir > 0) {
+            candidates.push_back(ctx._legs[i]._symbol);
+            candidate_leg.push_back(i);
         }
-        candidates.push_back(symbol);
     }
 
     if (static_cast<int>(candidates.size()) < _min_names) {
         if (!candidates.empty()) {
             ctx.warn(fmt::format(
-                "MVO skipped: {} fresh BUY candidate(s) < min {}; fallback to equal weight",
+                "MVO skipped: {} fresh long candidate(s) < min {}; fallback to equal weight",
                 candidates.size(), _min_names));
         }
         return {};
     }
 
     // ── 收益面板 ──
-    // 用整个交易池而不只是候选集：因子剥离需要全市场等权收益做市场代理。
-    if (ctx._symbol_pool == nullptr) {
-        ctx.warn("MVO skipped: symbol pool unavailable; fallback to equal weight");
+    // 用整个交易池而不只是候选集：因子剥离需要全池等权收益做市场代理。
+    if (_universe.empty()) {
+        ctx.warn("MVO skipped: universe unavailable; fallback to equal weight");
         return {};
     }
-    ReturnsPanel panel = buildReturnsPanel(context, *ctx._symbol_pool);
+    ReturnsPanel panel = buildReturnsPanel(context, _universe);
     if (!panel.valid()) {
         ctx.warn("MVO skipped: no valid '.close' series (fast-backtest mode?); "
                  "fallback to equal weight");
@@ -193,14 +201,18 @@ Map<symbol_t, double> MvoModel::compute(PortfolioContext& ctx) {
 
     // ── 候选在面板中的列 ──
     Vector<symbol_t> picked;
-    Vector<int> cols;
+    Vector<int>      cols;
+    Vector<size_t>   picked_leg;
     picked.reserve(candidates.size());
     cols.reserve(candidates.size());
-    for (const auto& symbol : candidates) {
-        const auto it = std::find(panel._symbols.begin(), panel._symbols.end(), symbol);
+    picked_leg.reserve(candidates.size());
+    for (size_t k = 0; k < candidates.size(); ++k) {
+        const auto it = std::find(panel._symbols.begin(), panel._symbols.end(),
+                                  candidates[k]);
         if (it == panel._symbols.end()) continue;   // 该标的没有 .close 数据
-        picked.push_back(symbol);
+        picked.push_back(candidates[k]);
         cols.push_back(static_cast<int>(it - panel._symbols.begin()));
+        picked_leg.push_back(candidate_leg[k]);
     }
     if (static_cast<int>(picked.size()) < _min_names) {
         ctx.warn(fmt::format("MVO skipped: only {} candidate(s) have '.close' data "
@@ -248,19 +260,62 @@ Map<symbol_t, double> MvoModel::compute(PortfolioContext& ctx) {
         return {};
     }
 
-    // ── 写回权重 ──
-    Map<symbol_t, double> weights;
+    // ── per-name 权重 → 每个定仓单元的尺度 ──
+    //
+    // 组的预算 = 组内已定价腿的 QP 权重之和：
+    //   独立腿：scale = w（精确）
+    //   配对组：只有多头腿进 QP → scale = w_L，空头腿 = scale × share_S = w_L·β，
+    //          两腿名义合计 = w_L ≤ 预算（不会超配）
+    //   多腿篮：Σw → 组预算，组内再按 share 拆
+    Vector<size_t> group_of(ctx._legs.size(), 0);
+    for (size_t g = 0; g < groups; ++g) {
+        for (size_t i = offsets[g]; i < offsets[g + 1]; ++i) {
+            group_of[i] = g;
+        }
+    }
+
+    Vector<double> scales(groups, 0.0);
+    Vector<int>    priced(groups, 0);   // 该组有几条腿进了 QP
     Map<symbol_t, double> next_prev;
-    for (size_t i = 0; i < m; ++i) {
-        const double w = result._weights[i];
-        weights[picked[i]] = w;
-        next_prev[picked[i]] = w;
+    for (size_t j = 0; j < m; ++j) {
+        const double w = result._weights[j];
+        const size_t g = group_of[picked_leg[j]];
+        scales[g] += w;
+        ++priced[g];
+        next_prev[picked[j]] = w;
     }
     _prev_weights = std::move(next_prev);
 
+    // 纯空头组（组内没有多头腿可定价）：拿剩余预算等分。
+    // 否则做空腿会完全没有权重 —— 与"所有组合都支持做空"冲突。
+    size_t unsized = 0;
+    double used = 0.0;
+    for (size_t g = 0; g < groups; ++g) {
+        used += scales[g];
+        if (priced[g] == 0) {
+            ++unsized;
+        }
+    }
+    if (unsized > 0) {
+        const double remain = std::max(0.0, 1.0 - used);
+        const double each = remain / static_cast<double>(unsized);
+        for (size_t g = 0; g < groups; ++g) {
+            if (priced[g] == 0) {
+                scales[g] = each;
+            }
+        }
+        if (!_warned_short_only) {
+            _warned_short_only = true;
+            ctx.warn(fmt::format(
+                "MVO: {} group(s) have no long leg to optimise; distributing the "
+                "remaining {:.1f}% evenly (short legs sized by hedge ratio)",
+                unsized, remain * 100.0));
+        }
+    }
+
     // 不走 applyCaps：QP 已带 0 ≤ w ≤ w_max 与 Σw = e，再比例缩放会破坏
     // 等式约束（预算分配就会少一截）。
-    return weights;
+    return scales;
 }
 
 }  // namespace portfolio

@@ -15,7 +15,8 @@ class Server;
  * 输出：
  *   {sym}.signal      +1 = 买入，-1 = 卖出，0 = 保持（与 SignalNode 同格式）
  *   {sym}.strength    名义金额权重（分子腿 = 1，分母腿 = |β|）
- *   {sym}.pair_id     配对分组标识（两腿同值），下游据此做两腿原子下单
+ *   {sym}.group_id    定仓组标识（两腿同值），下游据此做组原子下单；
+ *                     {sym}.pair_id 保留为兼容别名
  *
  * 为什么是持仓感知：
  *   "平多"和"平空"在无状态表达式里无法表达 —— 同一个 SELL，有多仓时是平多，
@@ -97,11 +98,12 @@ private:
     bool   _in_trade = false;
     double _entry_px_a = 0.0;
     double _entry_px_b = 0.0;
-    int    _dir_a = 0;              // +1 多 / -1 空
-    int    _dir_b = 0;
+    /// 分子腿 A 的入场方向（+1 多 / -1 空）。
+    /// 配对两腿方向必然相反（只在 aBuy != bBuy 时记录），分母腿恒为 -_dir_a
+    int    _dir_a = 0;
     double _trade_beta = 1.0;
 
-    void recordTradeOpen(DataContext& context, double beta, int dirA, int dirB);
+    void recordTradeOpen(DataContext& context, double beta, int dirA);
     void recordTradeClose(DataContext& context);
-    void publishTradeStats(DataContext& context, uint64_t pairId);
+    void publishTradeStats(DataContext& context, uint32_t groupId);
 };

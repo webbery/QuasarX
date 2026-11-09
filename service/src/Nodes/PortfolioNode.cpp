@@ -71,6 +71,20 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
         _allowShort = params["allowShort"]["value"];
     }
 
+    // 交易池 - 沿路径回溯获取上游标的池。
+    // 快速回测模式下特征子图被 CacheFeatureNode 替代，QuoteInputNode 与交易链路断开，
+    // 因此必须走基类的 discoverUpstreamSymbols()（同时识别 QuoteInputNode 和 CacheFeatureNode），
+    // 与 SignalNode / FunctionNode / EMDNode / CUSUMNode / XGBoostNode 保持一致。
+    // 必须先于模型创建：MVO 的因子剥离需要全池做市场代理。
+    _pool = discoverUpstreamSymbols();
+
+    if (_pool.empty()) {
+        WARN("[PortfolioNode:{}] No symbols found from upstream nodes", _id);
+    } else {
+        INFO("[PortfolioNode:{}] Found {} symbols from {} upstream nodes",
+             _id, _pool.size(), _ins.size());
+    }
+
     // ── 组合计算模型 ──
     // 参数统一用英文键：sizing_method / max_single_pct / max_total_pct /
     // volatility_target / mvo_*。只创建被选中的那一个模型，未选中的方案
@@ -80,21 +94,8 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
         : String("equal");
     _sizing_model = portfolio::createPortfolioModel(portfolio::parseSizingMethod(method));
     if (_sizing_model) {
-        _sizing_model->Init(config);
+        _sizing_model->Init(config, _pool);
         INFO("[PortfolioNode:{}] Sizing model = {}", _id, _sizing_model->name());
-    }
-
-    // 交易池 - 沿路径回溯获取上游标的池。
-    // 快速回测模式下特征子图被 CacheFeatureNode 替代，QuoteInputNode 与交易链路断开，
-    // 因此必须走基类的 discoverUpstreamSymbols()（同时识别 QuoteInputNode 和 CacheFeatureNode），
-    // 与 SignalNode / FunctionNode / EMDNode / CUSUMNode / XGBoostNode 保持一致。
-    _pool = discoverUpstreamSymbols();
-
-    if (_pool.empty()) {
-        WARN("[PortfolioNode:{}] No symbols found from upstream nodes", _id);
-    } else {
-        INFO("[PortfolioNode:{}] Found {} symbols from {} upstream nodes",
-             _id, _pool.size(), _ins.size());
     }
 
     return true;
@@ -148,11 +149,12 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // ── 新增：风控短路检查 ──
     applyRiskContext(context, decisions);
 
+    const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
     // 2. 获取可用资金
     // live/日终：走 StrategyCapital（统一账本，含持仓市值与两融口径）
     // 回测：保持原有 BacktestContext 资金口径，避免改变回测结果
     double targetCapital = 0.0;
-    if (_server->GetRunningMode() != RuningType::Backtest) {
+    if (!isBacktest) {
         auto* broker = _server->GetBrokerSubSystem();
         auto* strategyCapital = broker->GetStrategyCapital(strategy);
 
@@ -184,7 +186,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // 这里收敛成 0， 0 预算本来就会让所有买单
     // 走 quantity < 100 分支被丢弃 —— 行为一致，但信号清楚得多。
     if (targetCapital < 0.0) {
-        if (_server->GetRunningMode() != RuningType::Backtest) {
+        if (!isBacktest) {
             STRATEGY_WARN(strategy, "Budget is negative ({}), over-committed; "
                           "treating today's buy budget as 0", targetCapital);
         } else {
@@ -198,7 +200,6 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // live 与 backtest 各一套，通过 adapter 注入 generatePlan。
     // 必须提到 applySizingWeights 之前 —— MVO 要读当前持仓判定"新买入"，
     // 并用上期权重做换手惩罚。
-    const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
 
     HistorySimulationBase* histExchange = nullptr;
     BacktestContext* btContext = nullptr;
@@ -264,16 +265,15 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     }
 
     // ── 组合计算模型调整仓位权重 ──
-    applySizingWeights(strategy, context, decisions, targetCapital,
-                       getQuotePrice, getPositionQuantity);
+    applySizingWeights(strategy, context, decisions, getPositionQuantity);
 
     // 3. 生成执行计划
     ExecutionPlan newPlan = generatePlan(strategy, context, decisions, targetCapital,
                                          getQuotePrice, getPositionQuantity,
                                          isBacktest ? "backtest" : "live");
 
-    // 4. 两腿原子下单：配对开仓必须两腿齐全，否则整组取消（见函数注释）
-    enforcePairAtomicity(strategy, context, newPlan);
+    // 4. 两腿/多腿原子下单：开仓组必须腿齐，否则整组取消（见函数注释）
+    enforceGroupAtomicity(strategy, context, newPlan);
 
     // 5. 检查是否有变化
     newPlan._hasChanged = isPlanChanged(newPlan);
@@ -412,15 +412,13 @@ ExecutionPlan PortfolioNode::generatePlan(
         return plan;
     }
 
-    size_t count = decisions.size();
-    double perSymbolCapital = targetCapital / count;
-
-    // Strength 模式：按归一化权重分配资金
+    // 权重表由 sizing 模型保证覆盖全部建仓腿（PortfolioModel::compute 的契约）。
+    // 缺权重 = 模型没给这一腿预算 → 不建仓（0）。不再按决策数兜底：
+    // 那个分母含 HOLD / 平仓腿 / 已持仓不加仓的 BUY，会把预算摊给不交易的标的，
+    // 也会掩盖模型漏腿的 bug。
     auto getSymbolCapital = [&](symbol_t symbol) -> double {
-        if (!_weights.empty() && _weights.count(symbol)) {
-            return targetCapital * _weights.at(symbol);
-        }
-        return perSymbolCapital;
+        const auto it = _weights.find(symbol);
+        return (it != _weights.end()) ? targetCapital * it->second : 0.0;
     };
 
     for (const auto& [symbol, action] : decisions) {
@@ -615,33 +613,39 @@ ExecutionPlan PortfolioNode::generatePlan(
     return plan;
 }
 
-// ── 两腿原子下单：开仓 all-or-none ──
+// ── 定仓组原子下单：开仓 all-or-none ──
 //
 // generatePlan 是逐 symbol 独立生成执行项的：任一腿可能因为数量不足一手、
-// 价格无效、不允许融券、实盘资金闸门缩减而被单独丢掉，另一条腿却照常下发
-// → 账户里留下一条未对冲的裸腿。PairNode 每根 bar 会发布 {sym}.pair_id
-// （两腿同值），这里按分组做最后一道闸门：
-//   - 开仓组：必须两腿齐全、全部是开仓、多空方向都有，否则整组降级 HOLD；
-//   - 平仓组：允许单腿 —— 平仓不新增敞口，PairNode 的裸腿清理也只能发一条腿。
+// 价格无效、不允许融券、实盘资金闸门缩减而被单独丢掉，同组的另一条腿却
+// 照常下发 → 账户里留下一条未对冲的裸腿。生产者每根 bar 会发布
+// {sym}.group_id（回退旧的 .pair_id，同组同值），这里按分组做最后一道闸门：
+//   - 开仓组：腿必须齐（≥2 且全部开仓），否则整组降级 HOLD；
+//   - 平仓组：允许单腿 —— 平仓不新增敞口，裸腿清理也只能发一条腿。
+// 不再要求"多空方向都有"：方向与组内比例已经由 share 表达，同向多腿组
+// （篮子 / 分层加仓）是合法形态。
 // 资金闸门（generatePlan 末尾）先跑，它缩减后产生的单腿同样会被这里拦下。
-void PortfolioNode::enforcePairAtomicity(const String& strategy,
-                                         DataContext& context,
-                                         ExecutionPlan& plan) {
-    // pair_id -> 计划项下标。没有 pair_id 的标的（非配对策略）不参与。
-    Map<uint64_t, Vector<size_t>> groups;
+void PortfolioNode::enforceGroupAtomicity(const String& strategy,
+                                          DataContext& context,
+                                          ExecutionPlan& plan) {
+    // group_id -> 计划项下标。没有 group_id 的标的（独立腿）不参与。
+    Map<uint32_t, Vector<size_t>> groups;
     for (size_t i = 0; i < plan._items.size(); ++i) {
         const auto& item = plan._items[i];
         if (item._action != TradeAction::BUY && item._action != TradeAction::SELL) {
             continue;
         }
-        double pairId = 0.0;
-        if (!ReadLastScalar(context, get_symbol(item._symbol) + ".pair_id", pairId)) {
+        double groupId = 0.0;
+        if (!ReadLastScalar(context, get_symbol(item._symbol) + ".group_id", groupId) &&
+            !ReadLastScalar(context, get_symbol(item._symbol) + ".pair_id", groupId)) {
             continue;
         }
-        groups[static_cast<uint64_t>(pairId)].push_back(i);
+        if (groupId <= 0.0) {
+            continue;
+        }
+        groups[static_cast<uint32_t>(groupId)].push_back(i);
     }
 
-    for (auto& [pairId, idxs] : groups) {
+    for (auto& [groupId, idxs] : groups) {
         // 纯平仓组直接放行
         bool allClose = true;
         for (auto i : idxs) {
@@ -652,19 +656,14 @@ void PortfolioNode::enforcePairAtomicity(const String& strategy,
         }
         if (allClose) continue;
 
-        // 开仓组：≥2 条腿、全部开仓、多空方向都有
-        size_t buys = 0, sells = 0;
+        // 开仓组：≥2 条腿且全部开仓（不假设方向组合）
         bool ok = idxs.size() >= 2;
         for (auto i : idxs) {
-            const auto& item = plan._items[i];
-            if (item._flag != 0) ok = false;
-            if (item._action == TradeAction::BUY) {
-                ++buys;
-            } else {
-                ++sells;
+            if (plan._items[i]._flag != 0) {
+                ok = false;
+                break;
             }
         }
-        ok = ok && buys > 0 && sells > 0;
         if (ok) continue;
 
         String detail;
@@ -675,9 +674,9 @@ void PortfolioNode::enforcePairAtomicity(const String& strategy,
             detail += (item._action == TradeAction::BUY) ? " BUY" : " SELL";
         }
         if (ShouldWarnDrop(strategy, _id)) {
-            WARN("[PortfolioNode:{}@{}] 配对开仓腿不全（pair_id={}, plan 内腿数={}: {}），"
-                 "整组降级为 HOLD —— 单腿开仓会留下未对冲的裸腿",
-                 strategy, _id, pairId, idxs.size(), detail);
+            WARN("[PortfolioNode:{}@{}] 定仓组开仓腿不全（group_id={}, plan 内腿数={}: {}），"
+                 "整组降级为 HOLD —— 单腿开仓会留下未对冲/未配平的裸腿",
+                 strategy, _id, groupId, idxs.size(), detail);
         }
         for (auto i : idxs) {
             auto& item = plan._items[i];
@@ -740,13 +739,134 @@ void PortfolioNode::applyRiskContext(DataContext& context, Map<symbol_t, TradeAc
     }
 }
 
+// ── 构造本轮目标建仓腿 ──
+//
+// 建仓腿 = 真正占用资金的新开仓：
+//   BUY  且当前无持仓              → +1 做多
+//   SELL 且当前无持仓 且允许做空    → −1 做空
+// 平仓腿（有持仓）不占预算，不进这张表。判定口径必须与 generatePlan 的
+// 建仓分支严格一致。
+//
+// 分组：
+//   - 生产者发布 {sym}.group_id（回退旧的 .pair_id），同组同值；
+//   - 同组的腿连续存放，组内 share = strength / Σstrength（缺失按 1）；
+//   - 组必须完整：组内任何一条腿不建仓（持仓 / HOLD / 不允许做空）→ 整组跳过。
+//     否则权重层会给"半个组"定价（另一半已持仓），名义直接翻倍。
+void PortfolioNode::buildLegs(
+        DataContext& context,
+        const Map<symbol_t, TradeAction>& decisions,
+        const std::function<int64_t(symbol_t)>& getPositionQuantity,
+        Vector<portfolio::PortfolioLeg>& legs,
+        Vector<String>& group_keys) const {
+
+    const auto dirOf = [&](symbol_t symbol) -> int {
+        const auto it = decisions.find(symbol);
+        if (it == decisions.end()) {
+            return 0;
+        }
+        if (it->second == TradeAction::BUY) {
+            return 1;
+        }
+        if (it->second == TradeAction::SELL && _allowShort) {
+            return -1;
+        }
+        return 0;
+    };
+    const auto qtyOf = [&](symbol_t symbol) -> int64_t {
+        return getPositionQuantity ? getPositionQuantity(symbol) : 0;
+    };
+    const auto strengthOf = [&](symbol_t symbol) -> double {
+        double strength = 0.0;
+        if (!ReadLastScalar(context, get_symbol(symbol) + ".strength", strength) ||
+            strength <= 0.0) {
+            strength = 1.0;   // 没有 strength 的标的按等权腿处理
+        }
+        return strength;
+    };
+    const auto groupOf = [&](symbol_t symbol) -> uint32_t {
+        double group_id = 0.0;
+        if (!ReadLastScalar(context, get_symbol(symbol) + ".group_id", group_id) &&
+            !ReadLastScalar(context, get_symbol(symbol) + ".pair_id", group_id)) {
+            return 0;   // 没有分组 → 独立腿
+        }
+        return (group_id > 0.0) ? static_cast<uint32_t>(group_id) : 0;
+    };
+
+    // 1) 按组收集本轮有决策的标的
+    Map<uint32_t, Vector<symbol_t>> groups;
+    Vector<symbol_t> singles;
+    for (const auto& [symbol, action] : decisions) {
+        const uint32_t group = groupOf(symbol);
+        if (group != 0) {
+            groups[group].push_back(symbol);
+        } else {
+            singles.push_back(symbol);
+        }
+    }
+
+    // 2) 组：整组都要建仓，组内按 strength 归一化。
+    //    组 id 是**稠密索引**（1 起），原始 id（pair_id / group_id）只用来
+    //    生成组级统计键 —— 腿结构体因此只需要 16 bit 存组 id。
+    group_keys.assign(1, String());   // index 0 占位：独立腿的键 = 标的代码
+    for (const auto& [raw_group, symbols] : groups) {
+        bool complete = !symbols.empty();
+        for (const auto& symbol : symbols) {
+            if (dirOf(symbol) == 0 || qtyOf(symbol) != 0) {
+                complete = false;
+                break;
+            }
+        }
+        if (!complete) {
+            continue;
+        }
+
+        double strength_sum = 0.0;
+        Vector<double> strengths;
+        strengths.reserve(symbols.size());
+        for (const auto& symbol : symbols) {
+            const double s = strengthOf(symbol);
+            strengths.push_back(s);
+            strength_sum += s;
+        }
+
+        group_keys.push_back(portfolio::groupKey(raw_group, symbols.front()));
+        const unsigned group = static_cast<unsigned>(group_keys.size() - 1);
+
+        legs.reserve(legs.size() + symbols.size());
+        for (size_t i = 0; i < symbols.size(); ++i) {
+            portfolio::PortfolioLeg leg;
+            leg._symbol = symbols[i];
+            leg._dir = dirOf(symbols[i]);
+            leg._group = group;
+            leg._share = (strength_sum > 0.0)
+                ? static_cast<float>(strengths[i] / strength_sum)
+                : 1.0f;
+            legs.push_back(leg);
+        }
+    }
+
+    // 3) 独立腿：各自成组（_group = 0），share = 1
+    for (const auto& symbol : singles) {
+        if (dirOf(symbol) == 0 || qtyOf(symbol) != 0) {
+            continue;   // 不建仓 / 平仓腿
+        }
+        portfolio::PortfolioLeg leg;
+        leg._symbol = symbol;
+        leg._dir = dirOf(symbol);
+        leg._group = 0;
+        leg._share = 1.0f;
+        legs.push_back(leg);
+    }
+}
+
 // ── 按组合计算模型调整仓位权重 ──
+//
+// 模型只回答"每个定仓单元占多少预算"；方向、组内拆分、上限截断都在
+// portfolio 层完成。模型输出保证覆盖全部建仓腿（PortfolioModel::compute）。
 void PortfolioNode::applySizingWeights(
         const String& strategy,
         DataContext& context,
-        Map<symbol_t, TradeAction>& decisions,
-        double targetCapital,
-        const std::function<double(symbol_t)>& getQuotePrice,
+        const Map<symbol_t, TradeAction>& decisions,
         const std::function<int64_t(symbol_t)>& getPositionQuantity) {
 
     _weights.clear();
@@ -754,102 +874,15 @@ void PortfolioNode::applySizingWeights(
         return;
     }
 
-    portfolio::PortfolioContext model_ctx;
-    model_ctx._data = &context;
-    model_ctx._symbol_pool = &_pool;
-    model_ctx._target_capital = targetCapital;
-    model_ctx._get_quote_price = getQuotePrice;
-    model_ctx._get_position_qty = getPositionQuantity;
-    model_ctx._buy_symbols.reserve(decisions.size());
-    for (const auto& [symbol, action] : decisions) {
-        if (action == TradeAction::BUY) {
-            model_ctx._buy_symbols.push_back(symbol);
-        }
-    }
-
-    // ── 建仓腿：BUY 新开多 + SELL 新开空 ──
-    // 判定口径必须与 generatePlan 的建仓分支严格一致：
-    //   BUY  且当前无持仓        → 建多（getSymbolCapital 参与分配）
-    //   SELL 且当前无持仓 且允许做空 → 建空（同上）
-    //   其余（平仓、已有多仓不再加仓）→ 不占用资金，不能进权重归一化的分母。
-    // 少了这一段，配对的空头腿不在权重表里 → 走兜底 targetCapital/count
-    // → 两腿名义比恒为 1:2 而不是 1:β（FINDINGS.md ①-3）。
-    model_ctx._open_symbols.reserve(decisions.size());
-
-    // 建仓腿按 pair_id 分组：配对的两条腿是**同一组**（组内按 strength
-    // = 1 : β 拆分），非配对标的各自一组（单腿组）。
-    // 分组是"腿间拆分"与"组间总尺度"能分开的前提 —— 凯利 / 目标波动率
-    // 决定的是**组**该占多少预算，β 决定的是组内两腿各占多少。
-    Map<uint64_t, Vector<symbol_t>> legs_by_pair;
-    Map<uint64_t, Map<symbol_t, int>> dirs_by_pair;
-    Vector<symbol_t> singles;
-    Map<symbol_t, int> single_dirs;
-
-    for (const auto& [symbol, action] : decisions) {
-        if (action == TradeAction::HOLD) {
-            continue;
-        }
-        const int64_t qty = getPositionQuantity ? getPositionQuantity(symbol) : 0;
-        if (qty != 0) {
-            continue;   // 有持仓 → 这是平仓腿
-        }
-        int dir = 0;
-        if (action == TradeAction::BUY) {
-            dir = 1;
-        } else if (action == TradeAction::SELL && _allowShort) {
-            dir = -1;
-        }
-        if (dir == 0) {
-            continue;
-        }
-        model_ctx._open_symbols.push_back(symbol);
-
-        double pair_id = 0.0;
-        if (ReadLastScalar(context, get_symbol(symbol) + ".pair_id", pair_id) &&
-            pair_id > 0.0) {
-            const uint64_t pid = static_cast<uint64_t>(pair_id);
-            legs_by_pair[pid].push_back(symbol);
-            dirs_by_pair[pid][symbol] = dir;
-        } else {
-            singles.push_back(symbol);
-            single_dirs[symbol] = dir;
-        }
-    }
-
-    // 组内拆分依据 strength：PairNode 发布 {A}.strength = 1、{B}.strength = β
-    // （PairNode.cpp:104-105），归一化后就是 1 : β。
-    const auto makeGroup = [&](uint64_t pid, const Vector<symbol_t>& legs,
-                               const Map<symbol_t, int>& dirs) {
-        portfolio::PortfolioGroup group;
-        group._id = pid;
-        group._legs = legs;
-        group._dirs = dirs;
-        double strength_sum = 0.0;
-        for (const auto& symbol : legs) {
-            double strength = 0.0;
-            if (!ReadLastScalar(context, get_symbol(symbol) + ".strength", strength) ||
-                strength <= 0.0) {
-                strength = 1.0;   // 没有 strength 的标的按等权腿处理
-            }
-            group._strengths[symbol] = strength;
-            strength_sum += strength;
-        }
-        group._strength_sum = strength_sum;
-        group._key = portfolio::groupStatsKey(pid, legs.front());
-        model_ctx._groups.push_back(std::move(group));
-    };
-
-    for (const auto& [pid, legs] : legs_by_pair) {
-        makeGroup(pid, legs, dirs_by_pair[pid]);
-    }
-    for (const auto& symbol : singles) {
-        Map<symbol_t, int> dirs;
-        dirs[symbol] = single_dirs[symbol];
-        makeGroup(0, Vector<symbol_t>{symbol}, dirs);
+    Vector<portfolio::PortfolioLeg> legs;
+    Vector<String> group_keys;
+    buildLegs(context, decisions, getPositionQuantity, legs, group_keys);
+    if (legs.empty()) {
+        return;
     }
 
     const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
-    model_ctx._warn = [&strategy, isBacktest](const String& msg) {
+    auto warn = [&strategy, isBacktest](const String& msg) {
         if (isBacktest) {
             DEBUG_INFO("[PortfolioNode] {}", msg);
         } else {
@@ -857,13 +890,16 @@ void PortfolioNode::applySizingWeights(
         }
     };
 
+    portfolio::PortfolioContext model_ctx{
+        context, std::move(legs), std::move(group_keys), warn};
     _weights = _sizing_model->compute(model_ctx);
 }
 
 
 const nlohmann::json PortfolioNode::getParams() {
     return {"positionRatio", "pool", "allowShort", "sizing_method",
-            "max_single_pct", "max_total_pct", "volatility_target", "strength",
+            "max_single_pct", "max_total_pct", "max_gross_pct", "max_net_pct",
+            "volatility_target", "strength",
             // Kelly
             "kelly_min_samples",
             // MVO

@@ -48,6 +48,19 @@
 #define pclose _pclose
 #endif
 
+// 节点配置统一格式：{"params": {"key": {"value": ...}}}。
+// 这里集中实现，避免每个节点各写一份 params[key]["value"] 解析。
+// 传入 params 节点本身（即 config["params"]），不是整个 config。
+namespace {
+    const nlohmann::json* findValue(const nlohmann::json& params, const char* key) {
+        if (!params.contains(key)) {
+            return nullptr;
+        }
+        const auto& node = params[key];
+        return (node.is_object() && node.contains("value")) ? &node["value"] : nullptr;
+    }
+} 
+
 std::string GetIP() {
 #ifdef WIN32
   WSADATA wsaData;
@@ -1042,4 +1055,30 @@ std::string toInternalSymbol(const std::string& symbol) {
     if (second == "sz" || second == "szse") return "sz." + first;
     if (second == "bj") return "bj." + first;
     return second + "." + first;
+}
+
+
+/// 读数字参数，缺失 / 类型不符时返回 dflt
+double readNumber(const nlohmann::json& params, const char* key, double dflt) {
+    const auto* v = findValue(params, key);
+    return (v && v->is_number()) ? v->get<double>() : dflt;
+}
+
+/// 读整数参数，缺失 / 类型不符时返回 dflt
+int readInt(const nlohmann::json& params, const char* key, int dflt) {
+    const auto* v = findValue(params, key);
+    return (v && v->is_number()) ? v->get<int>() : dflt;
+}
+
+/// 读布尔参数，缺失 / 类型不符时返回 dflt
+bool readBool(const nlohmann::json& params, const char* key, bool dflt) {
+    const auto* v = findValue(params, key);
+    return (v && v->is_boolean()) ? v->get<bool>() : dflt;
+}
+
+/// 读字符串参数，缺失 / 类型不符时返回 dflt
+String readString(const nlohmann::json& params, const char* key,
+                         const String& dflt) {
+    const auto* v = findValue(params, key);
+    return (v && v->is_string()) ? static_cast<String>(*v) : dflt;
 }

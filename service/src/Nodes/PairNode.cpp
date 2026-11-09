@@ -93,7 +93,7 @@ bool PairNode::readPrevPrice(DataContext& context, const String& symbol, double&
     return false;
 }
 
-void PairNode::recordTradeOpen(DataContext& context, double beta, int dirA, int dirB) {
+void PairNode::recordTradeOpen(DataContext& context, double beta, int dirA) {
     double pxA = 0.0;
     double pxB = 0.0;
     if (!readPrevPrice(context, get_symbol(_legA), pxA) ||
@@ -104,8 +104,7 @@ void PairNode::recordTradeOpen(DataContext& context, double beta, int dirA, int 
     _in_trade = true;
     _entry_px_a = pxA;
     _entry_px_b = pxB;
-    _dir_a = dirA;
-    _dir_b = dirB;
+    _dir_a = dirA;   // 分母腿方向恒为 -dirA，不单独存
     _trade_beta = beta;
 }
 
@@ -119,7 +118,7 @@ void PairNode::recordTradeClose(DataContext& context) {
                     readPrevPrice(context, get_symbol(_legB), pxB);
     const double beta = _trade_beta;
     const int dirA = _dir_a;
-    const int dirB = _dir_b;
+    const int dirB = -_dir_a;   // 配对两腿方向必然相反
     const double entryA = _entry_px_a;
     const double entryB = _entry_px_b;
     _in_trade = false;
@@ -143,11 +142,11 @@ void PairNode::recordTradeClose(DataContext& context) {
     }
 }
 
-void PairNode::publishTradeStats(DataContext& context, uint64_t pairId) {
+void PairNode::publishTradeStats(DataContext& context, uint32_t groupId) {
     if (_stats._trades <= 0) {
         return;
     }
-    const String key = portfolio::groupStatsKey(pairId, _legA);
+    const String key = portfolio::groupKey(groupId, _legA);
     const double p = static_cast<double>(_stats._wins) / static_cast<double>(_stats._trades);
     const int losses = _stats._trades - _stats._wins;
     const double avg_win = (_stats._wins > 0) ? _stats._sum_win / _stats._wins : 0.0;
@@ -192,13 +191,18 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
     publishScalar(context, get_symbol(_legA), "strength", 1.0);
     publishScalar(context, get_symbol(_legB), "strength", beta);
 
-    // ── 配对分组标识 ──
+    // ── 定仓组标识 ──
     // 两腿同值。pair_leg 只有 ±1，一个策略里存在多个 PairNode 时，
-    // 下游无法判断哪条 B 属于哪条 A —— PortfolioNode 的两腿原子下单
-    // （开仓要么两腿都下、要么都不下）按这个 key 分组。
+    // 下游无法判断哪条 B 属于哪条 A —— PortfolioNode 的组原子下单
+    // （开仓要么整组都下、要么都不下）按这个 key 分组。
     // 取 symbol 的 31 位哈希：double 能精确表示，且不依赖 symbol_t 的内部布局。
+    //
+    // group_id 是通用键（任何生产者都可以发布，配对只是其中一种）；
+    // pair_id 保留一个版本，兼容旧策略图 / 旧调试列。
     const double pairId = static_cast<double>(
         std::hash<symbol_t>{}(_legA) & 0x7FFFFFFFull);
+    publishScalar(context, get_symbol(_legA), "group_id", pairId);
+    publishScalar(context, get_symbol(_legB), "group_id", pairId);
     publishScalar(context, get_symbol(_legA), "pair_id", pairId);
     publishScalar(context, get_symbol(_legB), "pair_id", pairId);
 
@@ -320,11 +324,11 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
             if (inPosition) {
                 recordTradeClose(context);
             } else {
-                recordTradeOpen(context, beta, aBuy ? 1 : -1, bBuy ? 1 : -1);
+                recordTradeOpen(context, beta, aBuy ? 1 : -1);
             }
         }
     }
-    publishTradeStats(context, static_cast<uint64_t>(pairId));
+    publishTradeStats(context, static_cast<uint32_t>(pairId));
 
     writeSignals(context, decisions);
 
@@ -335,7 +339,9 @@ Map<String, ArgType> PairNode::out_elements() {
     Map<String, ArgType> elems = SignalNodeBase::out_elements();
     for (auto& symbol : _pools) {
         elems[get_symbol(symbol) + ".strength"] = ArgType::Double_TimeSeries;
-        // 配对分组标识（两腿同值），供 PortfolioNode 做两腿原子下单
+        // 定仓组标识（两腿同值），供 PortfolioNode 做组原子下单
+        elems[get_symbol(symbol) + ".group_id"] = ArgType::Double_TimeSeries;
+        // 兼容旧策略图 / 旧调试列的别名
         elems[get_symbol(symbol) + ".pair_id"] = ArgType::Double_TimeSeries;
     }
     return elems;
