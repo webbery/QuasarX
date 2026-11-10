@@ -8,6 +8,8 @@
 #include "RiskContext.h"
 
 #include <chrono>
+#include <stdexcept>
+#include <unordered_map>
 
 struct TradeReport;
 class Server;
@@ -180,11 +182,43 @@ public:
     struct PerfStat {
         bool enabled = false;
         PerfCounter get, set, add, exist;
+        // get 未命中（key 不存在）次数。
+        // 这些 miss 以前完全不可见：_outputs.at() 抛 std::out_of_range，
+        // 控制流被异常打断，既不进 get 桶也不进 exist 桶。而 miss 在实时路径上
+        // 是常态（partial bar epoch 访问尚未就绪的 key，见 AgentSubSystem.cpp
+        // 对 out_of_range 的捕获），异常展开的成本比一次正常 get 高几个数量级。
+        uint64_t getMiss = 0;
+        // std::get<T> 类型不匹配次数（variant 装的是别的类型）
+        uint64_t getBadType = 0;
+        Map<String, uint64_t> missKeys;    // 未命中的 key → 次数
+        Map<String, uint64_t> keyWrites;   // 写入的 key → 次数（set/add）
         uint64_t keys = 0;     // _outputs 的 key 数量（GetPerfStat 时刷新）
         uint64_t bytes = 0;    // _outputs 估算占用字节（key + 数值负载）
+
         uint64_t ops() const { return get.calls + set.calls + add.calls + exist.calls; }
         double totalMs() const { return get.totalMs + set.totalMs + add.totalMs + exist.totalMs; }
-        void reset() { get = {}; set = {}; add = {}; exist = {}; }
+
+        /// 插桩自身累计开销（毫秒）—— 计时原语读时钟的成本
+        double overheadMs() const {
+            return get.overheadMs() + set.overheadMs() + add.overheadMs() + exist.overheadMs();
+        }
+
+        /// 扣掉插桩开销后的净耗时（毫秒）
+        double netMs() const {
+            double net = totalMs() - overheadMs();
+            return net > 0 ? net : 0;
+        }
+
+        void reset() {
+            get = {}; set = {}; add = {}; exist = {};
+            getMiss = 0; getBadType = 0;
+            missKeys.clear(); keyWrites.clear();
+        }
+
+        /// 记录一次未命中（key 不存在）
+        void noteMiss(const String& name) { missKeys[name]++; }
+        /// 记录一次写入（按 key 统计，用于定位"哪个序列在膨胀"）
+        void noteWrite(const String& name) { keyWrites[name]++; }
     };
 
     void EnablePerfProfile(bool on) { _perf.enabled = on; }
@@ -205,24 +239,71 @@ public:
         return _perf;
     }
 
+    /**
+     * @brief 按占用字节排序的 top-N 序列
+     *
+     * 回测里的 O(n²) 症状几乎都来自"每 epoch append 的 Vector<double> 序列"：
+     * 序列随 epoch 线性增长，扩容时的拷贝摊还 O(n)。只看总 bytes 看不出是哪个
+     * key 在膨胀，这个列表直接回答。
+     *
+     * @note 遍历 _outputs 有成本，只在快照输出时调用
+     */
+    Vector<Pair<String, uint64_t>> TopKeysBySize(size_t n) const {
+        Vector<Pair<String, uint64_t>> sized;
+        sized.reserve(_outputs.size());
+        for (const auto& [key, value] : _outputs) {
+            sized.emplace_back(key, key.size() + sizeof(void*) * 2 + ValueBytes(value));
+        }
+        std::sort(sized.begin(), sized.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        if (sized.size() > n) sized.resize(n);
+        return sized;
+    }
+
+    // get 未命中 / 类型不匹配都单独计数，不让异常把控制流打断后无从归因。
+    // 抛出的异常类型与原来 _outputs.at() 一致（std::out_of_range），
+    // 调用方（如实时线程对 out_of_range 的捕获）行为不变。
     template<typename T>
     T& get(const String& name) {
         PerfScope scope(_perf.enabled, _perf.get);
-        return std::get<T>(_outputs.at(name));
+        auto itr = _outputs.find(name);
+        if (itr == _outputs.end()) {
+            _perf.getMiss++;
+            _perf.noteMiss(name);
+            throw std::out_of_range("DataContext::get: unknown key: " + name);
+        }
+        if (T* p = std::get_if<T>(&itr->second)) {
+            return *p;
+        }
+        _perf.getBadType++;
+        throw std::bad_variant_access();
     }
     template<typename T>
     const T& get(const String& name) const {
         PerfScope scope(_perf.enabled, _perf.get);
-        return std::get<T>(_outputs.at(name));
+        auto itr = _outputs.find(name);
+        if (itr == _outputs.end()) {
+            _perf.getMiss++;
+            _perf.noteMiss(name);
+            throw std::out_of_range("DataContext::get: unknown key: " + name);
+        }
+        if (const T* p = std::get_if<T>(&itr->second)) {
+            return *p;
+        }
+        _perf.getBadType++;
+        throw std::bad_variant_access();
     }
 
     context_t& get(const String& name) {
         PerfScope scope(_perf.enabled, _perf.get);
-        return _outputs.at(name);
+        auto itr = _outputs.find(name);
+        if (itr == _outputs.end()) {
+            _perf.getMiss++;
+            _perf.noteMiss(name);
+            throw std::out_of_range("DataContext::get: unknown key: " + name);
+        }
+        return itr->second;
     }
-
-    // context_t& get(const String& name); 
-    // const context_t& get(const String& name) const;
 
     // 两个重载并存，各管一类调用：
     //
@@ -237,12 +318,14 @@ public:
     template<typename T>
     void set(const String& name, T&& f) {
         PerfScope scope(_perf.enabled, _perf.set);
+        if (_perf.enabled) _perf.noteWrite(name);
         _outputs[name] = std::forward<T>(f);
     }
 
     template<typename T>
     void set(const String& name, const T& f) {
         PerfScope scope(_perf.enabled, _perf.set);
+        if (_perf.enabled) _perf.noteWrite(name);
         _outputs[name] = f;
     }
 
@@ -250,6 +333,7 @@ public:
     template<typename T>
     void add(const String& name, const T& value) {
         PerfScope scope(_perf.enabled, _perf.add);
+        if (_perf.enabled) _perf.noteWrite(name);
         auto& item = _outputs[name];
         std::visit([&name, &value, this](auto&& v) {
             using CTX_T = std::decay_t<decltype(v)>;
@@ -443,7 +527,7 @@ private:
     List<time_t> _times;
 
     // 各序列最后一次 append 所在的 epoch（配合 AppendEpochValue 做同 epoch 覆盖）
-    Map<String, uint64_t> _lastWriteEpoch;
+    std::unordered_map<String, uint64_t> _lastWriteEpoch;
     // _times 最后一次 append 所在的 epoch（多输入节点图里每个 input 节点都会
     // 调用 SetTime，时间轴同样只能每个 epoch 追加一次）
     uint64_t _lastTimeEpoch = 0;
