@@ -14,17 +14,38 @@ bool SkipFillStrategy::alignAndWrite(
     DataContext& context,
     std::function<void(const QuoteInfo&)> writeFn
 ) const {
-    // 不对齐时，将时间不对齐的 symbol 的 close 填充为 NaN 写入
+    // 不对齐时，把时间不对齐的标的的当根价格置为 NaN（序列长度保持不变）。
+    //
+    // 为什么要连**后复权价**一起置 NaN：
+    // QuoteInputNode::writeQuote 取的是 "_adj_close > 0 ? _adj_close : _close"，
+    // 只置 _close 为 NaN 时发布的 "close" 序列仍然是真值 —— 下游拿到的是一个
+    // 「看起来正常」的错日价格，skip 形同虚设。adj_* 置 NaN 后
+    // writeQuote 的三元判断（NaN > 0 为 false）会落到 _close，两条路径都是 NaN。
+    //
+    // 置 NaN 之后下游既有的防护自动生效，不需要额外的开关：
+    //   SpreadNode::currentPrices → 任一腿非有限 → 不算价差、且不推进滚动窗口
+    //                              （β 不被停牌期间的错日价格污染）
+    //   FunctionNode ZScore       → NaN 输入直接返回 NaN 且不入滑动窗口
+    //                              （长窗口 z 不会被毒化）
+    //   PairNode::Process         → z 非有限 → 本 bar 不动作
     for (auto& [symbol, quote] : quotes) {
         if (quote._time == minTime) {
             // 时间对齐：直接写入
             writeFn(quote);
-        } else {
-            // 时间不对齐：用 NaN 填充 close
-            QuoteInfo nanQuote = quote;
-            nanQuote._close = std::numeric_limits<double>::quiet_NaN();
-            writeFn(nanQuote);
+            continue;
         }
+        // 时间不对齐：该标的当根无有效行情（停牌 / 缺数据）→ 价格全部置 NaN
+        QuoteInfo nanQuote = quote;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        nanQuote._open = nan;
+        nanQuote._high = nan;
+        nanQuote._low = nan;
+        nanQuote._close = nan;
+        nanQuote._adj_open = nan;
+        nanQuote._adj_high = nan;
+        nanQuote._adj_low = nan;
+        nanQuote._adj_close = nan;
+        writeFn(nanQuote);
     }
     return true;
 }

@@ -38,12 +38,12 @@ struct LedgerFill {
     int64_t  _quantity = 0;          // 正 = 买入，负 = 卖出
     double   _price = 0.0;
     double   _commissionRate = 0.0;  // 佣金费率
-    double   _slippageRate = 0.0;    // 滑点费率
-    double   _tradeFees = 0.0;       // 单笔固定费用
-    bool     _isMargin = false;      // 是否融资交易
     double   _marginRatio = 1.0;     // 初始保证金比例（<1 才是融资买入）
-    bool     _isShortSell = false;   // 融券卖出（开空）
-    bool     _isShortCover = false;  // 买入平空
+    float   _slippageRate = 0.0;    // 滑点费率
+    float   _tradeFees = 0.0;       // 单笔固定费用
+    bool     _isMargin:1 = false;      // 是否融资交易
+    bool     _isShortSell:1 = false;   // 融券卖出（开空）
+    bool     _isShortCover:1 = false;  // 买入平空
     time_t   _time = 0;
 
     double Gross() const { return static_cast<double>(_quantity) * _price; }

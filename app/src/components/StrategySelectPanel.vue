@@ -1,37 +1,21 @@
 <!-- app/src/components/StrategySelectPanel.vue -->
-<!-- 统一日志面板 - 支持普通日志和节点日志切换 -->
+<!-- 策略日志面板 -->
 
 <template>
   <div class="strategy-select-panel">
-    <!-- 日志类型切换 + 统计信息 -->
+    <!-- 统计信息 -->
     <div class="log-type-selector">
-      <label>日志类型:</label>
-      <select v-model="logType" @change="onLogTypeChange">
-        <option value="normal">普通日志</option>
-        <option value="node">节点日志</option>
-      </select>
-
-      <!-- 普通日志统计（靠右） -->
-      <div v-if="logType === 'normal' && normalStats" class="log-stats-inline">
+      <div v-if="normalStats" class="log-stats-inline">
         <span class="stat-item">总计: <strong>{{ normalStats.total_logs }}</strong></span>
         <span class="stat-item info">ℹ️ <strong>{{ normalStats.info_count }}</strong></span>
         <span class="stat-item important">🔥 <strong>{{ normalStats.important_count }}</strong></span>
         <span class="stat-item warn">⚠️ <strong>{{ normalStats.warn_count }}</strong></span>
         <span class="stat-item error">❌ <strong>{{ normalStats.error_count }}</strong></span>
       </div>
-
-      <!-- 节点日志统计（靠右） -->
-      <div v-else-if="logType === 'node' && nodeStats" class="log-stats-inline">
-        <span class="stat-item">总计: <strong>{{ nodeStats.total }}</strong></span>
-        <span class="stat-item input-type">Input: <strong>{{ nodeStats.input_count }}</strong></span>
-        <span class="stat-item signal-type">Signal: <strong>{{ nodeStats.signal_count }}</strong></span>
-        <span class="stat-item portfolio-type">Portfolio: <strong>{{ nodeStats.portfolio_count }}</strong></span>
-        <span class="stat-item execution-type">Execution: <strong>{{ nodeStats.execution_count }}</strong></span>
-      </div>
     </div>
 
-    <!-- 普通日志筛选条件 -->
-    <div v-if="logType === 'normal'" class="log-filters">
+    <!-- 日志筛选条件 -->
+    <div class="log-filters">
       <div class="filter-row">
         <label>级别:</label>
         <select v-model="normalFilters.level">
@@ -76,51 +60,6 @@
       </div>
     </div>
 
-    <!-- 节点日志筛选条件 -->
-    <div v-else class="log-filters">
-      <div class="filter-row">
-        <label>节点类型:</label>
-        <select v-model="nodeFilters.nodeType">
-          <option value="">全部</option>
-          <option value="input">Input</option>
-          <option value="signal">Signal</option>
-          <option value="portfolio">Portfolio</option>
-          <option value="execution">Execution</option>
-        </select>
-
-        <label style="margin-left: 16px;">Epoch 范围:</label>
-        <input type="number" v-model.number="nodeFilters.epochFrom" placeholder="起始"
-               style="width: 80px; padding: 4px 8px;" />
-        <span style="color: #64748b;">~</span>
-        <input type="number" v-model.number="nodeFilters.epochTo" placeholder="结束"
-               style="width: 80px; padding: 4px 8px;" />
-
-        <label style="margin-left: 16px;">时间:</label>
-        <select v-model="nodeFilters.timeRange">
-          <option value="1h">最近1小时</option>
-          <option value="24h">今天</option>
-          <option value="3d">最近3天</option>
-          <option value="7d">最近7天</option>
-          <option value="custom">自定义</option>
-        </select>
-
-        <template v-if="nodeFilters.timeRange === 'custom'">
-          <input type="datetime-local" v-model="nodeFilters.startTime" style="margin-left: 8px;" />
-          <span style="margin: 0 4px;">至</span>
-          <input type="datetime-local" v-model="nodeFilters.endTime" />
-        </template>
-
-        <button class="btn btn-query" @click="loadNodeLogs" style="margin-left: 16px;">
-          <i class="fas fa-search"></i> 查询
-        </button>
-
-        <label style="margin-left: auto; display: flex; align-items: center; gap: 6px; cursor: pointer;">
-          <input type="checkbox" v-model="autoRefresh" @change="toggleAutoRefresh" />
-          <span>实时刷新 (5s)</span>
-        </label>
-      </div>
-    </div>
-
     <!-- 日志列表 -->
     <div class="log-table-wrapper">
       <div class="log-table">
@@ -137,7 +76,7 @@
         </div>
 
         <!-- 普通日志表格 -->
-        <table v-if="logType === 'normal' && currentLogs.length > 0">
+        <table v-if="currentLogs.length > 0">
           <colgroup>
             <col style="width: 180px;" />
             <col style="width: 120px;" />
@@ -177,59 +116,8 @@
             </tr>
           </tbody>
         </table>
-
-        <!-- 节点日志表格 -->
-        <table v-else-if="logType === 'node' && currentLogs.length > 0">
-          <colgroup>
-            <col style="width: 80px;" />
-            <col style="width: 100px;" />
-            <col style="width: 80px;" />
-            <col />
-            <col />
-            <col style="width: 150px;" />
-            <col style="width: 60px;" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Epoch</th>
-              <th>节点类型</th>
-              <th>节点 ID</th>
-              <th>输入摘要</th>
-              <th>输出摘要</th>
-              <th class="sortable" @click="toggleSortOrder">
-                时间
-                <i v-if="sortState === 'asc'" class="fas fa-sort-up"></i>
-                <i v-else-if="sortState === 'desc'" class="fas fa-sort-down"></i>
-                <i v-else class="fas fa-sort"></i>
-              </th>
-              <th>详情</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="log in currentLogs" :key="log.id">
-              <td class="log-epoch">{{ log.epoch }}</td>
-              <td class="log-node-type">
-                <span class="type-badge" :class="log.node_type">{{ log.node_type }}</span>
-              </td>
-              <td class="log-node-id">{{ log.node_id }}</td>
-              <td class="log-summary" @click="toggleDetail(log.id)">
-                <span class="summary-preview">{{ truncate(log.input_summary, 120) }}</span>
-              </td>
-              <td class="log-summary" @click="toggleDetail(log.id)">
-                <span class="summary-preview">{{ truncate(log.output_summary, 120) }}</span>
-              </td>
-              <td class="log-time">{{ log.timestamp }}</td>
-              <td class="log-action">
-                <button class="btn-detail" @click="toggleDetail(log.id)">
-                  <i :class="expandedLogId === log.id ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
         <!-- 普通日志展开详情 -->
-        <div v-if="logType === 'normal' && expandedLog && expandedLog.context" class="log-detail-panel">
+        <div v-if="expandedLog && expandedLog.context" class="log-detail-panel">
           <div class="detail-header">
             <span class="detail-time">{{ expandedLog.timestamp }}</span>
             <span class="detail-strategy">{{ expandedLog.strategy }}</span>
@@ -242,29 +130,6 @@
           <div class="detail-context">
             <strong>Context:</strong>
             <pre class="json-block">{{ formatJson(expandedLog.context) }}</pre>
-          </div>
-        </div>
-
-        <!-- 节点日志展开详情 -->
-        <div v-else-if="logType === 'node' && expandedLog" class="log-detail-panel">
-          <div class="detail-header">
-            <span class="detail-epoch">Epoch {{ expandedLog.epoch }}</span>
-            <span class="type-badge" :class="expandedLog.node_type">{{ expandedLog.node_type }}</span>
-            <span class="detail-node-id">Node {{ expandedLog.node_id }}</span>
-            <span class="detail-time">{{ expandedLog.timestamp }}</span>
-            <button class="btn-close" @click="expandedLogId = null">
-              <i class="fas fa-times"></i>
-            </button>
-          </div>
-          <div class="detail-sections">
-            <div class="detail-section">
-              <strong>Input:</strong>
-              <pre class="json-block">{{ formatJson(expandedLog.input) }}</pre>
-            </div>
-            <div class="detail-section">
-              <strong>Output:</strong>
-              <pre class="json-block">{{ formatJson(expandedLog.output) }}</pre>
-            </div>
           </div>
         </div>
       </div>
@@ -299,9 +164,6 @@ const props = defineProps({
 // PromptDialog 引用
 const promptDialogRef = ref(null)
 
-// 日志类型
-const logType = ref('normal')
-
 // 自动刷新
 const autoRefresh = ref(false)
 let refreshTimer = null
@@ -320,7 +182,7 @@ const sortState = ref('')
 const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize)))
 
 // ─────────────────────────────────────────────
-// 普通日志状态
+// 日志状态
 // ─────────────────────────────────────────────
 
 const normalFilters = reactive({
@@ -335,27 +197,11 @@ const normalLogs = ref([])
 const normalStats = ref(null)
 
 // ─────────────────────────────────────────────
-// 节点日志状态
-// ─────────────────────────────────────────────
-
-const nodeFilters = reactive({
-  nodeType: '',
-  epochFrom: null,
-  epochTo: null,
-  timeRange: '24h',
-  startTime: '',
-  endTime: ''
-})
-
-const nodeLogs = ref([])
-const nodeStats = ref(null)
-
-// ─────────────────────────────────────────────
 // 计算属性
 // ─────────────────────────────────────────────
 
 const loading = ref(false)
-const currentLogs = computed(() => logType.value === 'normal' ? normalLogs.value : nodeLogs.value)
+const currentLogs = computed(() => normalLogs.value)
 const expandedLog = computed(() => currentLogs.value.find(l => l.id === expandedLogId.value))
 
 // ─────────────────────────────────────────────
@@ -371,12 +217,8 @@ function toggleSortOrder() {
   } else {
     sortState.value = ''
   }
-  // 重新加载当前日志
-  if (logType.value === 'normal') {
-    loadNormalLogs()
-  } else {
-    loadNodeLogs()
-  }
+  // 重新加载日志
+  loadNormalLogs()
 }
 
 function formatDateTime(date) {
@@ -404,21 +246,6 @@ function getNormalTimeRange() {
   return { start: formatDateTime(start), end: formatDateTime(now) }
 }
 
-function getNodeTimeRange() {
-  const now = new Date()
-  let start
-  switch (nodeFilters.timeRange) {
-    case '1h': start = new Date(now - 3600000); break
-    case '24h': start = new Date(now - 86400000); break
-    case '3d': start = new Date(now - 259200000); break
-    case '7d': start = new Date(now - 604800000); break
-    case 'custom':
-      return { start: nodeFilters.startTime || '', end: nodeFilters.endTime || '' }
-    default: start = new Date(now - 86400000)
-  }
-  return { start: formatDateTime(start), end: formatDateTime(now) }
-}
-
 function truncate(str, maxLen) {
   if (!str || str.length <= maxLen) return str
   return str.substring(0, maxLen) + '...'
@@ -433,22 +260,7 @@ function formatJson(str) {
 }
 
 // ─────────────────────────────────────────────
-// 日志类型切换
-// ─────────────────────────────────────────────
-
-function onLogTypeChange() {
-  page.value = 1
-  expandedLogId.value = null
-  sortState.value = ''  // 重置排序
-  if (logType.value === 'normal') {
-    loadNormalLogs()
-  } else {
-    loadNodeLogs()
-  }
-}
-
-// ─────────────────────────────────────────────
-// 普通日志 API 调用
+// 日志 API 调用
 // ─────────────────────────────────────────────
 
 async function loadNormalStats() {
@@ -544,64 +356,6 @@ async function handleDeleteNormal() {
 }
 
 // ─────────────────────────────────────────────
-// 节点日志 API 调用
-// ─────────────────────────────────────────────
-
-async function loadNodeStats() {
-  try {
-    const { start, end } = getNodeTimeRange()
-    const params = { type: 'stats', start_time: start, end_time: end }
-    if (props.selectedStrategy) params.strategy = props.selectedStrategy
-    if (nodeFilters.nodeType) params.node_type = nodeFilters.nodeType
-
-    const resp = await axios.get('/v0/node/io', { params })
-    nodeStats.value = resp.data
-  } catch (e) {
-    console.error('[StrategySelectPanel] Load node stats failed:', e)
-  }
-}
-
-async function loadNodeLogs() {
-  loading.value = true
-  try {
-    const { start, end } = getNodeTimeRange()
-    const offset = (page.value - 1) * pageSize
-
-    const params = {
-      limit: pageSize,
-      offset,
-      start_time: start,
-      end_time: end
-    }
-
-    if (props.selectedStrategy) params.strategy = props.selectedStrategy
-    if (nodeFilters.nodeType) params.node_type = nodeFilters.nodeType
-    if (nodeFilters.epochFrom != null) params.epoch_from = nodeFilters.epochFrom
-    if (nodeFilters.epochTo != null) params.epoch_to = nodeFilters.epochTo
-
-    const resp = await axios.get('/v0/node/io', { params })
-    let logs = resp.data.logs || []
-    
-    // 客户端排序
-    if (sortState.value) {
-      logs.sort((a, b) => {
-        const timeA = new Date(a.timestamp).getTime()
-        const timeB = new Date(b.timestamp).getTime()
-        return sortState.value === 'asc' ? timeA - timeB : timeB - timeA
-      })
-    }
-    
-    nodeLogs.value = logs
-    totalCount.value = resp.data.total || 0
-  } catch (e) {
-    console.error('[StrategySelectPanel] Load node logs failed:', e)
-    nodeLogs.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-// ─────────────────────────────────────────────
 // 展开/折叠详情
 // ─────────────────────────────────────────────
 
@@ -616,11 +370,7 @@ function toggleDetail(id) {
 function toggleAutoRefresh() {
   if (autoRefresh.value) {
     refreshTimer = setInterval(() => {
-      if (logType.value === 'normal') {
-        loadNormalLogs()
-      } else {
-        loadNodeLogs()
-      }
+      loadNormalLogs()
     }, 5000)
   } else {
     if (refreshTimer) {
@@ -635,37 +385,14 @@ function toggleAutoRefresh() {
 // ─────────────────────────────────────────────
 
 watch(page, () => {
-  if (logType.value === 'normal') {
-    loadNormalLogs()
-  } else {
-    loadNodeLogs()
-  }
+  loadNormalLogs()
 })
 
 watch(
   () => ({ l: normalFilters.level, k: normalFilters.keyword, t: normalFilters.timeRange, s: props.selectedStrategy }),
   () => {
-    if (logType.value === 'normal') {
-      page.value = 1
-      loadNormalLogs()
-    }
-  },
-  { deep: true }
-)
-
-watch(
-  () => ({
-    nt: nodeFilters.nodeType,
-    ef: nodeFilters.epochFrom,
-    et: nodeFilters.epochTo,
-    t: nodeFilters.timeRange,
-    s: props.selectedStrategy
-  }),
-  () => {
-    if (logType.value === 'node') {
-      page.value = 1
-      loadNodeLogs()
-    }
+    page.value = 1
+    loadNormalLogs()
   },
   { deep: true }
 )
@@ -708,22 +435,6 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
-.log-type-selector label {
-  font-size: 13px;
-  color: #94a3b8;
-  font-weight: 500;
-}
-
-.log-type-selector select {
-  padding: 4px 8px;
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid rgba(74, 158, 255, 0.3);
-  border-radius: 6px;
-  color: #e2e8f0;
-  font-size: 13px;
-  cursor: pointer;
-}
-
 /* ── 统计信息（行内靠右） ── */
 .log-stats-inline {
   display: flex;
@@ -741,11 +452,6 @@ onUnmounted(() => {
 
 .log-stats-inline .info strong { color: #60a5fa; }
 .log-stats-inline .warn strong { color: #fb923c; }
-.log-stats-inline .error strong { color: #f87171; }
-.log-stats-inline .input-type strong { color: #60a5fa; }
-.log-stats-inline .signal-type strong { color: #fbbf24; }
-.log-stats-inline .portfolio-type strong { color: #a78bfa; }
-.log-stats-inline .execution-type strong { color: #34d399; }
 
 /* ── 筛选栏 ── */
 .log-filters {
@@ -903,15 +609,6 @@ onUnmounted(() => {
   color: #64748b;
   white-space: nowrap;
 }
-
-/* Epoch 列 */
-.log-epoch {
-  font-family: 'SF Mono', 'Consolas', monospace;
-  font-size: 12px;
-  color: #64748b;
-  white-space: nowrap;
-}
-
 /* 策略名 */
 .log-strategy {
   color: #60a5fa;
@@ -959,49 +656,9 @@ onUnmounted(() => {
   background: rgba(251, 191, 36, 0.15) !important;
 }
 
-/* 节点类型标签 */
-.type-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-.type-badge.input {
-  background: rgba(96, 165, 250, 0.15);
-  color: #60a5fa;
-}
-.type-badge.signal {
-  background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
-}
-.type-badge.portfolio {
-  background: rgba(167, 139, 250, 0.15);
-  color: #a78bfa;
-}
-.type-badge.execution {
-  background: rgba(52, 211, 153, 0.15);
-  color: #34d399;
-}
-
-/* 节点 ID */
-.log-node-id {
-  font-family: 'SF Mono', 'Consolas', monospace;
-  font-size: 12px;
-  color: #cbd5e1;
-}
-
 /* 消息 */
 .log-message { cursor: pointer; }
 .message-preview {
-  color: #cbd5e1;
-  word-break: break-all;
-}
-
-/* 摘要 */
-.log-summary { cursor: pointer; }
-.summary-preview {
   color: #cbd5e1;
   word-break: break-all;
 }
@@ -1061,18 +718,6 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.detail-epoch {
-  font-family: 'SF Mono', 'Consolas', monospace;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.detail-node-id {
-  font-family: 'SF Mono', 'Consolas', monospace;
-  color: #cbd5e1;
-  font-size: 12px;
-}
-
 .btn-close {
   margin-left: auto;
   background: transparent;
@@ -1096,35 +741,11 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
-.detail-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.detail-section strong {
-  color: #94a3b8;
-  font-size: 12px;
-  text-transform: uppercase;
-  display: block;
-  margin-bottom: 4px;
-}
 
 .json-block {
   margin: 0;
   padding: 10px;
   background: rgba(15, 23, 42, 0.8);
-  border-radius: 6px;
-  font-size: 12px;
-  font-family: 'SF Mono', 'Consolas', monospace;
-  color: #a5b4fc;
-  overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-/* ── 分页 ── */
-.log-pagination {
   display: flex;
   align-items: center;
   justify-content: center;

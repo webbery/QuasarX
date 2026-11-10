@@ -40,16 +40,19 @@ nlohmann::json CapitalToJson(const LedgerStore& ledger) {
 // 单个策略的账本条目
 nlohmann::json LedgerAccountToJson(const LedgerStore::Account& account) {
     double positionValue = 0.0;
+    double unrealized = 0.0;
     nlohmann::json positions = nlohmann::json::array();
     for (const auto& [symbol, pos] : account._positions) {
         const double marketValue = pos.getMarketValue();
         positionValue += marketValue;
+        unrealized += pos.getUnrealizedPnL();
         positions.push_back({
             {"symbol", get_symbol(symbol)},
             {"quantity", pos._quantity},
             {"avgCost", pos._avgPrice},
             {"currentPrice", pos._currentPrice},
             {"marketValue", marketValue},
+            {"unrealizedPnl", pos.getUnrealizedPnL()},
             {"isMargin", pos._isMargin},
             {"marginRatio", pos._marginRatio},
         });
@@ -72,7 +75,12 @@ nlohmann::json LedgerAccountToJson(const LedgerStore::Account& account) {
         {"allocated", account._allocated},
         {"cash", account._cash},
         {"borrowedCash", account._credit.borrowedCash},
+        // profit = 已实现盈亏（成交时结算）；unrealizedPnl = 浮动盈亏（按当前标记价）。
+        // 以前只给 profit，读者会把"账本亏 4061"当成账户总亏损，
+        // 和邮件里的"当日总收益 −23454"对不上——两者根本不是同一个口径。
         {"profit", account._profit},
+        {"unrealizedPnl", unrealized},
+        {"totalPnl", account._profit + unrealized},
         {"active", account._active},
         {"positionValue", positionValue},
         {"equity", account._cash + positionValue - account._credit.borrowedCash},

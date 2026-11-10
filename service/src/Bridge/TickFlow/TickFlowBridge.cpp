@@ -200,6 +200,27 @@ void TickFlowBridge::refreshAdjFactor(symbol_t sym) {
          get_symbol(sym), last.datetime, last.close, last.adj_close,
          last.open, last.adj_open, bars.size());
 
+    // 原始价污染探针：日线相邻两根 bar 的收盘价不可能跳 50% 以上
+    // （A 股涨跌幅上限 ±10%/±20%，除权除息由复权因子处理，不改原始价）。
+    // 出现这种跳变，几乎只有一个解释：close 列被写成了后复权价 ——
+    // 历史上就发生过（不复权 CSV 缺失时用后复权价顶替，sh.600176 的
+    // 2026-11-06 bar：27.45 → 429.40，×15.64），随后所有滚动特征失真。
+    // 这里必须喊出来：脏数据静默流进日终回放，比直接失败更贵。
+    if (bars.size() >= 2) {
+        const auto& prev = bars[bars.size() - 2];
+        if (prev.close > 0 && last.close > 0) {
+            const double ratio = last.close / prev.close;
+            if (ratio >= 1.5 || ratio <= 0.667) {
+                WARN("[TickFlow] refreshAdjFactor: {} 原始价疑似被复权污染："
+                     "prev_close({})={:.4f} → close({})={:.4f}，倍数={:.3f}。"
+                     "若 close 列写入了后复权价，日终回放的所有滚动特征都会失真。"
+                     "请检查该 bar 的不复权数据是否缺失。",
+                     get_symbol(sym), prev.datetime, prev.close,
+                     last.datetime, last.close, ratio);
+            }
+        }
+    }
+
     if (last.close > 0 && last.adj_close > 0) {
         double factor = last.adj_close / last.close;
         std::lock_guard<std::mutex> lock(_adjFactorMtx);

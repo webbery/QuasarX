@@ -142,7 +142,7 @@ pytest ../test/testcases/test_order.py::TestOrder::test_stock_order_buy -v
 │  │ Subsystem   │ │ SubSystem   │ │ Subsystem           │   │
 │  └─────────────┘ └─────────────┘ └─────────────────────┘   │
 │  ┌─────────────────────────────────────────────────────┐     │
-│  │ DuckDB (QuoteDB / NodeIO / Backtest)               │     │
+│  │ DuckDB (QuoteDB / Backtest)          │     │
 │  └─────────────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -435,7 +435,7 @@ QuasarX/
 
 ## 开发进度
 
-- [x] DuckDB 统一底层数据读写（QuoteDB、NodeIO、Backtest）
+- [x] DuckDB 统一底层数据读写（QuoteDB、Backtest）
 - [x] LangGraph 多 Agent 智能助手
 - [x] ONNX 通用推理节点（替代 LSTM/NARX）
 - [x] 节点注册中心架构

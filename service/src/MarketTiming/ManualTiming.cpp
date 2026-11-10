@@ -340,7 +340,9 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     const bool showBudget = budgetKnown && strategyCap > 0.0;
     if (showBudget) {
         htmlItem("分配资金", fmtAmount(strategyCap));
-        htmlItem("可用资金", fmtAmount(strategyAvailable));
+        // 明确标注"决策前"：下面的持仓市值/现金是决策后的口径，
+        // 两者混在一张表里会让读者以为账对不上。
+        htmlItem("可用资金（决策前）", fmtAmount(strategyAvailable));
     } else if (!budgetKnown) {
         htmlItem("资金账本", "未注册（无法核对预算）", true);
     }
@@ -393,14 +395,25 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     }
     html += "</div>";
 
-    // ── 组合市值 ──
+    // ── 组合估值（决策后口径）──
+    // 关键区分：这里的"持仓市值"只是股票部分，不含现金。
+    // 卖出不是把钱烧掉，是把市值转成现金 —— 只报市值不报现金，
+    // 读者看到"持仓市值 63 万 + 当日卖出亏 1.8 万"就会以为账对不上
+    // （实际账户还有 34 万现金，总资产约 97 万）。
     if (set._portfolioValue > 0.0) {
         auto portPct = showBudget ? fmt::format(" ({:.1f}% of capital)", set._portfolioValue / strategyCap * 100.0) : "";
         html += R"h(<div style="margin-top:12px;padding:12px 16px;background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border-radius:8px;border:1px solid #bae6fd;display:flex;justify-content:space-between;align-items:center;">)h";
-        html += R"h(<span style="font-size:13px;font-weight:500;color:#0369a1;">📈 组合总市值</span>)h";
+        html += R"h(<span style="font-size:13px;font-weight:500;color:#0369a1;">📈 持仓市值（决策后）</span>)h";
         html += fmt::format(R"h(<div><span style="font-size:18px;font-weight:700;color:#0c4a6e;">¥{}</span><span style="font-size:12px;color:#0284c7;margin-left:6px;">{}</span></div>)h",
                             fmtMoney(set._portfolioValue), portPct);
         html += "</div>";
+    }
+    // 现金与总资产：与上面的持仓市值同一时点（今日收盘价 + 今日决策全部执行）
+    if (set._projectedKnown) {
+        htmlItem("现金（决策后）", fmtAmount(set._projectedCash));
+        auto eqPct = showBudget ? fmt::format(" ({:.1f}% of capital)", set._projectedEquity / strategyCap * 100.0) : "";
+        htmlItem("总资产（决策后）", "¥" + fmtMoney(set._projectedEquity) + eqPct);
+        html += R"h(<div style="font-size:11px;color:#94a3b8;grid-column:1/-1;">口径：今日收盘价估值，假设今日决策全部成交。总资产 = 持仓市值 + 现金。</div>)h";
     }
     html += "</div>";
 

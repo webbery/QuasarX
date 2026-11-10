@@ -313,9 +313,15 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
         }
     }
 
-    // ── DuckDB node_io 日志（仅实盘模式，在 ConsumeSignals 之前）──
-    NODE_IO_LOG("execution", _id,
-        input["plan_changed"] = context.GetExecutionPlan()._hasChanged;
+    // ── 策略日志：执行计划与信号消费明细（仅实盘模式，在 ConsumeSignals 之前）──
+    if (_server->GetRunningMode() != RuningType::Backtest &&
+        DuckDBLogger::instance().is_initialized()) {
+        nlohmann::json ctx;
+        ctx["node_type"] = "execution";
+        ctx["node_id"] = std::to_string(_id);
+        ctx["epoch"] = context.GetEpoch();
+        ctx["plan_changed"] = context.GetExecutionPlan()._hasChanged;
+
         nlohmann::json plan_items_json = nlohmann::json::array();
         for (const auto& item : context.GetExecutionPlan()._items) {
             nlohmann::json item_json;
@@ -332,7 +338,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             item_json["is_emergency_close"] = item._isEmergencyClose;
             plan_items_json.push_back(item_json);
         }
-        input["plan_items"] = plan_items_json;
+        ctx["plan_items"] = plan_items_json;
 
         const auto& all_signals = context.getAllSignals();
         nlohmann::json signals_consumed_json = nlohmann::json::array();
@@ -354,9 +360,15 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 signals_skipped_json.push_back(sig_json);
             }
         }
-        output["signals_consumed"] = signals_consumed_json;
-        output["signals_skipped"] = signals_skipped_json;
-    );
+        ctx["signals_consumed"] = signals_consumed_json;
+        ctx["signals_skipped"] = signals_skipped_json;
+
+        STRATEGY_LOG_WITH_CTX(context.CurrentStrategy(), "INFO", ctx.dump(),
+            "[node:execution:{}] epoch={} plan_changed={} plan_items={} consumed={} skipped={}",
+            _id, context.GetEpoch(), context.GetExecutionPlan()._hasChanged,
+            context.GetExecutionPlan()._items.size(),
+            signals_consumed_json.size(), signals_skipped_json.size());
+    }
 
     // 为执行计划中尚无 signal 的标的创建 HOLD signal，
     // 确保 ManualTiming 能在日终邮件中展示所有标的的决策（含"保持不变"）

@@ -48,6 +48,22 @@ inline bool ShouldWarnDrop(const String& strategy, uint32_t nodeId) {
     return false;
 }
 
+/// 获取 symbol 对应的资金分配（从权重表计算）
+inline double getSymbolCapital(double targetCapital, const Map<symbol_t, double>& weights, symbol_t symbol) {
+    const auto it = weights.find(symbol);
+    return (it != weights.end()) ? targetCapital * it->second : 0.0;
+}
+
+/// 重新计算 plan._usedCapital（在 items 被修改后调用）
+inline void recalcUsedCapital(ExecutionPlan& plan) {
+    plan._usedCapital = 0.0;
+    for (const auto& item : plan._items) {
+        if (item._action == TradeAction::BUY) {
+            plan._usedCapital += item._targetValue;
+        }
+    }
+}
+
 }  // namespace
 
 PortfolioNode::PortfolioNode(Server* server)
@@ -69,6 +85,24 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
     // 是否允许做空
     if (params.contains("allowShort")) {
         _allowShort = params["allowShort"]["value"];
+    }
+
+    // 持仓数与敞口控制
+    if (params.contains("maxPositions")) {
+        _maxPositions = params["maxPositions"]["value"];
+        INFO("[PortfolioNode:{}] maxPositions = {}", _id, _maxPositions);
+    }
+    if (params.contains("maxSinglePct")) {
+        _maxSinglePct = params["maxSinglePct"]["value"];
+        INFO("[PortfolioNode:{}] maxSinglePct = {:.2f}%", _id, _maxSinglePct * 100);
+    }
+    if (params.contains("maxGrossPct")) {
+        _maxGrossPct = params["maxGrossPct"]["value"];
+        INFO("[PortfolioNode:{}] maxGrossPct = {:.2f}%", _id, _maxGrossPct * 100);
+    }
+    if (params.contains("maxNetPct")) {
+        _maxNetPct = params["maxNetPct"]["value"];
+        INFO("[PortfolioNode:{}] maxNetPct = {:.2f}%", _id, _maxNetPct * 100);
     }
 
     // 交易池 - 沿路径回溯获取上游标的池。
@@ -346,10 +380,16 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         }
     }
 
-    // ── DuckDB node_io 日志（仅实盘模式）──
-    NODE_IO_LOG("portfolio", _id,
-        input["capital"] = context.getAvailableCapital();
-        input["available_funds"] = targetCapital;
+    // ── 策略日志：本轮资金/决策/执行计划（仅实盘模式）──
+    if (_server->GetRunningMode() != RuningType::Backtest &&
+        DuckDBLogger::instance().is_initialized()) {
+        nlohmann::json ctx;
+        ctx["node_type"] = "portfolio";
+        ctx["node_id"] = std::to_string(_id);
+        ctx["epoch"] = context.GetEpoch();
+        ctx["capital"] = context.getAvailableCapital();
+        ctx["available_funds"] = targetCapital;
+
         nlohmann::json decisions_json = nlohmann::json::object();
         for (const auto& [sym, action] : decisions) {
             String action_str = "HOLD";
@@ -357,7 +397,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             else if (action == TradeAction::SELL) action_str = "SELL";
             decisions_json[get_symbol(sym)] = action_str;
         }
-        input["decisions"] = decisions_json;
+        ctx["decisions"] = decisions_json;
 
         nlohmann::json plan_arr = nlohmann::json::array();
         for (const auto& item : _lastPlan._items) {
@@ -374,24 +414,31 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             item_json["target_value"] = item._targetValue;
             plan_arr.push_back(item_json);
         }
-        nlohmann::json skipped = nlohmann::json::array();
-        output["plan_items"] = plan_arr;
-        output["skipped"] = skipped;
-
-        meta["sizing_method"] = _sizing_model ? _sizing_model->name() : "equal";
+        ctx["plan_items"] = plan_arr;
+        ctx["skipped"] = nlohmann::json::array();
+        ctx["sizing_method"] = _sizing_model ? _sizing_model->name() : "equal";
         if (!_weights.empty()) {
             nlohmann::json weights_json = nlohmann::json::object();
             for (const auto& [sym, w] : _weights) {
                 weights_json[get_symbol(sym)] = w;
             }
-            meta["sizing_weights"] = weights_json;
+            ctx["sizing_weights"] = weights_json;
         }
-    );
+
+        STRATEGY_LOG_WITH_CTX(context.CurrentStrategy(), "INFO", ctx.dump(),
+            "[node:portfolio:{}] epoch={} capital={} decisions={} plan_items={} sizing={}",
+            _id, context.GetEpoch(), context.getAvailableCapital(), decisions.size(),
+            _lastPlan._items.size(), _sizing_model ? _sizing_model->name() : "equal");
+    }
 
     return NodeProcessResult::Success;
 }
 
-// 合并后的 generatePlan：通过 adapter 注入持仓与价格来源
+// generatePlan 主流程：拆分为多个子函数
+// 1. generatePlanItems - 生成原始执行项
+// 2. applyCashGate - 资金闸门（仅 live 模式）
+// 3. applyPositionLimits - 持仓敞口限制（仅 live 模式）
+// 4. recalcUsedCapital - 重算已用资金
 ExecutionPlan PortfolioNode::generatePlan(
     const String& strategy,
     DataContext& context,
@@ -412,14 +459,34 @@ ExecutionPlan PortfolioNode::generatePlan(
         return plan;
     }
 
-    // 权重表由 sizing 模型保证覆盖全部建仓腿（PortfolioModel::compute 的契约）。
-    // 缺权重 = 模型没给这一腿预算 → 不建仓（0）。不再按决策数兜底：
-    // 那个分母含 HOLD / 平仓腿 / 已持仓不加仓的 BUY，会把预算摊给不交易的标的，
-    // 也会掩盖模型漏腿的 bug。
-    auto getSymbolCapital = [&](symbol_t symbol) -> double {
-        const auto it = _weights.find(symbol);
-        return (it != _weights.end()) ? targetCapital * it->second : 0.0;
-    };
+    // 1. 生成原始执行项（含价格验证、持仓状态判断、数量计算）
+    plan._items = generatePlanItems(strategy, context, decisions, targetCapital,
+                                     getQuotePrice, getPositionQuantity);
+
+    // 2+3. 资金闸门 + 持仓敞口限制（仅 live 模式）
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        applyCashGate(strategy, plan);
+        applyPositionLimits(strategy, plan);
+    }
+
+    // 4. 最终重算 usedCapital
+    recalcUsedCapital(plan);
+
+    return plan;
+}
+
+// ── generatePlan 子函数实现 ──
+
+// 1. 根据决策和持仓生成原始执行项
+Vector<ExecutionItem> PortfolioNode::generatePlanItems(
+    const String& strategy,
+    DataContext& context,
+    const Map<symbol_t, TradeAction>& decisions,
+    double targetCapital,
+    const std::function<double(symbol_t)>& getQuotePrice,
+    const std::function<int64_t(symbol_t)>& getPositionQuantity
+) {
+    Vector<ExecutionItem> items;
 
     for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;
@@ -438,14 +505,14 @@ ExecutionPlan PortfolioNode::generatePlan(
         }
 
         int64_t currentQty = getPositionQuantity(symbol);
+        const double capital = ::getSymbolCapital(targetCapital, _weights, symbol);
 
         if (item._action == TradeAction::HOLD) {
             if (currentQty > 0) {
                 item._quantity = static_cast<int>(currentQty);
                 item._limitPrice = price;
                 item._targetValue = item._quantity * price;
-                plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
+                items.push_back(item);
             }
         } else if (item._action == TradeAction::BUY) {
             if (currentQty < 0) {
@@ -454,25 +521,23 @@ ExecutionPlan PortfolioNode::generatePlan(
                 item._flag = 1; // 平仓
                 item._limitPrice = price;
                 item._targetValue = item._quantity * price;
-                plan._items.push_back(item);
+                items.push_back(item);
             } else if (currentQty > 0) {
                 // 已有多仓，跳过
                 if (ShouldWarnDrop(strategy, _id)) {
                     WARN("[PortfolioNode:{}@{}] BUY {} 未生成执行项：已持多仓 {} 股，不再加仓",
                          strategy, _id, get_symbol(item._symbol), currentQty);
                 }
-                continue;
             } else {
                 // 无仓，BUY = 开多
-                int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
+                int quantity = static_cast<int>(capital / price / 100) * 100;
                 if (quantity < 100) {
-                    // 预算不足一手 —— 这是"开仓被静默丢弃"最常见的原因：
-                    // targetCapital 为 0（现金为负被收敛）时两只腿都会走到这里
+                    // 预算不足一手
                     if (ShouldWarnDrop(strategy, _id)) {
                         WARN("[PortfolioNode:{}@{}] BUY {} 未生成执行项：数量 {} < 100 股"
                              "（预算={:.0f}, 价格={:.2f}）",
                              strategy, _id, get_symbol(item._symbol), quantity,
-                             getSymbolCapital(symbol), price);
+                             capital, price);
                     }
                     // 仍然更新 signal 的 quantity/price，让 ExecuteNode 知道此 signal 已被评估
                     auto* signal = context.getSignalBySymbol(symbol);
@@ -480,14 +545,13 @@ ExecutionPlan PortfolioNode::generatePlan(
                         signal->SetQuantity(quantity);
                         signal->SetPrice(price);
                     }
-                    continue;
+                } else {
+                    item._quantity = quantity;
+                    item._flag = 0; // 开仓
+                    item._limitPrice = price;
+                    item._targetValue = quantity * price;
+                    items.push_back(item);
                 }
-                item._quantity = quantity;
-                item._flag = 0; // 开仓
-                item._limitPrice = price;
-                item._targetValue = quantity * price;
-                plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
             }
         } else if (item._action == TradeAction::SELL) {
             if (currentQty > 0) {
@@ -496,28 +560,25 @@ ExecutionPlan PortfolioNode::generatePlan(
                 item._flag = 1; // 平仓
                 item._limitPrice = price;
                 item._targetValue = currentQty * price;
-                plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
+                items.push_back(item);
             } else if (currentQty == 0 && _allowShort) {
                 // 做空（开仓）
-                int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
+                int quantity = static_cast<int>(capital / price / 100) * 100;
                 if (quantity >= 100) {
                     item._quantity = quantity;
                     item._flag = 0; // 开仓
                     item._limitPrice = price;
                     item._targetValue = quantity * price;
-                    plan._items.push_back(item);
-                    plan._usedCapital += item._targetValue;
+                    items.push_back(item);
                 } else {
-                    // 预算不足一手时开空会被丢弃 —— 与 BUY 分支同一类丢单
+                    // 预算不足一手时开空会被丢弃
                     if (ShouldWarnDrop(strategy, _id)) {
                         WARN("[PortfolioNode:{}@{}] SELL(开空) {} 未生成执行项：数量 {} < 100 股"
                              "（预算={:.0f}, 价格={:.2f}）",
                              strategy, _id, get_symbol(item._symbol), quantity,
-                             getSymbolCapital(symbol), price);
+                             capital, price);
                     }
-                    // 与 BUY 分支一致：写回已评估的 quantity/price，
-                    // 让 ExecuteNode 知道这条 signal 已被评估过。
+                    // 写回已评估的 quantity/price
                     auto* signal = context.getSignalBySymbol(symbol);
                     if (signal) {
                         signal->SetQuantity(quantity);
@@ -525,8 +586,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                     }
                 }
             } else {
-                // 空仓且不允许做空 → SELL 无处落地，整条腿被丢弃。
-                // 配对策略里这会退化成"只有多头腿"的裸多仓位
+                // 空仓且不允许做空 → SELL 无处落地
                 if (ShouldWarnDrop(strategy, _id)) {
                     WARN("[PortfolioNode:{}@{}] SELL {} 未生成执行项：无持仓且未开启做空"
                          "（allowShort={}），该腿被丢弃",
@@ -536,81 +596,267 @@ ExecutionPlan PortfolioNode::generatePlan(
         }
     }
 
-    // 资金闸门：买入总额不应超过账本可用现金 + 本轮卖出回款。
-    // 超了说明预算口径与账本脱节（例如权益重复计入了已花掉的现金）。
-    // 这里做硬拦：
-    //   1. 现金为负（超额占用）→ 丢弃所有买入项（账户已超配，不能再开新仓）
-    //   2. 买入总额超过可用现金+卖出回款 → 按比例缩减买入（避免超买）
-    if (_server->GetRunningMode() != RuningType::Backtest) {
-        auto* broker = _server->GetBrokerSubSystem();
-        const double cash = broker ? broker->GetLedger()->GetAvailable(strategy) : 0.0;
+    return items;
+}
 
-        // 统计买入/卖出总额
-        double buyNotional = 0.0;
-        double sellNotional = 0.0;
-        for (const auto& item : plan._items) {
-            if (item._action == TradeAction::BUY) buyNotional += item._targetValue;
-            else if (item._action == TradeAction::SELL) sellNotional += item._targetValue;
-        }
+// 2. 资金闸门：确保买入总额不超过可用现金 + 卖出回款
+void PortfolioNode::applyCashGate(const String& strategy, ExecutionPlan& plan) {
+    auto* broker = _server->GetBrokerSubSystem();
+    const double cash = broker ? broker->GetLedger()->GetAvailable(strategy) : 0.0;
 
-        // 闸门 1：超额占用 → 禁止开新仓
-        if (cash < 0.0) {
-            if (buyNotional > 0.0) {
-                STRATEGY_WARN(strategy,
-                              "Cash is negative ({:.0f}), over-committed; dropping all {} BUY items "
-                              "(notional {:.0f}). Please verify sell proceeds before opening new positions.",
-                              cash, plan._items.size(), buyNotional);
-                // 丢弃所有买入项
-                Vector<ExecutionItem> filtered;
-                for (const auto& item : plan._items) {
-                    if (item._action != TradeAction::BUY) {
-                        filtered.push_back(item);
-                    }
+    // 统计买入/卖出总额
+    double buyNotional = 0.0;
+    double sellNotional = 0.0;
+    for (const auto& item : plan._items) {
+        if (item._action == TradeAction::BUY) buyNotional += item._targetValue;
+        else if (item._action == TradeAction::SELL) sellNotional += item._targetValue;
+    }
+
+    // 闸门 1：超额占用 → 禁止开新仓
+    if (cash < 0.0) {
+        if (buyNotional > 0.0) {
+            STRATEGY_WARN(strategy,
+                          "Cash is negative ({:.0f}), over-committed; dropping all {} BUY items "
+                          "(notional {:.0f}). Please verify sell proceeds before opening new positions.",
+                          cash, plan._items.size(), buyNotional);
+            // 丢弃所有买入项
+            Vector<ExecutionItem> filtered;
+            for (const auto& item : plan._items) {
+                if (item._action != TradeAction::BUY) {
+                    filtered.push_back(item);
                 }
-                plan._items = std::move(filtered);
-                // 重新计算 usedCapital
-                plan._usedCapital = 0.0;
-                for (const auto& item : plan._items) {
-                    if (item._action == TradeAction::BUY) {
-                        plan._usedCapital += item._targetValue;
-                    }
+            }
+            plan._items = std::move(filtered);
+        }
+    }
+    // 闸门 2：超预算 → 按比例缩减
+    else if (buyNotional > cash + sellNotional + 1.0) {
+        const double budget = cash + sellNotional;
+        const double scale = budget / buyNotional;
+        STRATEGY_WARN(strategy,
+                      "Plan buy notional {:.0f} exceeds budget {:.0f} (cash {:.0f} + sell {:.0f}); "
+                      "scaling BUY items by {:.2f}",
+                      buyNotional, budget, cash, sellNotional, scale);
+        // 按比例缩减每个买入项的数量（向下取整到 100 股）
+        for (auto& item : plan._items) {
+            if (item._action == TradeAction::BUY && item._limitPrice > 0.0) {
+                const int64_t newQty = static_cast<int64_t>(
+                    std::floor(item._quantity * scale / 100.0)) * 100;
+                if (newQty < 100) {
+                    // 缩减后不足一手，丢弃该项
+                    item._action = TradeAction::HOLD;
+                    item._quantity = 0;
+                } else {
+                    item._quantity = static_cast<int>(newQty);
+                    item._targetValue = newQty * item._limitPrice;
                 }
             }
         }
-        // 闸门 2：超预算 → 按比例缩减
-        else if (buyNotional > cash + sellNotional + 1.0) {
-            const double budget = cash + sellNotional;
-            const double scale = budget / buyNotional;
+    }
+}
+
+// 3. 持仓数与敞口控制
+void PortfolioNode::applyPositionLimits(const String& strategy, ExecutionPlan& plan) {
+    auto* broker = _server->GetBrokerSubSystem();
+    if (!broker) return;
+
+    auto* capital = broker->GetStrategyCapital(strategy);
+    if (!capital) return;
+
+    // 统计当前持仓
+    const auto& positions = capital->getPositions().getAll();
+    int currentLongCount = 0;
+    int currentShortCount = 0;
+    double currentLongValue = 0.0;
+    double currentShortValue = 0.0;
+
+    for (const auto& [sym, pos] : positions) {
+        if (pos._quantity > 0) {
+            ++currentLongCount;
+            currentLongValue += pos.getMarketValue();
+        } else if (pos._quantity < 0) {
+            ++currentShortCount;
+            currentShortValue += std::abs(pos.getMarketValue());
+        }
+    }
+
+    const double equity = capital->getEquity();
+    if (equity <= 0.0) return;
+
+    // 1. 检查持仓数上限
+    if (_maxPositions > 0) {
+        int newLongCount = 0;
+        int newShortCount = 0;
+        for (const auto& item : plan._items) {
+            if (item._action == TradeAction::BUY && item._flag == 0 && item._quantity > 0) {
+                auto it = positions.find(item._symbol);
+                if (it == positions.end() || it->second._quantity <= 0) {
+                    ++newLongCount;
+                }
+            } else if (item._action == TradeAction::SELL && item._flag == 0 && _allowShort && item._quantity > 0) {
+                auto it = positions.find(item._symbol);
+                if (it == positions.end() || it->second._quantity >= 0) {
+                    ++newShortCount;
+                }
+            }
+        }
+
+        const int totalPositions = currentLongCount + currentShortCount + newLongCount + newShortCount;
+        if (totalPositions > _maxPositions) {
             STRATEGY_WARN(strategy,
-                          "Plan buy notional {:.0f} exceeds budget {:.0f} (cash {:.0f} + sell {:.0f}); "
-                          "scaling BUY items by {:.2f}",
-                          buyNotional, budget, cash, sellNotional, scale);
-            // 按比例缩减每个买入项的数量（向下取整到 100 股）
-            for (auto& item : plan._items) {
-                if (item._action == TradeAction::BUY && item._limitPrice > 0.0) {
-                    const int64_t newQty = static_cast<int64_t>(
-                        std::floor(item._quantity * scale / 100.0)) * 100;
+                "Position count {} exceeds max {}, dropping new positions",
+                totalPositions, _maxPositions);
+            Vector<ExecutionItem> filtered;
+            for (const auto& item : plan._items) {
+                if (item._flag != 0) {
+                    filtered.push_back(item);
+                } else {
+                    if (ShouldWarnDrop(strategy, _id)) {
+                        WARN("[PortfolioNode:{}] Dropped open position for {} (maxPositions={})",
+                             _id, get_symbol(item._symbol), _maxPositions);
+                    }
+                }
+            }
+            plan._items = std::move(filtered);
+        }
+    }
+
+    // 2. 检查单标的敞口上限
+    if (_maxSinglePct < 1.0) {
+        const double maxSingleValue = equity * _maxSinglePct;
+        for (auto& item : plan._items) {
+            if (item._action == TradeAction::BUY && item._flag == 0 && item._quantity > 0) {
+                double currentValue = 0.0;
+                auto it = positions.find(item._symbol);
+                if (it != positions.end() && it->second._quantity > 0) {
+                    currentValue = it->second.getMarketValue();
+                }
+                const double newValue = currentValue + item._targetValue;
+                if (newValue > maxSingleValue) {
+                    const double allowed = std::max(0.0, maxSingleValue - currentValue);
+                    const int64_t newQty = static_cast<int64_t>(allowed / item._limitPrice / 100) * 100;
                     if (newQty < 100) {
-                        // 缩减后不足一手，丢弃该项
                         item._action = TradeAction::HOLD;
                         item._quantity = 0;
+                        item._targetValue = 0.0;
+                        if (ShouldWarnDrop(strategy, _id)) {
+                            WARN("[PortfolioNode:{}] Dropped {} (single exposure {:.2f}% > {:.2f}%)",
+                                 _id, get_symbol(item._symbol),
+                                 newValue / equity * 100, _maxSinglePct * 100);
+                        }
                     } else {
                         item._quantity = static_cast<int>(newQty);
                         item._targetValue = newQty * item._limitPrice;
+                        if (ShouldWarnDrop(strategy, _id)) {
+                            WARN("[PortfolioNode:{}] Scaled {} to {} shares (single exposure limit)",
+                                 _id, get_symbol(item._symbol), newQty);
+                        }
                     }
-                }
-            }
-            // 重新计算 usedCapital
-            plan._usedCapital = 0.0;
-            for (const auto& item : plan._items) {
-                if (item._action == TradeAction::BUY) {
-                    plan._usedCapital += item._targetValue;
                 }
             }
         }
     }
 
-    return plan;
+    // 3. 检查总敞口上限
+    if (_maxGrossPct < 1.0) {
+        const double maxGrossValue = equity * _maxGrossPct;
+        double totalGrossValue = currentLongValue + currentShortValue;
+
+        double newGrossValue = 0.0;
+        for (const auto& item : plan._items) {
+            if (item._action == TradeAction::BUY && item._flag == 0 && item._quantity > 0) {
+                newGrossValue += item._targetValue;
+            } else if (item._action == TradeAction::SELL && item._flag == 0 && _allowShort && item._quantity > 0) {
+                newGrossValue += item._targetValue;
+            }
+        }
+
+        if (totalGrossValue + newGrossValue > maxGrossValue) {
+            const double scale = (maxGrossValue - totalGrossValue) / newGrossValue;
+            if (scale <= 0.0) {
+                STRATEGY_WARN(strategy,
+                    "Gross exposure {:.2f}% already at limit {:.2f}%, dropping all new positions",
+                    totalGrossValue / equity * 100, _maxGrossPct * 100);
+                Vector<ExecutionItem> filtered;
+                for (const auto& item : plan._items) {
+                    if (item._flag != 0) filtered.push_back(item);
+                }
+                plan._items = std::move(filtered);
+            } else {
+                STRATEGY_WARN(strategy,
+                    "Gross exposure {:.2f}% + new {:.2f}% > limit {:.2f}%, scaling by {:.2f}",
+                    totalGrossValue / equity * 100, newGrossValue / equity * 100, _maxGrossPct * 100, scale);
+                for (auto& item : plan._items) {
+                    if (item._flag == 0 && (item._action == TradeAction::BUY ||
+                        (item._action == TradeAction::SELL && _allowShort))) {
+                        const int64_t newQty = static_cast<int64_t>(
+                            item._quantity * scale / 100) * 100;
+                        if (newQty < 100) {
+                            item._action = TradeAction::HOLD;
+                            item._quantity = 0;
+                            item._targetValue = 0.0;
+                        } else {
+                            item._quantity = static_cast<int>(newQty);
+                            item._targetValue = newQty * item._limitPrice;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. 检查净敞口上限
+    if (_maxNetPct < 1.0) {
+        const double maxNetValue = equity * _maxNetPct;
+        const double currentNetValue = currentLongValue - currentShortValue;
+
+        double newNetValue = 0.0;
+        for (const auto& item : plan._items) {
+            if (item._action == TradeAction::BUY && item._flag == 0 && item._quantity > 0) {
+                newNetValue += item._targetValue;
+            } else if (item._action == TradeAction::SELL && item._flag == 0 && _allowShort && item._quantity > 0) {
+                newNetValue -= item._targetValue;
+            }
+        }
+
+        if (std::abs(currentNetValue + newNetValue) > maxNetValue) {
+            const double scale = (maxNetValue - std::abs(currentNetValue)) / std::abs(newNetValue);
+            if (scale <= 0.0) {
+                STRATEGY_WARN(strategy,
+                    "Net exposure {:.2f}% already at limit {:.2f}%, dropping all new positions",
+                    currentNetValue / equity * 100, _maxNetPct * 100);
+                Vector<ExecutionItem> filtered;
+                for (const auto& item : plan._items) {
+                    if (item._flag != 0) filtered.push_back(item);
+                }
+                plan._items = std::move(filtered);
+            } else {
+                STRATEGY_WARN(strategy,
+                    "Net exposure {:.2f}% + new {:.2f}% > limit {:.2f}%, scaling by {:.2f}",
+                    currentNetValue / equity * 100, newNetValue / equity * 100, _maxNetPct * 100, scale);
+                for (auto& item : plan._items) {
+                    if (item._flag == 0 && (item._action == TradeAction::BUY ||
+                        (item._action == TradeAction::SELL && _allowShort))) {
+                        const int64_t newQty = static_cast<int64_t>(
+                            item._quantity * scale / 100) * 100;
+                        if (newQty < 100) {
+                            item._action = TradeAction::HOLD;
+                            item._quantity = 0;
+                            item._targetValue = 0.0;
+                        } else {
+                            item._quantity = static_cast<int>(newQty);
+                            item._targetValue = newQty * item._limitPrice;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 成员函数版本（调用匿名命名空间的 inline 版本）
+void PortfolioNode::recalcUsedCapital(ExecutionPlan& plan) {
+    ::recalcUsedCapital(plan);
 }
 
 // ── 定仓组原子下单：开仓 all-or-none ──

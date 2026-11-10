@@ -49,7 +49,6 @@
 #include "Handler/StrategyTradeHandler.h"
 #include "Handler/StockHandler.h"
 #include "Handler/StrategyLogHandler.h"
-#include "Handler/NodeIOHandler.h"
 #include "Handler/PythonRunnerHandler.h"
 #include "Handler/MLHandler.h"
 #include "Handler/HMMHandler.h"
@@ -226,7 +225,6 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_SR              "/sr/run"
 #define API_CAPITAL_STATUS  "/server/capital"
 #define API_STRATEGY_LOGS   "/strategy/logs"
-#define API_NODE_IO         "/node/io"
 #define API_PYTHON_RUNNER   "/python/run"
 #define API_QUOTE           "/quote"
 #define API_QUOTE_DATA      "/quote/data"
@@ -445,8 +443,6 @@ void Server::Regist() {
     REGIST_GET(API_STRATEGY_NODE);
     REGIST_GET(API_STRATEGY_LOGS);
     REGIST_DEL(API_STRATEGY_LOGS);
-    REGIST_GET(API_NODE_IO);
-    REGIST_DEL(API_NODE_IO);
     REGIST_POST(API_PYTHON_RUNNER);
     REGIST_POST(API_QUOTE);
     REGIST_GET(API_QUOTE);
@@ -1277,12 +1273,25 @@ void Server::Schedules(time_t t) {
                            + symbolsStr + "\" --download --data-dir data";
                 String output;
                 bool ok = RunCommand(cmd, output);
-                // 导入 CSV 到 finance.db（无论下载是否成功，尝试导入已有文件）
                 String dbPath = _config->GetDatabasePath();
-                int imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend");
+
+                // 下载失败就不导入。此前"无论下载是否成功都尝试导入已有文件"，
+                // 会把目录里遗留的旧 CSV（还包含池外标的）写进 dividend 表，
+                // 随后的复权重算按这些错误事件算因子，原始价被放大成
+                // 累计复权倍数，行情特征随之失真。
+                int imported = 0;
+                if (!ok) {
+                    WARN("[Schedules] fetch_dividend_data.py 执行失败，跳过分红导入与复权重算");
+                } else {
+                    // 只导入名单内的标的：目录里可能躺着别的任务留下的 CSV
+                    imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend", allSymbols);
+                    if (imported < 0) {
+                        WARN("[Schedules] 分红导入有 {} 个文件失败，事件表不完整", -imported);
+                    }
+                }
 
                 if (!ok) {
-                    String msg = fmt::format("fetch_dividend_data.py 执行失败，导入 {} 行", imported);
+                    String msg = fmt::format("fetch_dividend_data.py 执行失败，已跳过分红导入与复权重算");
                     WARN("[Schedules] {}", msg);
                     SendSSE(sseSock, "schedule_error", {
                         {"task", "fetch_dividend_data.py"},
@@ -1686,7 +1695,6 @@ void Server::InitHandlers() {
     RegistHandler(API_ANALYSIS_REGRESSION, RegressionHandler);
     RegistHandler(API_SR, SRHandler);
     RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
-    RegistHandler(API_NODE_IO, NodeIOHandler);
     RegistHandler(API_PYTHON_RUNNER, PythonRunnerHandler);
     RegistHandler(API_QUOTE, QuoteDownloadHandler);
     RegistHandler(API_QUOTE_DATA, QuoteDataHandler);

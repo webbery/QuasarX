@@ -135,7 +135,7 @@ public:
     /// 计算权重（占预算比例），覆盖全部建仓腿
     Map<symbol_t, double> compute(PortfolioContext& ctx);
 
-    /// 诊断名（NODE_IO_LOG 用）
+    /// 诊断名（组合模型日志用）
     virtual const char* name() const = 0;
 
     /// 本模型对应的方法枚举

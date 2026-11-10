@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <thread>
 #include <set>
+#include <sstream>
 #include <boost/algorithm/string/join.hpp>
 
 namespace fs = std::filesystem;
@@ -161,8 +162,27 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
         }
 
-        // 导入 CSV 到 dividend 表
-        int total = financeDB.importAllDividends(data_dir + "/dividend");
+        // 导入 CSV 到 dividend 表。
+        // 只导入本次请求的标的：目录里可能躺着别的任务留下的 CSV，
+        // 导入池外标的的分红事件会让后续复权重算按错误事件算因子。
+        Set<String> scope;
+        {
+            std::stringstream ss(symbols);
+            std::string token;
+            while (std::getline(ss, token, ',')) {
+                auto t = token;
+                auto sp = t.find_first_of(" \t");
+                if (sp != std::string::npos) t = t.substr(0, sp);
+                if (!t.empty()) scope.insert(toInternalSymbol(t));
+            }
+        }
+        int total = 0;
+        if (!ok) {
+            // 下载失败不导入：残留 CSV 是旧数据，导入后会让复权因子错乱
+            WARN("[DividendHandler] 下载失败，跳过分红导入");
+        } else {
+            total = financeDB.importAllDividends(data_dir + "/dividend", scope);
+        }
 
         SendSSE(sse_sock, "dividend_download", {
             {"status", "completed"},

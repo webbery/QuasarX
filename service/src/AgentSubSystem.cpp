@@ -1350,7 +1350,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     for (auto node: flow._graph) {
         String nodeType = "unknown";
         if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "QuoteInputNode";
-        else if (dynamic_cast<SignalNode*>(node)) nodeType = "SignalNode";
+        else if (dynamic_cast<SignalNodeBase*>(node)) nodeType = "SignalNodeBase";
         else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
         else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
         else if (dynamic_cast<FunctionNode*>(node)) nodeType = "FunctionNode";
@@ -1373,22 +1373,23 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             }
         }
 
-        auto nodeStart = std::chrono::steady_clock::now();
-        auto result = node->Process(strategy, context);
-        [[maybe_unused]] double nodeMs = ElapsedMs(nodeStart);
-
         DEBUG_GRAPH_PERF(
+            auto nodeStart = std::chrono::steady_clock::now();
+        )
+        auto result = node->Process(strategy, context);
+        DEBUG_GRAPH_PERF(
+            double nodeMs = ElapsedMs(nodeStart);
             // 累计节点耗时，供回测结束后的瓶颈分析（mutable：RunGraph 持 const flow 引用）
             auto& perfStat = flow._perf.nodes[node->id()];
             perfStat.type = nodeType;
             perfStat.calls++;
             perfStat.totalMs += nodeMs;
             if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
+            if (epch % 200 == 0) {
+                DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
+                        epch, node->id(), nodeType, (int)result, nodeMs);
+            }
         )
-        if (epch % 200 == 0) {
-            DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
-                       epch, node->id(), nodeType, (int)result, nodeMs);
-        }
 
         switch (result) {
             case NodeProcessResult::Success:
@@ -1518,7 +1519,7 @@ bool FlowSubsystem::RunTrainingCollect(
     INFO("[TrainingCollect] Backtest context created: runId={}", runId);
 
     bool success = false;
-    std::thread worker([strategy, runId, &upstreamGraph, this, exchangeMgr, exchange, &outCollected, &outDates, &success, onProgress]() {
+    std::thread worker([strategy, runId, &upstreamGraph, this, exchange, &outCollected, &outDates, &success, onProgress]() {
         DataContext context(strategy, _handle);
         context.setBacktestRunId(runId);
 
@@ -1545,18 +1546,27 @@ bool FlowSubsystem::RunTrainingCollect(
                     break;
                 }
                 context.SetEpoch(++epoch);
+                bool skipLoop = false;
                 for (auto node : upstreamGraph) {
                     auto result = node->Process(strategy, context);
-                    if (result == NodeProcessResult::Finished) {
+                    switch (result) {
+                    case NodeProcessResult::Finished:
                         INFO("[TrainingCollect] Node {} returned Finished at epoch {}", node->id(), epoch);
                         running = false;
+                        skipLoop = true;
                         break;
-                    }
-                    if (result == NodeProcessResult::Error) {
+                    case NodeProcessResult::Error:
                         WARN("[TrainingCollect] Node {} error at epoch {}", node->id(), epoch);
                         running = false;
+                        skipLoop = true;
                         break;
+                    case NodeProcessResult::Skip:
+                        skipLoop = true;
+                        break;
+                    default:
+                    break;
                     }
+                    if (skipLoop) break;
                 }
                 // 每 50 个 epoch 回调一次进度（避免锁开销）
                 if (onProgress && epoch % 50 == 0) {
@@ -1972,7 +1982,12 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
                 if (success) {
                     // 计算今日组合市值（broker 持仓 + 今日决策 → 最新收盘价估值）
+                    // 同时记下今日买卖金额，供后面推演"决策后现金/总资产"——
+                    // 卖出不是把钱烧掉，是把持仓市值转成现金。此前只报市值不报现金，
+                    // 读者会把回款凭空蒸发，误以为账对不上。
                     double portfolioValue = 0.0;
+                    double tradeBuyValue = 0.0;
+                    double tradeSellValue = 0.0;
                     if (manualTiming) {
                         auto* broker = _handle->GetBrokerSubSystem();
                         if (broker) {
@@ -1983,10 +1998,13 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                                 if (pos._quantity > 0) updatedPositions[sym] = pos._quantity;
                             }
                             for (const auto& [sym, d] : manualTiming->getDecisions()) {
-                                if (d._action == TradeAction::BUY)
+                                if (d._action == TradeAction::BUY) {
                                     updatedPositions[sym] += d._quantity;
-                                else if (d._action == TradeAction::SELL)
+                                    tradeBuyValue += d._quantity * d._price;
+                                } else if (d._action == TradeAction::SELL) {
                                     updatedPositions[sym] = 0;
+                                    tradeSellValue += d._quantity * d._price;
+                                }
                             }
                             // 用最新收盘价估值
                             for (const auto& [sym, pos] : updatedPositions) {
@@ -2052,6 +2070,58 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             }
                         }
 
+                        // 账本盯市：用今天的收盘价重估持仓，并立刻落盘。
+                        // 不做这一步，账本里的 current_price / equity 会一直停在上一次
+                        // 写盘时的价格（实测：11-09 的账本仍用 11-06 的 44.37 / 86.60 / 32.53，
+                        // 与当日收盘差 9096 元），于是"权益"和邮件里的持仓市值对不上。
+                        if (auto* broker = _handle->GetBrokerSubSystem()) {
+                            if (auto* capital = broker->GetStrategyCapital(strategy)) {
+                                int marked = 0;
+                                Vector<String> unmarked;
+                                for (const auto& [sym, pos] : capital->getPositions().getAll()) {
+                                    if (pos._quantity == 0) continue;
+                                    auto it = closePrices.find(sym);
+                                    if (it == closePrices.end() || it->second <= 0.0) {
+                                        // 持仓不在策略池内或当日没有收盘价：
+                                        // 保持旧标记价不动，但必须说出来，
+                                        // 否则账本里这一项的权益是过期的、无人知晓
+                                        unmarked.push_back(get_symbol(sym));
+                                        continue;
+                                    }
+                                    capital->updatePrice(sym, it->second);
+                                    ++marked;
+                                }
+                                if (!unmarked.empty()) {
+                                    String names;
+                                    for (const auto& s : unmarked) {
+                                        if (!names.empty()) names += ",";
+                                        names += s;
+                                    }
+                                    WARN("[StartDaily] {} position(s) have no today's close price, "
+                                         "kept stale mark: {}", unmarked.size(), names);
+                                }
+                                if (marked > 0) {
+                                    // 盯市后重读权益：getEquity() 用最新 current_price 重算
+                                    equity = capital->getEquity();
+                                    available = capital->getAvailable();
+                                    broker->PersistLedger();
+                                    INFO("[StartDaily] Re-marked {} position(s) at today's close; "
+                                         "equity={:.2} cash={:.2}", marked, equity, available);
+                                }
+                            }
+                        }
+
+                        // 决策后的现金与总资产：账本可用资金 + 卖出回款 − 买入支出。
+                        // 与 portfolioValue（决策后持仓市值）同一时点、同一套价格。
+                        double projectedCash = 0.0;
+                        double projectedEquity = 0.0;
+                        bool projectedKnown = false;
+                        if (budgetKnown) {
+                            projectedCash = available + tradeSellValue - tradeBuyValue;
+                            projectedEquity = portfolioValue + projectedCash;
+                            projectedKnown = true;
+                        }
+
                         // 两融配置：从策略 margin 段读取
                         MarginConfig marginCfg = GetStrategyMarginConfig(strategy);
                         set = BuildDecisionSet(
@@ -2065,7 +2135,9 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             marginCfg._initialMarginRatio,
                             marginCfg._maintenanceMarginRatio,
                             marginCfg._warningRatio,
-                            marginCfg._liquidationRatio);
+                            marginCfg._liquidationRatio,
+                            /*accrualDays=*/1.0,
+                            projectedCash, projectedEquity, projectedKnown);
 
                         // 构建调试报告 + 发送邮件/SSE
                         EodDebugSpec debugSpec;

@@ -313,11 +313,17 @@ def save_csv(df: pd.DataFrame, filepath: str, use_timestamp: bool = False):
 # ============================================================
 
 def download_single_data(symbol, data_dir, freq, start_date, end_date, asset_type="etf"):
-    """下载后复权 + 不复权数据"""
+    """下载后复权 + 不复权数据
+
+    不复权(org)是原始价，是下游导入 close 列的唯一来源，必须拿到。
+    只有后复权、没有不复权时，导入层曾把后复权价当成原始价写进 close，
+    原始价被放大成累计复权因子倍（27.45 → 429.40，×15.64），
+    污染所有滚动窗口特征。因此这里缺 org 就删掉 hfq 并返回失败。
+    """
     bs_code = convert_to_baostock_code(symbol)
     print(f"\n[{bs_code}] 下载 {freq}...")
 
-    success = False
+    written = {}  # subdir -> 文件路径
 
     for adjust_flag, subdir, label in [
         ("1", f"{asset_type}_hfq", "后复权"),
@@ -346,12 +352,25 @@ def download_single_data(symbol, data_dir, freq, start_date, end_date, asset_typ
         filename = f"{csv_name}.csv"
 
         # 只保存 Python 格式 (YYYY-MM-DD HH:MM:SS)
-        save_csv(df, os.path.join(out_dir, filename), use_timestamp=False)
+        path = os.path.join(out_dir, filename)
+        save_csv(df, path, use_timestamp=False)
+        written[subdir] = path
 
-        success = True
         time.sleep(0.5)
 
-    return success
+    org_subdir = f"{asset_type}_org"
+    if org_subdir not in written:
+        # 没有不复权数据 = 没有原始价。删掉后复权残留，
+        # 绝不让导入层把它当成原始价。
+        for path in written.values():
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        print(f"  [{bs_code}] 缺不复权数据，已丢弃后复权残留，导入层将跳过该标的")
+        return False
+
+    return True
 
 
 # ============================================================
@@ -392,22 +411,30 @@ def main():
     lg = bs.login()
     if lg.error_code != '0':
         print(f"登录失败: {lg.error_msg}")
-        return
+        sys.exit(2)
     print("登录成功")
 
     try:
-        ok_count = 0
+        succeeded = []
         for sym in symbols:
             if download_single_data(
                 sym, args.data_dir, args.freq, args.start, args.end, args.asset_type
             ):
-                ok_count += 1
+                succeeded.append(sym)
             if len(symbols) > 1:
                 time.sleep(1)
 
+        ok_count = len(succeeded)
         print(f"\n完成: {ok_count}/{len(symbols)} 成功")
         if args.freq != "daily" and not args.start:
             print(f"[INFO] 分钟数据默认回溯 {MINUTE_LOOKBACK_YEARS} 年（可用 --start 指定更早）")
+
+        # 失败必须以非零退出码告诉调用方：C++ 侧据此判定"下载失败"，
+        # 否则残留 CSV / 半份数据会被当成正常结果继续走导入与复权重算。
+        if ok_count < len(symbols):
+            failed = [s for s in symbols if s not in succeeded]
+            print(f"[ERROR] {len(failed)} 个标的下载失败: {', '.join(failed)}")
+            sys.exit(2)
 
     finally:
         bs.logout()

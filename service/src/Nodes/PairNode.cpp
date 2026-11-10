@@ -2,6 +2,7 @@
 #include "DataContext.h"
 #include "Nodes/Portfolio/PortfolioModel.h"
 #include "Util/log.h"
+#include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "std_header.h"
 #include <cmath>
@@ -12,6 +13,9 @@ namespace {
 // 止损后策略要求 |z| 回落到 exitZ 以内才允许重开，这段"什么都不做"的状态过去
 // 既不写 signal 也不写日志 —— 排查"为什么这里没开仓"时完全无从下手。
 thread_local int t_blockedBars = 0;
+
+// 被 β/体制过滤挡掉的入场次数（每次 run 复位），只用于首条 INFO 提示
+thread_local int t_filteredEntries = 0;
 
 }  // namespace
 
@@ -42,6 +46,34 @@ bool PairNode::Init(const nlohmann::json& config) {
     if (config["params"].contains("zField")) {
         _zField = (String)config["params"]["zField"]["value"];
     }
+    if (config["params"].contains("weightMode")) {
+        _weightMode = to_lower((String)config["params"]["weightMode"]["value"]);
+    }
+    if (config["params"].contains("betaMin")) {
+        _betaMin = config["params"]["betaMin"]["value"];
+    }
+    if (config["params"].contains("betaMax")) {
+        _betaMax = config["params"]["betaMax"]["value"];
+    }
+    if (config["params"].contains("betaCvMax")) {
+        _betaCvMax = config["params"]["betaCvMax"]["value"];
+    }
+    if (config["params"].contains("betaCvWindow")) {
+        _betaCvWindow = std::max<int32_t>(10, config["params"]["betaCvWindow"]["value"]);
+    }
+    if (config["params"].contains("regimeTrendMax")) {
+        _regimeTrendMax = config["params"]["regimeTrendMax"]["value"];
+    }
+    if (config["params"].contains("regimeTrendWindow")) {
+        _regimeTrendWindow = std::max<int32_t>(1, config["params"]["regimeTrendWindow"]["value"]);
+    }
+    if (config["params"].contains("regimeSigmaWindow")) {
+        _regimeSigmaWindow = std::max<int32_t>(5, config["params"]["regimeSigmaWindow"]["value"]);
+    }
+    INFO("[PairNode:{}] weightMode={} beta∈[{},{}] betaCvMax={} "
+         "regimeTrendMax={} (win={}, sigma={})",
+         _id, _weightMode, _betaMin, _betaMax, _betaCvMax,
+         _regimeTrendMax, _regimeTrendWindow, _regimeSigmaWindow);
 
     if (_exitZ >= _entryZ) {
         WARN("[PairNode:{}] exitZ({}) >= entryZ({}), 入场后立即触发出场条件",
@@ -60,6 +92,7 @@ void PairNode::Prepare(const String& strategy, DataContext& context) {
     _barsHeld = 0;
     _blocked = false;
     t_blockedBars = 0;
+    t_filteredEntries = 0;
     // 往返统计也要复位 —— 否则上一次回测的尾部统计会污染这一次
     _stats = PairTradeStats{};
     _in_trade = false;
@@ -76,8 +109,9 @@ bool PairNode::readLast(DataContext& context, const String& key, double& out) {
 
 bool PairNode::readPrevPrice(DataContext& context, const String& symbol, double& out) {
     // 成交价取的是**上一根 bar** 的收盘价，成交发生在本根 bar
-    // （PortfolioNode 的 getQuotePrice → GetPrimitivePrice(symbol, curIndex-1)）。
+    // （PortfolioNode 的 getQuotePrice → GetPrimitivePrice）。
     // 统计盈亏必须同一口径 → 取序列的倒数第二个值。
+    // 撮合/估值一律用**原始价**（项目约定：分析用后复权价，撮合用原始价）。
     for (const char* prop : {"org_close_w", "close"}) {
         const String key = symbol + "." + prop;
         if (!context.exist(key)) continue;
@@ -93,6 +127,124 @@ bool PairNode::readPrevPrice(DataContext& context, const String& symbol, double&
     return false;
 }
 
+bool PairNode::readPrevAdjPrice(DataContext& context, const String& symbol, double& out) {
+    // 分析价格空间：后复权收盘价（价差/β/配腿权重的基准）
+    for (const char* prop : {"close", "close_w"}) {
+        const String key = symbol + "." + prop;
+        if (!context.exist(key)) continue;
+        const auto& var = context.get(key);
+        const auto* vec = std::get_if<Vector<double>>(&var);
+        if (vec == nullptr || vec->size() < 2) continue;
+        const double v = (*vec)[vec->size() - 2];
+        if (std::isfinite(v) && v > 0.0) {
+            out = v;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PairNode::readLastN(DataContext& context, const String& key, int32_t n, Vector<double>& out) {
+    if (n <= 0 || !context.exist(key)) return false;
+    const auto& var = context.get(key);
+    const auto* vec = std::get_if<Vector<double>>(&var);
+    if (vec == nullptr || vec->empty()) return false;
+    const int32_t count = std::min<int32_t>(n, static_cast<int32_t>(vec->size()));
+    out.clear();
+    out.reserve(count);
+    const size_t start = vec->size() - static_cast<size_t>(count);
+    for (size_t i = start; i < vec->size(); ++i) {
+        out.push_back((*vec)[i]);
+    }
+    return true;
+}
+
+bool PairNode::readLastPrice(DataContext& context, const String& symbol, bool preferAdj,
+                             double& out) {
+    static const char* kOrgProps[] = {"org_close", "close", "org_close_w", "close_w"};
+    static const char* kAdjProps[] = {"close", "org_close", "close_w", "org_close_w"};
+    const char** props = preferAdj ? kAdjProps : kOrgProps;
+    for (int i = 0; i < 4; ++i) {
+        const String key = symbol + "." + props[i];
+        if (!context.exist(key)) continue;
+        const auto& var = context.get(key);
+        const auto* vec = std::get_if<Vector<double>>(&var);
+        if (vec == nullptr || vec->empty()) continue;
+        const double v = vec->back();
+        if (std::isfinite(v) && v > 0.0) {
+            out = v;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PairNode::entryFiltersPass(DataContext& context, double betaRaw) const {
+    // ── β 有效性 / 区间 ──
+    if (!std::isfinite(betaRaw) || betaRaw <= 0.0) {
+        return false;   // 负 β / 未就绪：价差没有经济含义，禁止开仓
+    }
+    if (_betaMin > 0.0 && betaRaw < _betaMin) return false;
+    if (_betaMax > 0.0 && betaRaw > _betaMax) return false;
+
+    // ── β 稳定性：滚动 CV = std/mean ──
+    if (_betaCvMax > 0.0) {
+        Vector<double> hist;
+        if (!readLastN(context, get_symbol(_legA) + ".pair_beta", _betaCvWindow, hist)) {
+            return false;
+        }
+        double sum = 0.0, sumSq = 0.0;
+        int32_t cnt = 0;
+        for (double v : hist) {
+            if (!std::isfinite(v)) continue;
+            sum += v;
+            sumSq += v * v;
+            ++cnt;
+        }
+        if (cnt < 10) return false;
+        const double mean = sum / cnt;
+        const double var = sumSq / cnt - mean * mean;
+        if (mean <= 1e-9 || var < 0.0) return false;
+        const double cv = std::sqrt(var) / mean;
+        if (cv > _betaCvMax) return false;
+    }
+
+    // ── 体制过滤：价差自身的趋势强度 ──
+    // |S_t - S_{t-k}| / σ_S > threshold ⇒ 价差处在单边趋势里，
+    // 均值回复的入场假设不成立（2025–2026 的亏损都发生在这种区间）。
+    if (_regimeTrendMax > 0.0) {
+        const int32_t need = std::max(_regimeSigmaWindow, _regimeTrendWindow + 1);
+        Vector<double> spread;
+        if (!readLastN(context, get_symbol(_legA) + ".pair_spread", need, spread)) {
+            return false;
+        }
+        if (static_cast<int32_t>(spread.size()) <= _regimeTrendWindow) return false;
+        const double sNow = spread.back();
+        const double sPast = spread[spread.size() - 1 - _regimeTrendWindow];
+        if (!std::isfinite(sNow) || !std::isfinite(sPast)) return false;
+
+        double sum = 0.0, sumSq = 0.0;
+        int32_t cnt = 0;
+        const size_t start = spread.size() > static_cast<size_t>(_regimeSigmaWindow)
+            ? spread.size() - static_cast<size_t>(_regimeSigmaWindow) : 0;
+        for (size_t i = start; i < spread.size(); ++i) {
+            if (!std::isfinite(spread[i])) continue;
+            sum += spread[i];
+            sumSq += spread[i] * spread[i];
+            ++cnt;
+        }
+        if (cnt < 10) return false;
+        const double mean = sum / cnt;
+        const double var = sumSq / cnt - mean * mean;
+        if (var <= 0.0) return false;
+        const double sigma = std::sqrt(var);
+        if (sigma <= 1e-12) return false;
+        if (std::fabs(sNow - sPast) / sigma > _regimeTrendMax) return false;
+    }
+
+    return true;
+}
+
 void PairNode::recordTradeOpen(DataContext& context, double beta, int dirA) {
     double pxA = 0.0;
     double pxB = 0.0;
@@ -101,9 +253,29 @@ void PairNode::recordTradeOpen(DataContext& context, double beta, int dirA) {
         _in_trade = false;
         return;
     }
+    // 名义权重：与 PortfolioNode 的 strength 拆分同口径
+    //   notional_beta：w_A = 1/(1+β),          w_B = β/(1+β)
+    //   price_spread ：w_A = P_A_hfq/(P_A_hfq + β·P_B_hfq), w_B = 1 - w_A
+    //     （名义按后复权价分摊 → 实际股数比 f_A : β·f_B）
+    double wA = 1.0 / (1.0 + beta);
+    double wB = beta / (1.0 + beta);
+    if (_weightMode == "price_spread") {
+        double hA = 0.0, hB = 0.0;
+        if (readPrevAdjPrice(context, get_symbol(_legA), hA) &&
+            readPrevAdjPrice(context, get_symbol(_legB), hB) &&
+            hA > 0.0 && hB > 0.0) {
+            const double denom = hA + beta * hB;
+            if (denom > 1e-12) {
+                wA = hA / denom;
+                wB = beta * hB / denom;
+            }
+        }
+    }
     _in_trade = true;
     _entry_px_a = pxA;
     _entry_px_b = pxB;
+    _entry_w_a = wA;
+    _entry_w_b = wB;
     _dir_a = dirA;   // 分母腿方向恒为 -dirA，不单独存
     _trade_beta = beta;
 }
@@ -116,7 +288,6 @@ void PairNode::recordTradeClose(DataContext& context) {
     double pxB = 0.0;
     const bool ok = readPrevPrice(context, get_symbol(_legA), pxA) &&
                     readPrevPrice(context, get_symbol(_legB), pxB);
-    const double beta = _trade_beta;
     const int dirA = _dir_a;
     const int dirB = -_dir_a;   // 配对两腿方向必然相反
     const double entryA = _entry_px_a;
@@ -126,10 +297,13 @@ void PairNode::recordTradeClose(DataContext& context) {
         return;
     }
 
-    // equity-unit 组合收益：π = (dir_A·r_A + β·dir_B·r_B) / (1 + β)
+    // 组合收益（equity-unit 口径）：π = w_A·dir_A·r_A + w_B·dir_B·r_B
+    //   r 为**原始价**收益（撮合/估值口径），w 为入场时两腿的名义权重。
+    //   notional_beta: w=(1,β)/(1+β) → 与旧公式 (dir_A·r_A + β·dir_B·r_B)/(1+β) 完全一致
+    //   price_spread : w=(P_A_hfq, β·P_B_hfq)/合计 → 与实际建仓仓位一致
     const double rA = pxA / entryA - 1.0;
     const double rB = pxB / entryB - 1.0;
-    const double pi = (dirA * rA + beta * dirB * rB) / (1.0 + beta);
+    const double pi = _entry_w_a * dirA * rA + _entry_w_b * dirB * rB;
     if (!std::isfinite(pi)) {
         return;
     }
@@ -188,8 +362,32 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
     if (readLast(context, get_symbol(_legA) + ".pair_beta", betaRaw) && betaRaw > 0.0) {
         beta = betaRaw;
     }
-    publishScalar(context, get_symbol(_legA), "strength", 1.0);
-    publishScalar(context, get_symbol(_legB), "strength", beta);
+
+    // ── 腿间权重 ──
+    // notional_beta：A=1, B=β（名义比 1:β，收益空间对冲）
+    // price_spread ：A=P_A, B=β·P_B（名义比 P_A:βP_B，价格水平价差对冲）。
+    //   价差/β 定义在后复权价上 → 权重也必须用后复权价算：名义按 P_A_hfq : βP_B_hfq
+    //   分摊，实际股数 = 名义 / 原始价 → 股数比 = f_A : β·f_B，
+    //   原始价 P&L 因此正比于 Δ(A_hfq - β·B_hfq)（撮合/估值仍在原始价体系）。
+    double strengthA = 1.0;
+    double strengthB = beta;
+    if (_weightMode == "price_spread") {
+        double pxA = 0.0, pxB = 0.0;
+        const bool preferAdj = true;   // 分析价格空间：后复权
+        if (readLastPrice(context, get_symbol(_legA), preferAdj, pxA) &&
+            readLastPrice(context, get_symbol(_legB), preferAdj, pxB) &&
+            pxA > 0.0 && pxB > 0.0) {
+            strengthA = pxA;
+            strengthB = beta * pxB;
+        } else if (!_warnedNoPrice) {
+            WARN("[PairNode:{}] price_spread 配腿读不到 {} 的后复权收盘价，"
+                 "退回名义 1:β（检查上游 close 字段是否发布）",
+                 _id, get_symbol(_legA));
+            _warnedNoPrice = true;
+        }
+    }
+    publishScalar(context, get_symbol(_legA), "strength", strengthA);
+    publishScalar(context, get_symbol(_legB), "strength", strengthB);
 
     // ── 定仓组标识 ──
     // 两腿同值。pair_leg 只有 ±1，一个策略里存在多个 PairNode 时，
@@ -275,19 +473,28 @@ NodeProcessResult PairNode::Process(const String& strategy, DataContext& context
             t_blockedBars = 0;
         }
         if (absZ >= _entryZ && !_blocked) {
-            // z>0：分子腿偏贵 → 空分子腿、多分母腿；z<0 反之
-            symbol_t shortLeg = (z > 0) ? _legA : _legB;
-            if (!canOpenShort(shortLeg)) {
-                if (!_warnedNoShort) {
-                    WARN("[PairNode:{}] 空头腿 {} 不允许做空（allowShort={}，"
-                         "或不在 margin_stock 名单），本策略不会建配对仓位",
-                         _id, get_symbol(shortLeg), _allowShort);
-                    _warnedNoShort = true;
+            // β 有效/稳定 + 体制过滤：不满足就不建仓（只拦入场，不拦出场）
+            if (!entryFiltersPass(context, betaRaw)) {
+                ++t_filteredEntries;
+                if (t_filteredEntries == 1) {
+                    INFO("[PairNode:{}] 入场被过滤（β={:.3f} 或价差趋势不达标），"
+                         "本次运行后续同类过滤不再逐条打印", _id, betaRaw);
                 }
             } else {
-                actions.push_back({_legA, (z > 0) ? TradeAction::SELL : TradeAction::BUY});
-                actions.push_back({_legB, (z > 0) ? TradeAction::BUY : TradeAction::SELL});
-                _barsHeld = 0;
+                // z>0：分子腿偏贵 → 空分子腿、多分母腿；z<0 反之
+                symbol_t shortLeg = (z > 0) ? _legA : _legB;
+                if (!canOpenShort(shortLeg)) {
+                    if (!_warnedNoShort) {
+                        WARN("[PairNode:{}] 空头腿 {} 不允许做空（allowShort={}，"
+                             "或不在 margin_stock 名单），本策略不会建配对仓位",
+                             _id, get_symbol(shortLeg), _allowShort);
+                        _warnedNoShort = true;
+                    }
+                } else {
+                    actions.push_back({_legA, (z > 0) ? TradeAction::SELL : TradeAction::BUY});
+                    actions.push_back({_legB, (z > 0) ? TradeAction::BUY : TradeAction::SELL});
+                    _barsHeld = 0;
+                }
             }
         } else if (_blocked && absZ >= _entryZ) {
             // 已越过入场阈值却因为止损锁而空仓等待 —— 每个锁定区间只提示一次，
@@ -354,6 +561,14 @@ const nlohmann::json PairNode::getParams() {
         {"stopZ", "number"},
         {"maxHoldBars", "number"},
         {"zField", "string"},
-        {"allowShort", "boolean"}
+        {"allowShort", "boolean"},
+        {"weightMode", "string"},        // notional_beta | price_spread
+        {"betaMin", "number"},
+        {"betaMax", "number"},
+        {"betaCvMax", "number"},
+        {"betaCvWindow", "number"},
+        {"regimeTrendMax", "number"},
+        {"regimeTrendWindow", "number"},
+        {"regimeSigmaWindow", "number"}
     };
 }

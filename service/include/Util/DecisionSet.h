@@ -213,12 +213,15 @@ struct DecisionSet {
     // ── 组合估值（持仓 × 收盘价）──
     double _portfolioValue = 0.0;
 
-    bool empty() const { return _items.empty(); }
+    // ── 决策后的资金视图（今日决策全部执行后的现金与总资产）──
+    // _portfolioValue 只是股票市值，不含现金。卖出不是把钱烧掉，是把市值转成现金；
+    // 不给出这两个数，读者看到"持仓市值 63 万 + 亏 1.8 万"就会以为账对不上。
+    // _projectedKnown=false 表示账本缺失，此时这两个数不可信，不要展示。
+    double _projectedCash = 0.0;
+    double _projectedEquity = 0.0;
+    bool   _projectedKnown = false;
 
-    // JSON 往返：日终回调跨线程传的是 nlohmann::json，DecisionSet 走这条通道。
-    // 风险事件只序列化展示字段（供人工复盘），不参与任何计算。
-    nlohmann::json toJson() const;
-    static DecisionSet fromJson(const nlohmann::json& j);
+    bool empty() const { return _items.empty(); }
 
     // 按动作分组（读侧统一走这里，避免各自重写分类逻辑）
     Vector<const Item*> ofAction(TradeAction a) const {
@@ -464,4 +467,10 @@ DecisionSet BuildDecisionSet(
     double maintenanceMarginRatio = 0.3,
     double warningRatio = 1.5,
     double liquidationRatio = 1.3,
-    double accrualDays = 1.0);
+    double accrualDays = 1.0,
+    // 决策后的现金与总资产（口径：今日收盘价 + 今日决策全部执行）。
+    // portfolioValue 只是股票市值，不含现金；没有这两个数，读者无法把
+    // "持仓市值"和"卖出回款"对上账。
+    double projectedCash = 0.0,
+    double projectedEquity = 0.0,
+    bool projectedKnown = false);

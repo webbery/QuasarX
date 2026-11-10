@@ -391,7 +391,7 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
         }
     }
 
-    // 清理该策略的历史记录（decisions + daily_positions + strategy_logs + node_io_logs）
+    // 清理该策略的历史记录（decisions + daily_positions + strategy_logs）
     int decisionDeleted = DecisionDB::instance().deleteByStrategy(name);
     // 同步清掉 BrokerSubSystem 的内存决策缓存：否则残留记录会被
     // GET /trade/decisions 的内存兜底重新返回，随后的 PUT 关闭报 404
@@ -399,9 +399,8 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
         broker->PurgeStrategyDecisions(name);
     }
     auto logResult = DuckDBLogger::instance().delete_strategy_logs(name, "", "", "");
-    int64_t nodeIoDeleted = DuckDBLogger::instance().delete_node_io_logs_by_strategy(name);
-    INFO("[StrategyHandler] Deleted strategy '{}': {} decision/position records, {} log records, {} node_io records",
-         name, decisionDeleted, logResult.deleted_count > 0 ? logResult.deleted_count : 0, nodeIoDeleted);
+    INFO("[StrategyHandler] Deleted strategy '{}': {} decision/position records, {} log records",
+         name, decisionDeleted, logResult.deleted_count > 0 ? logResult.deleted_count : 0);
 
     res.status = 200;
     nlohmann::json result;

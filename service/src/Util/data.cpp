@@ -940,7 +940,6 @@ std::pair<bool, String> CleanupDBData(
 // ============================================================
 // BaoStock 单标的下载 + 导入
 // ============================================================
-
 DownloadSymbolResult DownloadAndImportSymbol(
     const String& symbol,
     const String& freq,
@@ -997,14 +996,30 @@ DownloadSymbolResult DownloadAndImportSymbol(
     String org_path = quote_dir + "/" + asset_type + "_org/" + freq + "/" + csv_name + ".csv";
     String hfq_path = quote_dir + "/" + asset_type + "_hfq/" + freq + "/" + csv_name + ".csv";
 
-    if (!fs::exists(org_path) && !fs::exists(hfq_path)) {
+    const bool has_org = fs::exists(org_path);
+    const bool has_hfq = fs::exists(hfq_path);
+
+    if (!has_org && !has_hfq) {
         WARN("[DownloadAndImport] {} CSV not found after download", symbol);
         return result;  // download_ok=true, import_ok=false
     }
 
+    // 不复权(org)才是原始价的唯一来源，缺一不可。
+    // org 下载失败时不能把"后复权价"写进 close 列，
+    // 宁可不导入这根 bar，也不能用后复权价冒充原始价。
+    if (!has_org) {
+        WARN("[DownloadAndImport] {} 不复权(org)数据缺失，跳过导入以免用后复权价污染原始价: "
+             "org={} hfq={}", symbol, org_path, hfq_path);
+        // 清掉残留的 hfq CSV：留着会被下一次运行误当成 org 顶替原始价
+        if (has_hfq) fs::remove(hfq_path);
+        result.download_ok = false;
+        result.import_ok = false;
+        return result;
+    }
+
     // 从 CSV 文件获取行数
     {
-        String count_path = fs::exists(org_path) ? org_path : hfq_path;
+        String count_path = org_path;
         std::ifstream ifs(count_path);
         if (ifs.is_open()) {
             int csv_rows = 0;
@@ -1029,8 +1044,11 @@ DownloadSymbolResult DownloadAndImportSymbol(
         }
     }
 
-    String org_p = fs::exists(org_path) ? org_path : hfq_path;
-    String hfq_p = fs::exists(hfq_path) ? hfq_path : org_path;
+    // org 已保证存在（上面缺 org 直接跳过），hfq 缺失时退化为 org：
+    // 此时 adj_* 暂时等于原始价，随后 validateAndReconcileAdj 的
+    // recalcSymbolAdjPrices 会按 dividend 表重算复权列。
+    String org_p = org_path;
+    String hfq_p = has_hfq ? hfq_path : org_path;
     String table = QuoteDB::tableName(asset_type, freq);
     String internal_sym = toInternalSymbol(csv_name);
 

@@ -853,7 +853,7 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
 //  dividend 表 — 批量导入目录下所有 CSV
 // ═══════════════════════════════════════════════════════════
 
-int FinanceDB::importAllDividends(const String& dividend_dir) {
+int FinanceDB::importAllDividends(const String& dividend_dir, const Set<String>& symbols) {
     if (!std::filesystem::exists(dividend_dir)) {
         SPDLOG_INFO("[FinanceDB] dividend directory not found, creating: {}", dividend_dir);
         std::filesystem::create_directories(dividend_dir);
@@ -861,20 +861,47 @@ int FinanceDB::importAllDividends(const String& dividend_dir) {
 
     int total = 0;
     int file_count = 0;
+    int skipped_out_of_scope = 0;
+    int failed = 0;
     for (auto& entry : std::filesystem::directory_iterator(dividend_dir)) {
         if (!entry.is_regular_file()) continue;
         auto filename = entry.path().filename().string();
         // 匹配 {symbol}_dividend.csv
         if (filename.size() > 13 &&
             filename.substr(filename.size() - 13) == "_dividend.csv") {
+            // 文件名形如 600176.SH_dividend.csv → 内部符号 sh.600176
+            if (!symbols.empty()) {
+                const String stem = filename.substr(0, filename.size() - 13);
+                const String internal = toInternalSymbol(stem);
+                if (!symbols.count(internal)) {
+                    ++skipped_out_of_scope;
+                    SPDLOG_INFO("[FinanceDB] Skip dividend file #{}: {} (not in requested scope)",
+                                file_count + 1, filename);
+                    continue;
+                }
+            }
             file_count++;
             SPDLOG_INFO("[FinanceDB] Importing dividend file #{}: {}", file_count, filename);
             int n = importDividendCsv(entry.path().string());
-            if (n > 0) total += n;
+            if (n > 0) {
+                total += n;
+            } else if (n < 0) {
+                // importDividendCsv 失败时已回滚该文件。
+                // 继续导入后面的文件没问题，但必须让调用方知道这次导入不完整 ——
+                // 调用方据此决定是否继续复权重算。
+                ++failed;
+                SPDLOG_ERROR("[FinanceDB] dividend import FAILED for {} (rolled back)", filename);
+            }
         }
     }
 
-    SPDLOG_INFO("[FinanceDB] Scanned {}: {} dividend CSV files found, {} total rows imported", dividend_dir, file_count, total);
+    SPDLOG_INFO("[FinanceDB] Scanned {}: {} dividend CSV files found, {} total rows imported"
+                " ({} skipped out of scope, {} failed)",
+                dividend_dir, file_count, total, skipped_out_of_scope, failed);
+    if (failed > 0) {
+        // 用负数回传"有文件导入失败"，调用方必须能区分"没有数据"和"数据不完整"
+        return -failed;
+    }
     return total;
 }
 

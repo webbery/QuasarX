@@ -866,7 +866,7 @@ function getFlowConstraints(): string {
 
 export const strategyTool = tool(
   async (params) => {
-    const { action, keyword, data, category, name, strategy, node, start, end, limit } = params
+    const { action, keyword, data, category, name, start, end, limit } = params
     switch (action) {
       // === 节点查询 ===
 
@@ -1133,53 +1133,13 @@ export const strategyTool = tool(
         return lines.join('\n')
       }
 
-      case "query_node_io": {
-        const { strategy, node, start, end } = params
-        if (!strategy) return "错误：query_node_io 需要提供 strategy 参数（策略 ID）"
-        if (!node) return "错误：query_node_io 需要提供 node 参数（节点 ID）"
-
-        const axios = await import('axios')
-        applyAuthHeader(axios.default)
-        const response = await axios.default.get(`/v0/node/io`, {
-          params: {
-            strategy_id: strategy,
-            node_id: node,
-            ...(start ? { start_time: start } : {}),
-            ...(end ? { end_time: end } : {}),
-          },
-        })
-
-        const d = response.data
-        if (!d) return `节点 ${node} 无 I/O 日志`
-
-        const lines = [`**节点 I/O 日志** — 策略 ${strategy} / 节点 ${node}`]
-        const inputs = d.inputs ?? []
-        const outputs = d.outputs ?? []
-        if (inputs.length > 0) {
-          lines.push(`\n**输入日志**（${inputs.length} 条，前 10 条）：`)
-          for (const i of inputs.slice(0, 10)) {
-            lines.push(`  ${i.timestamp ?? i.time ?? ""}  ${i.key ?? i.field ?? ""} = ${JSON.stringify(i.value ?? i.data ?? "").slice(0, 100)}`)
-          }
-        }
-        if (outputs.length > 0) {
-          lines.push(`\n**输出日志**（${outputs.length} 条，前 10 条）：`)
-          for (const o of outputs.slice(0, 10)) {
-            lines.push(`  ${o.timestamp ?? o.time ?? ""}  ${o.key ?? o.field ?? ""} = ${JSON.stringify(o.value ?? o.data ?? "").slice(0, 100)}`)
-          }
-        }
-        if (inputs.length === 0 && outputs.length === 0) {
-          lines.push("  无 I/O 记录")
-        }
-        return lines.join('\n')
-      }
-
       default:
-        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, multi_freq_usage, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs, query_node_io`
+        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, multi_freq_usage, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs`
     }
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）\n- query_node_io: 查询节点 I/O 日志（strategy=策略ID，node=节点ID）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
@@ -1187,16 +1147,14 @@ export const strategyTool = tool(
         "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage",
         "multi_freq_usage",
         "query_strategy_performance", "query_risk_aggregated", "query_capital_risk", "query_risk_status",
-        "query_strategy_logs", "query_node_io"
+        "query_strategy_logs"
       ]).describe("操作类型"),
       keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
       data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy 时必填）"),
       category: z.string().optional().describe("节点分类过滤（list_nodes 时可选）: input/process/signal/execution/ml/risk/utility"),
       name: z.union([z.string(), z.number()]).optional().describe("策略名或 ID（query_strategy_performance/query_strategy_logs）"),
-      strategy: z.union([z.string(), z.number()]).optional().describe("策略 ID（query_node_io）"),
-      node: z.string().optional().describe("节点 ID（query_node_io）"),
-      start: z.string().optional().describe("起始时间（query_strategy_logs/query_node_io，YYYY-MM-DD）"),
-      end: z.string().optional().describe("结束时间（query_strategy_logs/query_node_io，YYYY-MM-DD）"),
+      start: z.string().optional().describe("起始时间（query_strategy_logs，YYYY-MM-DD）"),
+      end: z.string().optional().describe("结束时间（query_strategy_logs，YYYY-MM-DD）"),
       limit: z.number().optional().describe("返回条数上限（query_strategy_logs 默认 100）"),
     }),
   }

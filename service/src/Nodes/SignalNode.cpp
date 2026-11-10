@@ -164,32 +164,6 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     // 将信号数据写入 context，供 debug 节点使用
     writeSignals(context, decisions);
 
-    // ── DuckDB node_io 日志（仅实盘模式）──
-    // NODE_IO_LOG("signal", _id,
-    //     input["buy_expression"] = _buyExpression;
-    //     input["sell_expression"] = _sellExpression;
-    //     nlohmann::json pools_arr = nlohmann::json::array();
-    //     for (const auto& sym : _pools) {
-    //         pools_arr.push_back(get_symbol(sym));
-    //     }
-    //     input["pools"] = pools_arr;
-
-    //     nlohmann::json sig_arr = nlohmann::json::array();
-    //     for (const auto& symbol : _pools) {
-    //         String key = get_symbol(symbol) + ".signal";
-    //         int signal_value = 0;
-    //         if (context.exist(key)) {
-    //             const auto& sig_vec = context.get<Vector<double>>(key);
-    //             if (!sig_vec.empty()) signal_value = static_cast<int>(sig_vec.back());
-    //         }
-    //         nlohmann::json sig_entry;
-    //         sig_entry["symbol"] = get_symbol(symbol);
-    //         sig_entry["signal"] = signal_value;
-    //         sig_arr.push_back(sig_entry);
-    //     }
-    //     output["signals"] = sig_arr;
-    // );
-
     return NodeProcessResult::Success;
 }
 

@@ -6,6 +6,7 @@
 #include "server.h"
 
 class Server;
+using QuoteMap = Map<symbol_t, QuoteInfo>;
 class QuoteInputNode : public QNode {
 public:
     RegistClassName(QuoteInputNode);
@@ -93,11 +94,22 @@ private:
 
     void addQuoteProperty(DataContext& context, const String& key, double val);
 
+#ifdef _DEBUG
+    /**
+     * @brief 记录本 epoch 里「没有自己 bar」的标的（停牌 / 缺数据）
+     *
+     * 仅 Debug 构建启用：每个标的每次运行只打一条 DEBUG_INFO，避免停牌期间
+     * 逐 bar 刷屏。消息里带上该标的的 bar 日期与本次对齐的参考日期，
+     * 便于定位停牌区间。Release 下整段编译掉。
+     */
+    void warnMisaligned(time_t minTime);
+#endif
+
     /**
      * @brief 把当前 bar 喂给降频聚合器，有定稿低频 bar 时写入对应 key
      * 非降频视图时为空操作
      */
-    void feedView(DataContext& context, const Map<symbol_t, QuoteInfo>& quotes);
+    void feedView(DataContext& context, const QuoteMap& quotes);
 
     /**
      * @brief 把定稿低频 bar 快照写入 context（key 带频率后缀）
@@ -105,7 +117,7 @@ private:
      * writeNaN=true 时写入 NaN 占位（尚无定稿 bar 的 epoch）。占位保证视图列
      * 从第一个 epoch 起就与时间轴逐行对齐，否则整列会相对时间轴整体前移。
      */
-    void writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot,
+    void writeView(DataContext& context, const QuoteMap& snapshot,
                    bool writeNaN = false);
 
 private:
@@ -114,8 +126,12 @@ private:
     Server* _server;
     MissingHandleType _missingHandle = MissingHandleType::Skip;
     std::unique_ptr<IQuoteFillStrategy> _fillStrategy;  // 填充策略
-    Map<symbol_t, QuoteInfo> _curQuotes;   // 当前轮次各 symbol 的 quote
-    Map<symbol_t, QuoteInfo> _lastQuotes;  // 每个 symbol 上一次写入的 quote
+    QuoteMap _curQuotes;   // 当前轮次各 symbol 的 quote
+    QuoteMap _lastQuotes;  // 每个 symbol 上一次写入的 quote
+#ifdef _DEBUG
+    // 本次运行里已提示过「该 bar 无行情」的标的（Prepare 复位）
+    Set<symbol_t> _warnedMisaligned;
+#endif
     Set<contract_type> _sources;                // 数据源类型
     DataFrequencyType _loadFreq = DataFrequencyType::Day;  // 交易所加载的原始数据频率
     DataFrequencyType _viewFreq = DataFrequencyType::Day;  // 对外输出的 bar 节奏

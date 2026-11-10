@@ -500,7 +500,22 @@ bool LedgerStore::Save(const String& path) const {
         nlohmann::json item;
         item["allocated"] = acc._allocated;
         item["cash"] = acc._cash;
+        // profit 是"已实现"盈亏（成交时结算），不含浮动盈亏。
+        // 只写 profit 的话，读者会把"账本亏 4061"和"当日总收益亏 23454"
+        // 当成两个矛盾的数字。三个口径一起写，账才自证。
+        double unrealized = 0.0;
+        for (const auto& [symbol, pos] : acc._positions) {
+            unrealized += pos.getUnrealizedPnL();
+        }
+        const double equity = acc._cash + [&] {
+            double v = 0.0;
+            for (const auto& [symbol, pos] : acc._positions) v += pos.getMarketValue();
+            return v;
+        }() - acc._credit.borrowedCash;
         item["profit"] = acc._profit;
+        item["unrealized_profit"] = unrealized;
+        item["total_pnl"] = acc._profit + unrealized;
+        item["equity"] = equity;
         item["active"] = acc._active;
 
         nlohmann::json positions = nlohmann::json::object();

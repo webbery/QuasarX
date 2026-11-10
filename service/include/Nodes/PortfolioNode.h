@@ -40,6 +40,26 @@ private:
         std::function<double(symbol_t)> getQuotePrice,
         std::function<int64_t(symbol_t)> getPositionQuantity,
         const String& source);
+
+    // generatePlan 子函数拆分：
+    // 1. 根据决策和持仓生成原始执行项（含价格验证、持仓状态判断、数量计算）
+    Vector<ExecutionItem> generatePlanItems(
+        const String& strategy,
+        DataContext& context,
+        const Map<symbol_t, TradeAction>& decisions,
+        double targetCapital,
+        const std::function<double(symbol_t)>& getQuotePrice,
+        const std::function<int64_t(symbol_t)>& getPositionQuantity);
+
+    // 2. 资金闸门：确保买入总额不超过可用现金 + 卖出回款
+    void applyCashGate(const String& strategy, ExecutionPlan& plan);
+
+    // 3. 持仓数与敞口控制：检查并限制 maxPositions/maxSinglePct/maxGrossPct/maxNetPct
+    void applyPositionLimits(const String& strategy, ExecutionPlan& plan);
+
+    // 4. 重新计算 plan._usedCapital（在 items 被修改后调用）
+    void recalcUsedCapital(ExecutionPlan& plan);
+
     bool isPlanChanged(const ExecutionPlan& newPlan);
 
     // 两腿/多腿原子下单：带 {sym}.group_id（回退 .pair_id）的组在计划层做
@@ -74,6 +94,12 @@ private:
     Set<symbol_t>                            _pool;            // 交易池（自动去重）
     ExecutionPlan                            _lastPlan;        // 上一次的执行计划
     bool                                     _allowShort = false; // 是否允许做空
+
+    // 持仓数与敞口控制
+    unsigned char                            _maxPositions = 0;      // 最大持仓数，0=不限
+    double                                   _maxSinglePct = 1.0;    // 单标的最大占比 (0.0~1.0)
+    double                                   _maxGrossPct = 1.0;     // 总敞口上限（多头+空头）
+    double                                   _maxNetPct = 1.0;       // 净敞口上限（多头-空头）
 
     // 组合计算模型（Init 时创建，只保留被选中的那一个）
     std::unique_ptr<portfolio::PortfolioModel> _sizing_model;

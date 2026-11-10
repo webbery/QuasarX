@@ -2,6 +2,7 @@
 #include "ExchangeManager.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
+#include "Util/datetime.h"
 #include "Util/log.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
@@ -90,6 +91,38 @@ void QuoteInputNode::addQuoteProperty(DataContext& context, const String& key, d
         context.add(key, Vector<double>{val});
     }
 }
+
+#ifdef _DEBUG
+/**
+ * @brief 记录本 epoch 里没有自己 bar 的标的（Debug 专用）
+ *
+ * 触发条件：多标的节点内有标的的 quote 时间 != min_t。正常行情下完全不会进入；
+ * 出现就说明该标的在这段时间缺 bar（停牌 / 数据缺口）。
+ *
+ * 这里只负责「让问题可见 + 说明后果」，不改变行为 —— 实际跳过由填充策略完成。
+ * 每个标的每次运行只打一条，避免停牌 10 天刷 10 行。
+ */
+void QuoteInputNode::warnMisaligned(time_t minTime) {
+    for (auto& [symbol, quote] : _curQuotes) {
+        if (quote._time == minTime) continue;
+        if (!_warnedMisaligned.insert(symbol).second) continue;
+
+        const char* mode = "Skip";
+        switch (_missingHandle) {
+            case MissingHandleType::ForwardFill:  mode = "ForwardFill"; break;
+            case MissingHandleType::Linear:       mode = "Linear"; break;
+            case MissingHandleType::BackwardFill: mode = "BackwardFill"; break;
+            default: break;
+        }
+        DEBUG_INFO("[QuoteNode:{}] {} 在 {} 没有 bar（下一根是 {}），本 bar 按 "
+                   "missingHandle={} 处理；后续同类缺口不再逐条提示",
+                   _id, get_symbol(symbol),
+                   ToString(minTime, "%Y-%m-%d"),
+                   ToString(quote._time, "%Y-%m-%d"),
+                   mode);
+    }
+}
+#endif  // _DEBUG
 
 bool QuoteInputNode::Init(const nlohmann::json& config) {
     auto& codes = config["params"]["code"]["value"];
@@ -261,6 +294,9 @@ void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
     _lastQuotes.clear();
     _lastViewSnapshot.clear();
     _viewVersions.clear();
+#ifdef _DEBUG
+    _warnedMisaligned.clear();
+#endif
 
     // 降频视图：初始化聚合器。
     // Bar 模式（SetAggregateOhlc(true)）使 OHLC 取自输入日线 bar 本身，
@@ -284,7 +320,7 @@ void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
  * 视图列必须从第一个 epoch 起逐行对齐，中途才开始 append 会让整列相对
  * 时间轴前移（DebugNode 导出按行号对齐）。
  */
-void QuoteInputNode::writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot,
+void QuoteInputNode::writeView(DataContext& context, const QuoteMap& snapshot,
                                bool writeNaN) {
     auto writeSymbol = [&](const String& name, const QuoteInfo* q) {
         auto baseKey = name + ".";
@@ -351,30 +387,31 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
             feedView(context, _curQuotes);
             context.SetTime(min_t);
 
-            // 实盘模式：记录节点 IO 日志到 DuckDB
-            NODE_IO_LOG_FAST("input", _id,
-                nlohmann::json quotes = nlohmann::json::array();
+            // 实盘模式：本轮行情摘要写入策略日志（DuckDB strategy_logs）
+            // 只记符号/时间/写入的字段名；逐笔 OHLCV 由行情落库负责，避免日志表膨胀
+            if (_server->GetRunningMode() != RuningType::Backtest &&
+                DuckDBLogger::instance().is_initialized()) {
+                nlohmann::json ctx;
+                ctx["node_type"] = "input";
+                ctx["node_id"] = std::to_string(_id);
+                ctx["epoch"] = context.GetEpoch();
+                ctx["bar_time"] = static_cast<int64_t>(min_t);
+                nlohmann::json symbols = nlohmann::json::array();
                 for (auto& [sym, q] : _curQuotes) {
-                    nlohmann::json item;
-                    item["symbol"] = get_symbol(sym);
-                    item["open"] = q._open;
-                    item["high"] = q._high;
-                    item["low"] = q._low;
-                    item["close"] = q._close;
-                    item["volume"] = q._volume;
-                    item["time"] = static_cast<int64_t>(q._time);
-                    quotes.push_back(item);
+                    symbols.push_back(get_symbol(sym));
                 }
+                ctx["symbols"] = symbols;
                 nlohmann::json keys = nlohmann::json::array();
                 for (auto& [sym, props] : _properties) {
                     for (auto& p : props) {
                         keys.push_back(sym + "." + p);
                     }
                 }
-                output["quotes"] = quotes;
-                output["keys_written"] = keys;
-                output["aligned"] = true;
-            );
+                ctx["keys_written"] = keys;
+                STRATEGY_LOG_WITH_CTX(context.CurrentStrategy(), "INFO", ctx.dump(),
+                    "[node:input:{}] epoch={} quotes={} bar_time={}",
+                    _id, context.GetEpoch(), _curQuotes.size(), static_cast<int64_t>(min_t));
+            }
 
             return NodeProcessResult::Success;
         }
@@ -424,6 +461,17 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
     }
 
     // 第四步：不对齐则使用填充策略处理
+    //
+    // 不对齐 = 某条腿在这个 epoch 没有自己的 bar（停牌 / 缺数据）：
+    // HistorySimulationBase::stepForward 只推进「日期 == minTime」的标的，
+    // 缺 bar 的标的游标停在它的**下一根** bar 上。若直接把那根 bar 当当根行情
+    // 写进去，就是错日数据 —— 价差/β 会用两个不同日期的价格，epoch 时间戳
+    // 也会被这根未来 bar 覆盖（DataContext::SetTime 同一 epoch 内后写者覆盖）。
+    // 这里把这类标的交给填充策略处理（Skip 模式下其当根价格全部置 NaN）。
+#ifdef _DEBUG
+    warnMisaligned(min_t);
+#endif
+
     bool success = _fillStrategy->alignAndWrite(
         _curQuotes,
         min_t,
@@ -457,7 +505,7 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
  * - 在周内其他交易日，输出上一个定稿快照（前向填充）
  * - 首个定稿周完成之前，输出 NaN 占位（保持视图列与时间轴逐行对齐）
  */
-void QuoteInputNode::feedView(DataContext& context, const Map<symbol_t, QuoteInfo>& quotes) {
+void QuoteInputNode::feedView(DataContext& context, const QuoteMap& quotes) {
     if (_viewFreq != DataFrequencyType::Week || !_kbarBuilder) return;
 
     for (auto& [symbol, q] : quotes) {

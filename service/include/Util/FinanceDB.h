@@ -36,7 +36,12 @@ public:
 
     int importDividendCsv(const String& csv_path);
 
-    int importAllDividends(const String& dividend_dir);
+    /// 批量导入分红目录下所有 CSV。
+    /// symbols 非空时只导入名单内的标的（内部符号，如 "sh.600176"）。
+    /// 目录里可能躺着历史上别的任务留下的 CSV；不设限就会把池外标的
+    /// （如 sh.601398）的分红事件写进 dividend 表，并触发这些标的的
+    /// 复权重算 —— 复权因子一旦算错，原始价就被放大，行情特征随之失真。
+    int importAllDividends(const String& dividend_dir, const Set<String>& symbols = {});
 
     nlohmann::json queryDividendByDate(const String& date);
 

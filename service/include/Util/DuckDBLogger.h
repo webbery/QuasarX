@@ -26,21 +26,6 @@ struct StrategyLogEntry {
 };
 
 /**
- * 节点输入输出日志条目
- */
-struct NodeIOEntry {
-    int64_t id;
-    std::string timestamp;          // YYYY-MM-DD HH:MM:SS.mmm
-    std::string strategy_name;      // 策略名称
-    int64_t epoch;                  // 执行周期序号
-    std::string node_type;          // input/signal/portfolio/execution
-    std::string node_id;            // 节点 ID
-    std::string input_json;         // 输入数据 JSON
-    std::string output_json;        // 输出数据 JSON
-    std::string metadata_json;      // 元数据 JSON
-};
-
-/**
  * Tick 数据条目
  *
  * 盘口使用 REAL[]/BIGINT[] 数组存储，DuckDB 对 NULL 元素几乎零开销。
@@ -102,26 +87,6 @@ public:
         const std::string& level,
         const std::string& message,
         const std::string& context_json = ""
-    );
-
-    /**
-     * 记录节点输入输出日志（异步，立即返回）
-     * @param strategy_name 策略名称
-     * @param epoch 执行周期序号
-     * @param node_type 节点类型（input/signal/portfolio/execution）
-     * @param node_id 节点 ID
-     * @param input_json 输入数据 JSON
-     * @param output_json 输出数据 JSON
-     * @param metadata_json 元数据 JSON
-     */
-    void log_node_io(
-        const std::string& strategy_name,
-        int64_t epoch,
-        const std::string& node_type,
-        const std::string& node_id,
-        const std::string& input_json,
-        const std::string& output_json,
-        const std::string& metadata_json
     );
 
     // ========== Tick 数据 ==========
@@ -219,45 +184,6 @@ public:
     // ========== 节点输入输出日志 ==========
 
     /**
-     * 查询节点 IO 日志（同步，供HTTP API使用）
-     */
-    std::vector<NodeIOEntry> query_node_io_logs(
-        const std::string& strategy_name = "",
-        const std::string& node_type = "",
-        int64_t epoch_from = 0,
-        int64_t epoch_to = 0,
-        const std::string& start_time = "",
-        const std::string& end_time = "",
-        int limit = 1000,
-        int offset = 0
-    );
-
-    /**
-     * 查询符合条件的节点 IO 日志总数
-     */
-    int count_node_io_logs(
-        const std::string& strategy_name = "",
-        const std::string& node_type = "",
-        int64_t epoch_from = 0,
-        int64_t epoch_to = 0,
-        const std::string& start_time = "",
-        const std::string& end_time = ""
-    );
-
-    /**
-     * 清理指定日期前的节点 IO 日志
-     * @return 删除的行数
-     */
-    int64_t delete_node_io_logs_before(const std::string& timestamp);
-
-    /**
-     * 按策略名删除 node_io_logs
-     * @param strategy_name 策略名称
-     * @return 删除的行数
-     */
-    int64_t delete_node_io_logs_by_strategy(const std::string& strategy_name);
-
-    /**
      * 关闭日志器（服务退出时调用）
      */
     void shutdown();
@@ -278,9 +204,6 @@ private:
     // 初始化表结构
     void init_tables();
 
-    // 初始化 node_io_logs 表
-    void init_node_io_table();
-
     // 初始化 tick_data 表
     void init_tick_table();
 
@@ -289,9 +212,6 @@ private:
 
     // 批量写入DuckDB
     void batch_insert(const std::vector<StrategyLogEntry>& entries);
-
-    // 批量写入节点 IO 日志
-    void batch_insert_node_io(const std::vector<NodeIOEntry>& entries);
 
     // 批量写入 Tick 数据
     void batch_insert_ticks(const std::vector<TickDataEntry>& entries);
@@ -334,11 +254,6 @@ private:
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
 
-    // 节点 IO 日志异步队列
-    std::queue<NodeIOEntry> node_io_queue_;
-    std::mutex node_io_queue_mutex_;
-    std::condition_variable node_io_queue_cv_;
-
     // Tick 数据异步队列
     std::queue<TickDataEntry> tick_queue_;
     std::mutex tick_queue_mutex_;
@@ -353,7 +268,6 @@ private:
 
     // per-table ID counters (独立 atomic，无锁分配)
     std::atomic<uint64_t> next_strategy_log_id_{1};
-    std::atomic<uint64_t> next_node_io_id_{1};
     std::atomic<uint64_t> next_tick_id_{1};
 
     // 批量写入配置
