@@ -412,7 +412,7 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
             int i = 0;
             for (const auto& imf : *out.imfs_view) {
                 if (i >= _numIMFs) break;
-                context.set(out.prefix + _label + ".nimf_" + std::to_string(i), imf);
+                context.set(out.prefix + _label + ".nimf_" + std::to_string(i), std::move(imf));
                 ++i;
             }
         }
