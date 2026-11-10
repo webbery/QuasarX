@@ -210,7 +210,26 @@ struct DecisionSet {
     };
     Vector<PositionSnapshot> _positionSnapshots;
 
-    // ── 组合估值（持仓 × 收盘价）──
+    // ── 当前持仓（决策前，账本口径）──
+    // ManualTiming 只产意图、不下单，读者执行指令时的起点是账上现状，
+    // 所以"当前"= 今日决策执行前：持仓取自账本，价格取今日收盘价。
+    // 持仓只从账本来，DecisionSet 是它的唯一传递通道（邮件不直接摸 broker）。
+    struct Holding {
+        symbol_t _symbol;
+        int64_t  _quantity = 0;         // 持仓数量（负 = 空头）
+        double   _costPrice = 0.0;      // 持仓均价（0 = 未知）
+        double   _currentPrice = 0.0;   // 现价（今日收盘价口径；0 = 未知）
+        double   _marketValue = 0.0;    // 市值 = 数量 × 现价
+        double   _unrealizedPnl = 0.0;  // 浮动盈亏 = (现价 − 均价) × 数量
+    };
+    Vector<Holding> _holdings;
+    // 账本缺失时为 false，读侧据此整块不显示（而不是显示 ¥0 让读者以为清仓了）
+    bool   _holdingsKnown = false;
+    double _currentPortfolioValue = 0.0;  // 当前持仓市值合计（决策前）
+    double _currentTotalCapital = 0.0;    // 当前总资金 = 当前持仓市值 + 剩余资金(_available)
+    double _borrowedCash = 0.0;           // 融资负债余额（当前总资金 → 账户权益的扣项）
+
+    // ── 组合估值（持仓 × 收盘价，决策后）──
     double _portfolioValue = 0.0;
 
     // ── 决策后的资金视图（今日决策全部执行后的现金与总资产）──
@@ -445,6 +464,11 @@ struct DecisionSetBuilder {
  * @param warningRatio    警戒线（维持担保比例）
  * @param liquidationRatio 平仓线（维持担保比例）
  * @param accrualDays     计息天数（日终邮件为 1，跨周末/节假日时按实际天数）
+ * @param projectedCash   决策后的现金（今日收盘价 + 今日决策全部执行）
+ * @param projectedEquity 决策后的总资产
+ * @param projectedKnown  决策后视图是否可信（账本缺失时 false，读侧据此不展示）
+ * @param positions       账本持仓快照（决策前口径）；邮件的"当前持仓"由此而来
+ * @param holdingsKnown   账本是否可用（false 时持仓与现金都不可信，整块不展示）
  */
 DecisionSet BuildDecisionSet(
     const String& strategy,
@@ -473,4 +497,9 @@ DecisionSet BuildDecisionSet(
     // "持仓市值"和"卖出回款"对上账。
     double projectedCash = 0.0,
     double projectedEquity = 0.0,
-    bool projectedKnown = false);
+    bool projectedKnown = false,
+    // 当前持仓（决策前）：账本快照 + 今日收盘价。
+    // holdingsKnown = false 表示账本里没有这个策略的账户（回测路径），
+    // 此时持仓与现金都不可信，读侧整块不显示。
+    const Map<symbol_t, Position>& positions = {},
+    bool holdingsKnown = false);

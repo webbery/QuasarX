@@ -55,6 +55,17 @@ private:
     // 触发条件：set._hasMargin == false 时返回空字符串（整块不显示）
     String renderMarginSection(const DecisionSet& set) const;
 
+    // 渲染「当前账户 + 当前持仓」区块 HTML（决策前口径）
+    // 口径：账本现状 × 今日收盘价估值；今日决策尚未计入（ManualTiming 只产意图）。
+    // 触发条件：set._holdingsKnown == false 时返回空字符串（整块不显示）
+    String renderCurrentSection(const DecisionSet& set) const;
+
+    // 渲染「费用明细（可核对）」区块 HTML
+    // 每笔交易逐项列出：成交金额 = 数量 × 价格，佣金/印花税/滑点各自的
+    // 基数 × 费率 = 金额，以及最终的实际支出/回款 —— 读者可以自己核一遍。
+    // 触发条件：费率档案未配置或当日无成交时返回空字符串（整块不显示）
+    String renderFeeDetailSection(const DecisionSet& set) const;
+
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;  // 风控触发事件（日终策略用）
     // 重放期间的运行中持仓 + 逐 bar 快照（只在本轮重放内有意义）

@@ -1,6 +1,7 @@
 #include "Util/DecisionSet.h"
 #include "Util/datetime.h"
 #include "Bridge/LedgerStore.h"
+#include <algorithm>
 
 
 DecisionSet BuildDecisionSet(
@@ -27,7 +28,9 @@ DecisionSet BuildDecisionSet(
     double accrualDays,
     double projectedCash,
     double projectedEquity,
-    bool projectedKnown)
+    bool projectedKnown,
+    const Map<symbol_t, Position>& positions,
+    bool holdingsKnown)
 {
     DecisionSet set;
     set._strategy = strategy;
@@ -47,6 +50,40 @@ DecisionSet BuildDecisionSet(
     set._projectedKnown = projectedKnown;
     set._riskEvents = riskEvents;
     set._costProfile = costProfile;
+
+    // ── 当前持仓（决策前口径）──
+    // 持仓来自账本快照，价格取今日收盘价（策略池内的标的）。
+    // 池外标的账本里没有今天的收盘价，用账本的标记价（上一个已知价），
+    // 与 AgentSubSystem 的盯市口径一致 —— 不给就显示"—"，不编价。
+    set._holdingsKnown = holdingsKnown;
+    set._borrowedCash = creditState.borrowedCash;
+    if (holdingsKnown) {
+        for (const auto& [sym, pos] : positions) {
+            if (pos._quantity == 0) continue;
+            DecisionSet::Holding h;
+            h._symbol = sym;
+            h._quantity = pos._quantity;
+            h._costPrice = pos._avgPrice;
+            auto cp = closePrices.find(sym);
+            h._currentPrice = (cp != closePrices.end() && cp->second > 0.0) ? cp->second
+                                                                          : pos._currentPrice;
+            h._marketValue = static_cast<double>(h._quantity) * h._currentPrice;
+            // 成本价未知就不算浮盈（读侧显示"—"），不拿 0 冒充"没亏没赚"
+            if (h._costPrice > 0.0) {
+                h._unrealizedPnl =
+                    (h._currentPrice - h._costPrice) * static_cast<double>(h._quantity);
+            }
+            set._currentPortfolioValue += h._marketValue;
+            set._holdings.push_back(std::move(h));
+        }
+        // 重仓在前：读者先看到仓位最重的标的
+        std::sort(set._holdings.begin(), set._holdings.end(),
+                  [](const DecisionSet::Holding& a, const DecisionSet::Holding& b) {
+                      return a._marketValue > b._marketValue;
+                  });
+        // 当前总资金 = 持仓市值 + 剩余资金（账本现金，决策前）
+        set._currentTotalCapital = set._currentPortfolioValue + set._available;
+    }
 
     // 两融配置
     set._marginRatio = marginRatio;

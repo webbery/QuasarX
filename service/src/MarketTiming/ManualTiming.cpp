@@ -88,11 +88,9 @@ String ManualTiming::renderMarginSection(const DecisionSet& set) const {
     html += R"h(<div style="padding:16px 24px;">)h";
     html += R"h(<div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">两融信用</div>)h";
     html += R"h(<div style="padding:12px 16px;background:linear-gradient(135deg,#faf5ff,#f3e8ff);border-radius:8px;border:1px solid #d8b4fe;">)h";
-
     // 保证金总量与占用
     double usedPct = (set._marginEquity > 0.0) ? (set._usedMargin / set._marginEquity * 100.0) : 0.0;
-    html += R"h(<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">)h";
-    html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.6);border-radius:6px;">)h";
+    html += R"h(<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">)h";    html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.6);border-radius:6px;">)h";
     html += R"h(<span style="font-size:11px;color:#6b21a8;">保证金总量</span>)h";
     html += fmt::format(R"h(<span style="font-size:13px;font-weight:600;color:#581c87;">¥{:.2f}</span>)h", set._marginEquity);
     html += "</div>";
@@ -103,7 +101,11 @@ String ManualTiming::renderMarginSection(const DecisionSet& set) const {
     html += "</div>";
     html += "</div>";
 
-    // 维持担保比例
+    // 口径说明：这一块用的是"决策后"口径（决策后现金 + 决策后持仓市值），
+    // 与上面的「当前账户（决策前）」不是同一时点 —— 不写清楚读者会以为账对不上。
+    html += R"h(<div style="font-size:11px;color:#7c3aed;margin-bottom:10px;">口径：保证金总量 = 决策后现金 + 决策后持仓市值；已占用 = 融资欠款 + 融券在借市值；维持担保比例 = 保证金总量 ÷ 已占用。</div>)h";
+
+    // 维持担保比例 + 距离警戒线/平仓线
     if (set._usedMargin > 0.0) {
         double maintenanceRatio = set._marginEquity / set._usedMargin;
         String ratioColor = "#16a34a";  // 绿色：安全
@@ -120,6 +122,41 @@ String ManualTiming::renderMarginSection(const DecisionSet& set) const {
         html += fmt::format(R"h(<span style="font-size:13px;font-weight:600;color:{};">{:.1f}% ({})</span>)h",
                             ratioColor, maintenanceRatio * 100.0, ratioStatus);
         html += "</div>";
+
+        // 距离警戒线还有多少个百分点 —— 只给"安全/接近警戒线"的定性判断不够，
+        // 读者要的是"还差多少"。负数表示已经跌破。
+        const double gapToWarning = (maintenanceRatio - set._warningRatio) * 100.0;
+        const double gapToLiquidation = (maintenanceRatio - set._liquidationRatio) * 100.0;
+        String gapColor = (gapToWarning >= 0.0) ? "#16a34a" : "#dc2626";
+        html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.6);border-radius:6px;margin-bottom:4px;">)h";
+        html += fmt::format(R"h(<span style="font-size:11px;color:#6b21a8;">警戒线 {:.0f}% · 平仓线 {:.0f}%</span>)h",
+                            set._warningRatio * 100.0, set._liquidationRatio * 100.0);
+        html += fmt::format(R"h(<span style="font-size:13px;font-weight:600;color:{};">距警戒线 {:+.1f} 个百分点</span>)h",
+                            gapColor, gapToWarning);
+        html += "</div>";
+        html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.6);border-radius:6px;margin-bottom:10px;">)h";
+        html += R"h(<span style="font-size:11px;color:#6b21a8;">距平仓线</span>)h";
+        html += fmt::format(R"h(<span style="font-size:13px;font-weight:600;color:{};">{:+.1f} 个百分点</span>)h",
+                            gapToLiquidation >= 0.0 ? "#16a34a" : "#dc2626", gapToLiquidation);
+        html += "</div>";
+
+        // 等效可承受跌幅：把"还差多少个百分点"翻译成"市值还能跌多少"。
+        // 模型：只有多头市值下跌，现金与融资/融券余额都不变
+        //   R' = (E − longValue·d) / U  →  d = U·(R − W) / longValue
+        // 有融券空头时不适用（空头市值会随多头下跌而上涨，占用同步变大），
+        // 那时只给百分点，不给这个换算，免得给出偏乐观的数字。
+        if (set._totalShortValue <= 0.0 && set._portfolioValue > 0.0) {
+            double dropToWarning = set._usedMargin * gapToWarning / 100.0
+                                   / set._portfolioValue * 100.0;
+            double dropToLiquidation = set._usedMargin * gapToLiquidation / 100.0
+                                       / set._portfolioValue * 100.0;
+            html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.6);border-radius:6px;margin-bottom:10px;">)h";
+            html += R"h(<span style="font-size:11px;color:#6b21a8;">等效可承受跌幅</span>)h";
+            html += fmt::format(R"h(<span style="font-size:13px;font-weight:600;color:#581c87;">至警戒线 -{:.1f}% · 至平仓线 -{:.1f}%</span>)h",
+                                std::max(0.0, dropToWarning), std::max(0.0, dropToLiquidation));
+            html += "</div>";
+            html += R"h(<div style="font-size:11px;color:#7c3aed;margin-bottom:10px;">口径：仅多头持仓市值下跌、现金与融资余额不变时维持担保比例的降幅。</div>)h";
+        }
     }
 
     // 融券在借市值与日费
@@ -149,23 +186,345 @@ String ManualTiming::renderMarginSection(const DecisionSet& set) const {
     html += "</div>";
     html += "</div>";
 
-    // 融券明细
-    if (!set._marginItems.empty()) {
-        html += R"h(<div style="margin-top:12px;font-size:11px;color:#6b21a8;">)h";
-        html += R"h(<div style="font-weight:600;margin-bottom:6px;">融券明细</div>)h";
-        for (const auto& m : set._marginItems) {
-            if (m._borrowedShares <= 0) continue;
-            double currentPrice = (m._borrowedShares > 0) ? (m._borrowedValue / m._borrowedShares) : 0.0;
-            html += fmt::format(R"h(<div style="padding:4px 10px;background:rgba(255,255,255,0.4);border-radius:4px;margin-bottom:4px;">)h");
-            html += fmt::format(R"h(<span style="font-weight:600;">{}</span> · 在借 {} 股 · 开空 {:.2f} · 现价 {:.2f} · 市值 ¥{:.2f} · 当日费 ¥{:.2f})h",
-                                get_symbol(m._symbol), m._borrowedShares, m._shortCostPrice,
-                                currentPrice, m._borrowedValue, m._dailyShortFee);
-            html += "</div>";
+    // 融券明细：把"在借市值 × 年费率 ÷ 365"写出来，读者可核对
+    bool hasShortDetail = false;
+    for (const auto& m : set._marginItems) {
+        if (m._borrowedShares <= 0) continue;
+        if (!hasShortDetail) {
+            html += R"h(<div style="margin-top:12px;font-size:11px;color:#6b21a8;">)h";
+            html += R"h(<div style="font-weight:600;margin-bottom:6px;">融券明细</div>)h";
+            hasShortDetail = true;
         }
+        double currentPrice = (m._borrowedShares > 0) ? (m._borrowedValue / m._borrowedShares) : 0.0;
+        html += fmt::format(R"h(<div style="padding:4px 10px;background:rgba(255,255,255,0.4);border-radius:4px;margin-bottom:4px;">)h");
+        html += fmt::format(R"h(<span style="font-weight:600;">{}</span> · 在借 {} 股 · 开空 {:.2f} · 现价 {:.2f} · 市值 ¥{:.2f})h",
+                            get_symbol(m._symbol), m._borrowedShares, m._shortCostPrice,
+                            currentPrice, m._borrowedValue);
+        html += fmt::format(R"h(<span style="margin-left:8px;">融券费 = ¥{:.2f} × {:.2f}% × {} ÷ 365 = ¥{:.2f}</span>)h",
+                            m._borrowedValue, set._securitiesLendingRate * 100.0,
+                            fmt::format("{:.0f}", set._accrualDays), m._dailyShortFee);
+        html += "</div>";
+    }
+    if (hasShortDetail) html += "</div>";
+
+    // 融资明细：融资本金 × 年利率 ÷ 365
+    bool hasFinancingDetail = false;
+    for (const auto& m : set._marginItems) {
+        if (m._financedAmount <= 0.0) continue;
+        if (!hasFinancingDetail) {
+            html += R"h(<div style="margin-top:12px;font-size:11px;color:#6b21a8;">)h";
+            html += R"h(<div style="font-weight:600;margin-bottom:6px;">融资明细</div>)h";
+            hasFinancingDetail = true;
+        }
+        html += R"h(<div style="padding:4px 10px;background:rgba(255,255,255,0.4);border-radius:4px;margin-bottom:4px;">)h";
+        html += fmt::format(R"h(<span style="font-weight:600;">{}</span> · 融资本金 ¥{:.2f})h",
+                            get_symbol(m._symbol), m._financedAmount);
+        html += fmt::format(R"h(<span style="margin-left:8px;">融资利息 = ¥{:.2f} × {:.2f}% × {} ÷ 365 = ¥{:.2f}</span>)h",
+                            m._financedAmount, set._financingRate * 100.0,
+                            fmt::format("{:.0f}", set._accrualDays), m._dailyFinancingInterest);
+        html += "</div>";
+    }
+    if (hasFinancingDetail) html += "</div>";
+
+    html += "</div></div>";
+    return html;
+}
+
+// ── 当前账户 + 当前持仓（决策前口径）──
+// 读者拿到这封邮件时，账户里的持仓和现金就是执行指令的起点。
+// 这里的每个数都来自 DecisionSet（账本快照 × 今日收盘价），邮件不直接摸 broker。
+String ManualTiming::renderCurrentSection(const DecisionSet& set) const {
+    // 账本不可用（回测路径 / 策略没注册账户）时整块不显示：
+    // 显示 ¥0 会让读者以为账户被清空了，而不是"查不到"。
+    if (!set._holdingsKnown) return "";
+
+    auto fmtMoney = [](double v) {
+        return fmt::format("{:.2f}", v);
+    };
+    // 金额展示：负值（超额占用）用 "-¥xxx" 形式，
+    // 避免出现 "¥-332736.00" 这种读不懂的写法。
+    auto fmtAmount = [](double v) {
+        return v < 0.0 ? ("-¥" + fmt::format("{:.2f}", -v)) : ("¥" + fmt::format("{:.2f}", v));
+    };
+
+    String html;
+    html += R"h(<div style="padding:16px 24px;">)h";
+    html += R"h(<div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">当前账户（今日决策执行前）</div>)h";
+
+    // 三格：持仓市值 / 剩余资金 / 当前总资金
+    html += R"h(<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">)h";
+    auto cell = [&](const String& style, const String& label, const String& value,
+                    const String& valueColor) {
+        html += fmt::format(R"h(<div style="{}">)h", style);
+        html += fmt::format(R"h(<div style="font-size:11px;color:#64748b;margin-bottom:2px;">{}</div>)h", label);
+        html += fmt::format(R"h(<div style="font-size:16px;font-weight:700;color:{};">{}</div>)h", valueColor, value);
+        html += "</div>";
+    };
+    cell("padding:8px 12px;background:#f8fafc;border-radius:8px;", "持仓市值",
+         "¥" + fmtMoney(set._currentPortfolioValue), "#0c4a6e");
+    cell("padding:8px 12px;background:#f8fafc;border-radius:8px;", "剩余资金",
+         fmtAmount(set._available), set._available < 0.0 ? "#b91c1c" : "#334155");
+    cell("padding:8px 12px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;border-radius:8px;",
+         "当前总资金", "¥" + fmtMoney(set._currentTotalCapital), "#166534");
+    html += "</div>";
+
+    // 融资负债：融资买入时"剩余资金"不含借入的那部分，
+    // 直接把总资金当净资产会高估。扣掉才是账户权益。
+    if (set._borrowedCash > 0.0) {
+        html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-top:8px;">)h";
+        html += R"h(<span style="font-size:12px;color:#64748b;">减：融资负债</span>)h";
+        html += fmt::format(R"h(<span style="font-size:13px;font-weight:600;color:#b91c1c;">-¥{}</span>)h",
+                            fmtMoney(set._borrowedCash));
+        html += "</div>";
+        html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-top:8px;">)h";
+        html += R"h(<span style="font-size:12px;color:#64748b;">账户权益（扣融资负债）</span>)h";
+        html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;">¥{}</span>)h",
+                            fmtMoney(set._currentTotalCapital - set._borrowedCash));
         html += "</div>";
     }
 
-    html += "</div></div>";
+    // 可用资金为负 = 账户已超额占用（持仓市值 + 当日买入 > 分配资金）。
+    // 这个状态以前被截成 ¥0 藏起来，读者只会以为"钱花光了"，
+    // 看不出是超配 —— 超配时买入预算仍按账本权益口径给出，必须显式提示。
+    if (set._available < 0.0) {
+        html += R"h(<div style="margin-top:8px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#b91c1c;">)h";
+        html += "⚠️ 剩余资金为负：账户已超额占用（持仓市值 + 当日买入 &gt; 分配资金）。"
+                "当日买入预算按账本权益口径给出，请先核对卖出回款再下单。";
+        html += "</div>";
+    }
+
+    html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:8px;">口径：账本现状 × 今日收盘价估值；今日决策尚未计入。剩余资金 = 账本现金。</div>)h";
+
+    // ── 当前持仓明细 ──
+    html += R"h(<div style="margin-top:16px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">当前持仓明细</div>)h";
+
+    if (set._holdings.empty()) {
+        html += R"h(<div style="padding:12px 14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#94a3b8;">当前无持仓</div>)h";
+        html += "</div>";
+        return html;
+    }
+
+    // 今日计划：按 symbol 找今天的 BUY/SELL 决策。
+    // 数量语义见 PortfolioNode：BUY flag=0 开多、flag=1 平空；
+    // SELL flag=1 平多、flag=0 融券开空。数量都是本次下单的股数。
+    Map<symbol_t, const DecisionSet::Item*> planBySymbol;
+    for (const auto& it : set._items) {
+        if (it._action == TradeAction::HOLD) continue;
+        planBySymbol[it._symbol] = &it;
+    }
+
+    html += R"h(<table style="width:100%;border-collapse:collapse;font-size:13px;">)h";
+    html += R"h(<thead><tr>)h";
+    html += R"h(<th style="text-align:left;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">标的</th>)h";
+    html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">数量</th>)h";
+    html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">现价/成本</th>)h";
+    html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">市值</th>)h";
+    html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">浮动盈亏</th>)h";
+    html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">占比</th>)h";
+    html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">今日计划</th>)h";
+    html += R"h(</tr></thead><tbody>)h";
+
+    double totalPnl = 0.0;
+    bool allCostKnown = true;
+    for (const auto& h : set._holdings) {
+        const String td = "padding:8px 10px;border-bottom:1px solid #f1f5f9;";
+
+        html += fmt::format(R"h(<td style="{}font-weight:600;">{}</td>)h", td, get_symbol(h._symbol));
+        html += fmt::format(R"h(<td style="{}text-align:right;">{}</td>)h", td, h._quantity);
+
+        // 现价 / 成本：成本未知显示"—"，不填 0
+        if (h._costPrice > 0.0) {
+            html += fmt::format(R"h(<td style="{}text-align:right;color:#475569;">{:.2f} / {:.2f}</td>)h",
+                                td, h._currentPrice, h._costPrice);
+        } else {
+            html += fmt::format(R"h(<td style="{}text-align:right;color:#475569;">{:.2f} / —</td>)h",
+                                td, h._currentPrice);
+            allCostKnown = false;
+        }
+
+        html += fmt::format(R"h(<td style="{}text-align:right;font-weight:500;">¥{}</td>)h",
+                            td, fmtMoney(h._marketValue));
+
+        // 浮动盈亏：成本未知就不显示金额（"没亏没赚"是假的）
+        if (h._costPrice > 0.0) {
+            double pnlPct = (h._costPrice != 0.0)
+                            ? (h._currentPrice - h._costPrice) / h._costPrice * 100.0 : 0.0;
+            String pnlColor = h._unrealizedPnl >= 0 ? "#16a34a" : "#dc2626";
+            html += fmt::format(R"h(<td style="{}text-align:right;font-weight:600;color:{};">{}{} ({:+.2f}%)</td>)h",
+                                td, pnlColor, h._unrealizedPnl >= 0 ? "+" : "-",
+                                fmtMoney(std::abs(h._unrealizedPnl)), pnlPct);
+            totalPnl += h._unrealizedPnl;
+        } else {
+            html += fmt::format(R"h(<td style="{}text-align:right;color:#94a3b8;">—</td>)h", td);
+        }
+
+        // 占比：分母是当前持仓市值合计
+        if (set._currentPortfolioValue > 0.0) {
+            html += fmt::format(R"h(<td style="{}text-align:right;color:#64748b;font-size:12px;">{:.1f}%</td>)h",
+                                td, h._marketValue / set._currentPortfolioValue * 100.0);
+        } else {
+            html += fmt::format(R"h(<td style="{}text-align:right;color:#94a3b8;">—</td>)h", td);
+        }
+
+        // 今日计划
+        String planText = "—";
+        auto pit = planBySymbol.find(h._symbol);
+        if (pit != planBySymbol.end()) {
+            const auto* p = pit->second;
+            if (p->_action == TradeAction::BUY) {
+                planText = p->_isShortCover ? "平空 " : "买入 ";
+            } else {
+                planText = p->_isShortOpen ? "开空 " : "卖出 ";
+            }
+            planText += fmt::format("{} 股", p->_quantity);
+            if (p->_isFinanced) planText += "（融资）";
+        }
+        const bool hasPlan = (planText != "—");
+        html += fmt::format(R"h(<td style="{}text-align:right;color:{};">{}</td>)h",
+                            td, hasPlan ? "#0369a1" : "#94a3b8", planText);
+        html += "</tr>";
+    }
+
+    // 合计行：让读者能把表和上面的「当前持仓市值」对上
+    html += R"h(<tr style="background:#f8fafc;">)h";
+    html += R"h(<td style="padding:8px 10px;font-weight:600;color:#64748b;">合计</td>)h";
+    html += R"h(<td style="padding:8px 10px;text-align:right;color:#94a3b8;">—</td>)h";
+    html += R"h(<td style="padding:8px 10px;text-align:right;color:#94a3b8;">—</td>)h";
+    html += fmt::format(R"h(<td style="padding:8px 10px;text-align:right;font-weight:700;">¥{}</td>)h",
+                        fmtMoney(set._currentPortfolioValue));
+    if (allCostKnown) {
+        String pnlColor = totalPnl >= 0 ? "#16a34a" : "#dc2626";
+        html += fmt::format(R"h(<td style="padding:8px 10px;text-align:right;font-weight:700;color:{};">{}{}</td>)h",
+                            pnlColor, totalPnl >= 0 ? "+" : "-", fmtMoney(std::abs(totalPnl)));
+    } else {
+        html += R"h(<td style="padding:8px 10px;text-align:right;color:#94a3b8;">—</td>)h";
+    }
+    html += R"h(<td style="padding:8px 10px;text-align:right;color:#94a3b8;">—</td>)h";
+    html += R"h(<td style="padding:8px 10px;text-align:right;color:#94a3b8;">—</td>)h";
+    html += R"h(</tr>)h";
+
+    html += R"h(</tbody></table>)h";
+    html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:6px;">浮动盈亏 = (现价 − 成本价) × 数量；成本价取账本持仓均价，未知显示"—"。今日计划为今日决策的股数，尚未成交。</div>)h";
+
+    html += "</div>";
+    return html;
+}
+
+// ── 费用明细（可核对）──
+// 每笔交易把"成交金额 = 数量 × 价格"、"佣金 = 金额 × 费率"逐项写出来，
+// 读者可以照着算一遍，而不是只看到一个"预估摩擦成本 ¥123.45"的总数。
+// 数字全部来自决策集已求值的结果（item._cost），这里不重算费率。
+String ManualTiming::renderFeeDetailSection(const DecisionSet& set) const {
+    // 费率未配置时不显示：报一个 ¥0 会让读者以为"今天不花钱"
+    if (!set._costProfile.known()) return "";
+
+    Vector<const DecisionSet::Item*> trades;
+    for (const auto& it : set._items) {
+        if (it._action == TradeAction::HOLD) continue;
+        trades.push_back(&it);
+    }
+    if (trades.empty()) return "";
+
+    auto fmtMoney = [](double v) {
+        return fmt::format("{:.2f}", v);
+    };
+    auto kindLabel = [](CostKind k) -> const char* {
+        switch (k) {
+            case CostKind::Commission:       return "佣金";
+            case CostKind::StampDuty:        return "印花税";
+            case CostKind::ExchangeFee:      return "交易所费用";
+            case CostKind::Slippage:         return "滑点";
+            case CostKind::Financing:        return "融资利息";
+            case CostKind::SecuritiesLending:return "融券费";
+        }
+        return "费用";
+    };
+    // 档案里该费用项的规则（同一 kind 取第一条；股票档案里每个 kind 只有一条）
+    auto findFee = [&set](CostKind kind) -> const FeeItem* {
+        for (const auto& f : set._costProfile._tradeFees) {
+            if (f._kind == kind) return &f;
+        }
+        return nullptr;
+    };
+
+    double totalFees = 0.0;
+    double totalBuyOut = 0.0;
+    double totalSellIn = 0.0;
+
+    String html;
+    html += R"h(<div style="margin-top:16px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">费用明细（可核对）</div>)h";
+
+    for (const auto* d : trades) {
+        const bool isBuy = (d->_action == TradeAction::BUY);
+        const double amount = static_cast<double>(d->_quantity) * d->_price;
+
+        html += R"h(<div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:8px;">)h";
+        html += fmt::format(R"h(<div style="font-size:13px;font-weight:600;color:#1a1a2e;margin-bottom:4px;">{} · {} {} 股 @ {:.2f}</div>)h",
+                            get_symbol(d->_symbol), isBuy ? "买入" : "卖出", d->_quantity, d->_price);
+
+        // 成交金额 = 数量 × 价格
+        html += fmt::format(R"h(<div style="font-size:12px;color:#475569;">成交金额 = {} 股 × {:.2f} = ¥{}</div>)h",
+                            d->_quantity, d->_price, fmtMoney(amount));
+
+        // 逐项费用：基数 × 费率 = 金额
+        String feeAmounts;   // 实际支出/回款那一行的加减项
+        double feeSum = 0.0;
+        for (const auto& [kind, value] : d->_cost._tradeItems) {
+            const FeeItem* fee = findFee(kind);
+            double base = amount;
+            double rate = 0.0;
+            if (fee) {
+                rate = fee->_rate;
+                if (fee->_basis == CostBasis::Quantity) {
+                    base = static_cast<double>(d->_quantity);
+                }
+                // 紧急平仓的滑点惩罚：档案里的倍率在这一刻生效
+                if (d->_isEmergencyClose) rate *= fee->_emergencyMultiplier;
+            }
+            const double raw = base * rate;
+            String line;
+            if (!fee) {
+                // 档案里没有对应规则：只给金额，不编一个 0% 费率去凑公式
+                line = fmt::format(R"h({} = ¥{}</div>)h", kindLabel(kind), fmtMoney(value));
+            } else if (fee->_min > 0.0 && raw < fee->_min) {
+                line = fmt::format(R"h({} = ¥{} × {:.4f}% = ¥{} → 按最低 ¥{} 计</div>)h",
+                                   kindLabel(kind), fmtMoney(base), rate * 100.0,
+                                   fmtMoney(raw), fmtMoney(fee->_min));
+            } else if (fee->_max > 0.0 && raw > fee->_max) {
+                line = fmt::format(R"h({} = ¥{} × {:.4f}% = ¥{} → 按上限 ¥{} 计</div>)h",
+                                   kindLabel(kind), fmtMoney(base), rate * 100.0,
+                                   fmtMoney(raw), fmtMoney(fee->_max));
+            } else {
+                line = fmt::format(R"h({} = ¥{} × {:.4f}% = ¥{}</div>)h",
+                                   kindLabel(kind), fmtMoney(base), rate * 100.0,
+                                   fmtMoney(value));
+            }
+            html += fmt::format(R"h(<div style="font-size:12px;color:#475569;">{})h", line);
+
+            if (!feeAmounts.empty()) feeAmounts += " ";
+            feeAmounts += fmt::format("{} ¥{}", isBuy ? "+" : "−", fmtMoney(value));
+            feeSum += value;
+        }
+        totalFees += feeSum;
+
+        // 实际支出 / 回款：买入是金额加费用，卖出是金额减费用
+        const double net = isBuy ? (amount + feeSum) : (amount - feeSum);
+        if (isBuy) totalBuyOut += net; else totalSellIn += net;
+        html += fmt::format(R"h(<div style="font-size:12px;font-weight:600;color:#334155;margin-top:4px;">{} = ¥{}{}{} = ¥{}</div>)h",
+                            isBuy ? "实际支出" : "实际回款", fmtMoney(amount),
+                            feeAmounts.empty() ? "" : " ", feeAmounts, fmtMoney(net));
+        html += "</div>";
+    }
+
+    // 汇总：与「资金概况」里的买入/卖出总额、预估摩擦成本对得上
+    double minCommission = 0.0;
+    for (const auto& f : set._costProfile._tradeFees) {
+        if (f._kind == CostKind::Commission) { minCommission = f._min; break; }
+    }
+    html += fmt::format(R"h(<div style="font-size:11px;color:#94a3b8;margin-top:4px;">当日成交 {} 笔 · 买入实际支出 ¥{} · 卖出实际回款 ¥{} · 摩擦合计 ¥{}。费率来自策略 execution 节点配置；印花税仅卖出收取，最低佣金 ¥{}。</div>)h",
+                        trades.size(), fmtMoney(totalBuyOut), fmtMoney(totalSellIn),
+                        fmtMoney(totalFees), fmtMoney(minCommission));
+
     return html;
 }
 
@@ -278,7 +637,6 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     // _budgetKnown=false 表示账本缺失：此时降级（不显示资金行、不算占比），
     // 而不是显示 ¥0 让读者以为"钱花光了"。
     const double strategyCap = set._allocated;
-    const double strategyAvailable = set._available;
     const bool budgetKnown = set._budgetKnown;
 
     // 单决策值格式化辅助
@@ -322,10 +680,17 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
         }
     }
 
+    // ── 当前账户 + 当前持仓（决策前口径）──
+    // 放在最前面：这是读者执行指令的起点。
+    // 账本不可用时整块不显示（renderCurrentSection 返回空串）。
+    html += renderCurrentSection(set);
+
     // ── 资金概况 ──
     html += R"h(<div style="padding:16px 24px;">)h";
     html += R"h(<div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">资金概况</div>)h";
-    html += R"h(<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">)h";
+    // 三列：分配资金 / 买入总额 / 卖出总额 一行放下，
+    // 下面的净买入、盈亏、摩擦成本是整行条目（grid-column:1/-1）
+    html += R"h(<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">)h";
 
     auto htmlItem = [&](const String& label, const String& value, bool full = false) {
         html += fmt::format(R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;{}">)h",
@@ -340,20 +705,11 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     const bool showBudget = budgetKnown && strategyCap > 0.0;
     if (showBudget) {
         htmlItem("分配资金", fmtAmount(strategyCap));
-        // 明确标注"决策前"：下面的持仓市值/现金是决策后的口径，
-        // 两者混在一张表里会让读者以为账对不上。
-        htmlItem("可用资金（决策前）", fmtAmount(strategyAvailable));
+        // 「可用资金（决策前）」不再在这里出现：它就是账本现金，
+        // 已由上面的「当前账户」块以「剩余资金」呈现 —— 同一个数字
+        // 在邮件里出现两次、还带两个标签，读者会以为口径不同。
     } else if (!budgetKnown) {
         htmlItem("资金账本", "未注册（无法核对预算）", true);
-    }
-    // 可用资金为负 = 账户已超额占用（持仓市值 + 当日买入 > 分配资金）。
-    // 这个状态以前被截成 ¥0 藏起来，读者只会以为"钱花光了"，
-    // 看不出是超配 —— 超配时买入预算仍按账本权益口径给出，必须显式提示。
-    if (showBudget && strategyAvailable < 0.0) {
-        html += R"h(<div style="margin-top:8px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#b91c1c;">)h";
-        html += "⚠️ 可用资金为负：账户已超额占用（持仓市值 + 当日买入 &gt; 分配资金）。"
-                "当日买入预算按账本权益口径给出，请先核对卖出回款再下单。";
-        html += "</div>";
     }
     auto buyPct = showBudget ? fmt::format(" ({:.1f}%)", totalBuyValue / strategyCap * 100.0) : "";
     auto sellPct = showBudget ? fmt::format(" ({:.1f}%)", totalSellValue / strategyCap * 100.0) : "";
@@ -598,6 +954,12 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
             html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:4px;">摩擦 = 佣金 + 印花税（仅卖出）+ 滑点，按决策价 × 数量估算，非实际成交费用。</div>)h";
         }
     }
+
+    // ── 费用明细（可核对）──
+    // 上面给的是合计，这里把每一笔的算式摊开：数量 × 价格、金额 × 费率 = 费用。
+    // 读者要能自己核一遍，而不是只能相信一个总数。
+    html += renderFeeDetailSection(set);
+
     html += "</div>";
 
     // ── 风控事件（由 ProtectionNode 触发，价格为原始价） ──
