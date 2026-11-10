@@ -42,19 +42,30 @@ private:
     // _Rb_tree_insert_and_rebalance / local_Rb_tree_rotate_left。
     // 因此并行区只产出结果，context 的 set/add 全部留到并行区之后串行做。
     struct SymbolOutput {
-        String prefix;                        // "{symbol}." ；空 = 未匹配到 symbol
-        bool warmup = false;                  // 预热期：按 NaN 占位路径发布
-        bool publish = false;                 // 是否发布正式输出（分解失败/Skip 时不发布）
+        String _prefix;                       // "{symbol}." ；空 = 未匹配到 symbol
+        bool _warmup = false;                 // 预热期：按 NaN 占位路径发布
+        bool _publish = false;                // 是否发布正式输出（分解失败/Skip 时不发布）
         // nimf 输出。滚动模式指向 _rollingIMFs 里的持久状态：每 epoch 只在尾部追加
         // 一个值，整段历史（~n × numIMFs）不必再拷一份，发布完下一 epoch 继续用。
         // 全局模式没有持久状态可指，持有本 epoch 的分解结果，发布时直接 move 进 context。
-        const Vector<Vector<double>>* imfs_view = nullptr;
-        Vector<Vector<double>> imfs_owned;
-        bool imfs_movable = false;            // true: imfs_view 指向 imfs_owned，可 move
+        const Vector<Vector<double>>* _imfs_view = nullptr;
+        Vector<Vector<double>> _imfs_owned;
+        bool _imfs_movable = false;           // true: _imfs_view 指向 _imfs_owned，可 move
 
-        Vector<double> energy_velocity;       // 本 epoch 现算的派生特征，发布后不再需要 -> move
-        Vector<double> volume_regime;
-        bool has_volume_regime = false;       // false = 没算（无 volume 输入），保持预填空 key
+        // 滚动模式的增量发布标志。
+        //
+        // 旧实现每 epoch 把 _rollingIMFs 里的整段历史拷进 context（O(n) 拷贝 +
+        // 每 epoch 一次尺寸变大的 realloc），整轮下来是 O(n²)。改为：
+        //   - bootstrap 那一次整段 set；
+        //   - 之后每 epoch 只 add 本 epoch 新算出的那一个值。
+        // 序列长度与内容与旧实现逐元素一致（长度始终等于已到 bar 数），
+        // 但每 epoch 的写入成本从 O(n) 降到 O(1)。
+        bool _imfs_incremental = false;        // true: 本 epoch 只新增 1 个值，走 add
+        Vector<double> _imfs_new;              // 增量模式下每个 IMF 本 epoch 的新值
+
+        Vector<double> _energy_velocity;      // 本 epoch 现算的派生特征，发布后不再需要 -> move
+        Vector<double> _volume_regime;
+        bool _has_volume_regime = false;      // false = 没算（无 volume 输入），保持空 key
     };
 
     // 对单个输入序列执行 EMD（全局或滚动）
@@ -72,6 +83,16 @@ private:
     // 真正的 context 写入由 Process 在并行区结束后串行执行（见 SymbolOutput）。
     NodeProcessResult processSymbol(const String& inputKey, DataContext& context,
                                     SymbolOutput& out);
+
+    // 清空某个 symbol 的输出 key（分解失败 / 产出少于 numIMFs 时保持旧语义）
+    //
+    // 旧实现靠每 epoch 的预填把输出 key 重置成空 Vector，分解失败的 symbol
+    // 下游读到的是空序列。预填去掉后由这里显式清一次（罕见路径，不在热路径）。
+    //
+    // @param fromImf   从第几个 IMF 开始清
+    // @param clearDerived 是否连派生特征（energy_velocity / volume_regime）一起清
+    void clearOutputs(DataContext& context, const String& prefix,
+                      int fromImf, bool clearDerived);
 
     Server* _server;
     String _label;

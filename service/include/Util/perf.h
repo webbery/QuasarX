@@ -47,14 +47,18 @@ inline double ms_since(PerfClock::time_point t0) {
 inline double clock_read_cost_ns() {
     static const double ns = [] {
         constexpr int kSamples = 20000;
-        double acc = 0;
+        // 取最小值而不是均值：均值会被中断/调度/频率切换拉高，实测同一进程
+        // 不同轮次能在 15ns ~ 42ns 之间波动，导致 overhead 被高估 3 倍、
+        // net 被过度扣减（甚至出现 "net 比一次哈希查找还快" 的荒谬值）。
+        // 最小值收敛到 vDSO clock_gettime 的真实成本，稳定得多。
+        double best = 1e9;
         for (int i = 0; i < kSamples; ++i) {
             auto a = PerfClock::now();
             auto b = PerfClock::now();
-            acc += std::chrono::duration<double, std::nano>(b - a).count();
+            const double d = std::chrono::duration<double, std::nano>(b - a).count();
+            if (d < best) best = d;
         }
-        // 两次连续读取的间隔 ≈ 一次读取的成本
-        return acc / kSamples;
+        return best;
     }();
     return ns;
 }

@@ -19,12 +19,13 @@
 // 剖析代码必须在 Release 下也能存活，否则跑 Release 回测时既没有节点级耗时，
 // 也没有 DataContext 的原语统计 —— 什么都测不出来。
 //
-// 由 CMake 的 ENABLE_GRAPH_PERF option 控制（定义 ENABLE_GRAPH_PERF=1 宏）：
-//   ENABLE_GRAPH_PERF=OFF（默认）→ 展开为空，Release 下零开销且不占内存
-//   ENABLE_GRAPH_PERF=ON           → 保留插桩代码，回测时自动采集并输出 [Perf] 报告
+// 由 CMake 的 ENABLE_PERF_CPP 打开时一并定义 ENABLE_GRAPH_PERF=1（见 CMakeLists）：
+//   未定义 ENABLE_GRAPH_PERF → 展开为空，Release 下零开销且不占内存
+//   定义了 ENABLE_GRAPH_PERF → 保留插桩代码，回测时自动采集并输出 [Perf] 报告
 //
-// 与 ENABLE_PERF_CPP 正交：那个开关只决定"能不能读硬件计数器"，
-// 这个开关只决定"要不要留墙钟插桩"。两者都开才是完整的剖析档。
+// 两者绑在一起的原因：硬件计数器（HAVE_PERF_CPP）只在剖析档有意义，
+// 而单独留墙钟插桩的收益有限，没必要再拆一个开关。
+// 注意运行时仍会降级：计数器打不开（paranoid 过高）时只输出墙钟部分。
 //
 // Debug 档（_DEBUG）永远保留剖析代码，方便本地对照。
 #if defined(_DEBUG) || defined(ENABLE_GRAPH_PERF)

@@ -50,7 +50,19 @@ double memberValue(const perf::CounterValues<perf::Group::MAX_MEMBERS>& vals,
 /// 消耗一点 CPU 时间，让自探测时计数器确实有非零读数
 void spinBriefly() {
     volatile double x = 0;
-    for (long i = 0; i < 200000; ++i) x += i * 1.000001;
+    for (long i = 0; i < 2000000; ++i) x += i * 1.000001;
+}
+
+/// 从一次 read() 的结果里抽出各逻辑指标的读数
+PerfHwSnapshot snapshotOf(const perf::CounterValues<perf::Group::MAX_MEMBERS>& vals,
+                          const perf::Group& group,
+                          int idxCycles, int idxInstructions, int idxCacheMisses, int idxBranchMisses) {
+    PerfHwSnapshot s;
+    s.cycles = memberValue(vals, group, idxCycles);
+    s.instructions = memberValue(vals, group, idxInstructions);
+    s.cacheMisses = memberValue(vals, group, idxCacheMisses);
+    s.branchMisses = memberValue(vals, group, idxBranchMisses);
+    return s;
 }
 
 }   // namespace
@@ -78,8 +90,12 @@ bool PerfCppCounters::open() {
     cfg.include_kernel(false);
     cfg.include_hypervisor(false);
     cfg.include_guest(false);
-    cfg.include_host(false);
     cfg.include_idle(false);
+    // ⚠ 不要设 include_host(false)（即 exclude_host）。
+    // 实测 kernel 5.15 + 原生 x86 PMU：带上这一位后 open() 不报错，
+    // 但每次 read() 都返回 0 —— 计数器静默失效，比打不开还难查。
+    // 这是逐指标实测出来的（guest/idle 单独关都正常，只有 host 会归零）。
+    cfg.include_host(true);
     // worker 线程里可能派生过子线程（OpenMP / xgboost），一并计入
     cfg.include_child_threads(true);
 
@@ -100,13 +116,30 @@ bool PerfCppCounters::open() {
 
         // 自探测 read() 的语义：连续读两次，第二次若显著小于第一次，
         // 说明 read() 会复位（增量语义）；否则是累计语义，调用方自己求差。
+        // 实测 perf-cpp v1.1.1 的 Group::read() 是累计语义（group.get() 恒为 0，
+        // 只有传出去的 CounterValues 有效），这里不假设，靠探测决定。
         spinBriefly();
         perf::CounterValues<perf::Group::MAX_MEMBERS> vals;
         _group.read(vals);
-        double first = memberValue(vals, _group, _idxCycles);
+        const PerfHwSnapshot probe1 = snapshotOf(vals, _group,
+            _idxCycles, _idxInstructions, _idxCacheMisses, _idxBranchMisses);
         _group.read(vals);
-        double second = memberValue(vals, _group, _idxCycles);
-        _readResets = (second < first);
+        const PerfHwSnapshot probe2 = snapshotOf(vals, _group,
+            _idxCycles, _idxInstructions, _idxCacheMisses, _idxBranchMisses);
+        _readResets = (probe2.cycles < probe1.cycles);
+
+        // 读数恒为 0 说明计数器没真正工作（例如带了内核不支持的 exclude 标志：
+        // open() 成功但一直读 0）。这种情况必须显式降级，否则报告里会是一堆
+        // 看起来"很健康"的 0，比缺数据更误导。
+        if (probe2.cycles <= 0 && probe2.instructions <= 0) {
+            _error = "counters opened but always read zero (unsupported perf attribute bits)";
+            _available = false;
+            return false;
+        }
+
+        // 以自探测读数为基线：第一次 read() 只应归因 open() 之后的那一段，
+        // 不该把初始化成本算进第一个 epoch 的数据推进桶。
+        _prev = probe2;
 
         _available = true;
         return true;
@@ -163,11 +196,8 @@ void PerfCppCounters::read(PerfHwSnapshot& out) {
         perf::CounterValues<perf::Group::MAX_MEMBERS> vals;
         _group.read(vals);
 
-        PerfHwSnapshot cur;
-        cur.cycles = memberValue(vals, _group, _idxCycles);
-        cur.instructions = memberValue(vals, _group, _idxInstructions);
-        cur.cacheMisses = memberValue(vals, _group, _idxCacheMisses);
-        cur.branchMisses = memberValue(vals, _group, _idxBranchMisses);
+        const PerfHwSnapshot cur = snapshotOf(vals, _group,
+            _idxCycles, _idxInstructions, _idxCacheMisses, _idxBranchMisses);
 
         if (_readResets) {
             // 增量语义：本次读到的就是自上次读以来的量

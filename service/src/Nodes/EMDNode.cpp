@@ -327,32 +327,14 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
     inputKeys.reserve(N);
     for (const auto& [k, _] : _params) inputKeys.push_back(k);
 
-    // ---- 预填 DataContext._outputs 中所有 per-symbol 输出 key ----
-    // 每个 epoch 先把输出 key 重置为空 Vector：
-    //   - warmup 期的 add() 在空序列上追加，等价于「每 epoch 一个 NaN」；
-    //   - 分解失败/Skip 的 symbol 下游也能读到 key（空序列），与旧行为一致。
-    // 串行执行，开销约 210 keys × 50 ns ≈ 10 µs/epoch。
-    for (const auto& [inputKey, _] : _params) {
-        String prefix;
-        for (const auto& p : _symbolPrefixes) {
-            if (inputKey.size() > p.size() &&
-                inputKey.compare(0, p.size(), p) == 0) {
-                prefix = p;
-                break;
-            }
-        }
-        if (prefix.empty()) continue;
-        for (int i = 0; i < _numIMFs; ++i) {
-            String outKey = prefix + _label + ".nimf_" + std::to_string(i);
-            context.set(outKey, Vector<double>{});
-        }
-        if (_computeEnergyVelocity) {
-            context.set(prefix + _label + ".energy_velocity", Vector<double>{});
-        }
-        if (_computeVolumeRegime) {
-            context.set(prefix + _label + ".volume_regime", Vector<double>{});
-        }
-    }
+    // ---- 不再预填 DataContext._outputs 里的 per-symbol 输出 key ----
+    // 旧实现每 epoch 把 33 symbol × 7 个输出 key 重置成空 Vector（231 次 set），
+    // 作用有两个，现在都不再需要：
+    //   1) warmup 期让 add(NaN) 有序列可追加 —— 发布分支本来就有
+    //      "exist ? add : set" 兜底，首个 warmup epoch 自己建 key；
+    //   2) 分解失败(Skip) 的 symbol 下游能读到 key（空序列）—— 改由
+    //      clearOutputs() 在失败路径上显式清一次（罕见路径）。
+    // 真正有代价的是发布侧的整段拷贝，见下面 imfs_incremental 分支。
 
     // ---- 并行计算：只写各自的 outs[idx] 槽位，不碰 context ----
     Vector<SymbolOutput> outs(N);
@@ -370,12 +352,12 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
             finalResult = statuses[idx];
         }
         SymbolOutput& out = outs[idx];
-        if (out.prefix.empty()) continue;
+        if (out._prefix.empty()) continue;
 
-        if (out.warmup) {
+        if (out._warmup) {
             const double nan = std::numeric_limits<double>::quiet_NaN();
             for (int i = 0; i < _numIMFs; ++i) {
-                String outKey = out.prefix + _label + ".nimf_" + std::to_string(i);
+                String outKey = out._prefix + _label + ".nimf_" + std::to_string(i);
                 if (context.exist(outKey)) {
                     context.add(outKey, nan);
                 } else {
@@ -383,50 +365,97 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
                 }
             }
             if (_computeEnergyVelocity) {
-                String k = out.prefix + _label + ".energy_velocity";
+                String k = out._prefix + _label + ".energy_velocity";
                 if (context.exist(k)) context.add(k, nan);
                 else context.set(k, Vector<double>(1, nan));
             }
             if (_computeVolumeRegime) {
-                String k = out.prefix + _label + ".volume_regime";
+                String k = out._prefix + _label + ".volume_regime";
                 if (context.exist(k)) context.add(k, nan);
                 else context.set(k, Vector<double>(1, nan));
             }
             continue;
         }
 
-        if (!out.publish || !out.imfs_view) continue;
+        if (!out._publish || !out._imfs_view) {
+            // 分解失败（Skip）：输出 key 保持旧语义（空序列）。
+            // 旧实现靠每 epoch 的预填达成，这里显式清一次。
+            clearOutputs(context, out._prefix, 0, /*clearDerived=*/true);
+            continue;
+        }
 
-        if (out.imfs_movable) {
-            // 全局模式：imfs_owned 是本 epoch 的临时结果，发布后不再需要 -> move
-            int i = 0;
-            for (auto& imf : out.imfs_owned) {
-                if (i >= _numIMFs) break;
-                context.set(out.prefix + _label + ".nimf_" + std::to_string(i),
+        int published = 0;
+        if (out._imfs_movable) {
+            // 全局模式：_imfs_owned 是本 epoch 的临时结果，发布后不再需要 -> move
+            for (auto& imf : out._imfs_owned) {
+                if (published >= _numIMFs) break;
+                context.set(out._prefix + _label + ".nimf_" + std::to_string(published),
                             std::move(imf));
-                ++i;
+                ++published;
             }
-            out.imfs_owned.clear();
+            out._imfs_owned.clear();
+        } else if (out._imfs_incremental) {
+            // 滚动模式（增量）：本 epoch 只新算出 1 个值，只把它追加进 context。
+            //
+            // 旧实现每 epoch 把整段历史 set 进 context：O(n) 拷贝 + 每 epoch 一次
+            // 尺寸变大的 realloc（堆顶跟着长 → page fault），整轮 O(n²)。
+            // 增量后每 epoch O(1)，序列长度与内容与旧实现逐元素一致：
+            // bootstrap 建立的序列长度 = 当时的 bar 数，此后每 epoch +1，
+            // 始终等于「已到 bar 数」。
+            for (const auto& imf : *out._imfs_view) {
+                if (published >= _numIMFs) break;
+                String outKey = out._prefix + _label + ".nimf_" + std::to_string(published);
+                // 失步自愈：context 里的长度比持久状态少 1 才说明只差本 epoch
+                // 这一个值；否则（key 不存在 / 被清过）退回整段重写
+                if (context.exist(outKey) &&
+                    context.get<Vector<double>>(outKey).size() + 1 == imf.size()) {
+                    context.add(outKey, out._imfs_new[published]);
+                } else {
+                    context.set(outKey, imf);
+                }
+                ++published;
+            }
         } else {
-            // 滚动模式：imfs_view 指向 _rollingIMFs 的持久状态，下一 epoch 还要用 -> 拷贝
-            int i = 0;
-            for (const auto& imf : *out.imfs_view) {
-                if (i >= _numIMFs) break;
-                context.set(out.prefix + _label + ".nimf_" + std::to_string(i), std::move(imf));
-                ++i;
+            // 滚动模式（bootstrap）：整段写入一次，此后每 epoch 走增量分支
+            for (const auto& imf : *out._imfs_view) {
+                if (published >= _numIMFs) break;
+                // imfs_view 是 const 引用 → 这里是拷贝（bootstrap 只发生一次）
+                context.set(out._prefix + _label + ".nimf_" + std::to_string(published), imf);
+                ++published;
             }
+        }
+
+        // 产出的 IMF 少于 _numIMFs 时，把没产出的 key 清成空序列（保持旧语义）
+        if (published < _numIMFs) {
+            clearOutputs(context, out._prefix, published, /*clearDerived=*/false);
         }
 
         if (_computeEnergyVelocity) {
-            context.set(out.prefix + _label + ".energy_velocity",
-                        std::move(out.energy_velocity));
+            context.set(out._prefix + _label + ".energy_velocity",
+                        std::move(out._energy_velocity));
         }
-        if (out.has_volume_regime) {
-            context.set(out.prefix + _label + ".volume_regime",
-                        std::move(out.volume_regime));
+        if (out._has_volume_regime) {
+            context.set(out._prefix + _label + ".volume_regime",
+                        std::move(out._volume_regime));
         }
     }
     return finalResult;
+}
+
+// 清空某个 symbol 的输出 key（分解失败 / 产出少于 numIMFs 时保持旧语义）
+void EMDNode::clearOutputs(DataContext& context, const String& prefix,
+                           int fromImf, bool clearDerived) {
+    for (int i = fromImf; i < _numIMFs; ++i) {
+        context.set(prefix + _label + ".nimf_" + std::to_string(i), Vector<double>{});
+    }
+    if (clearDerived) {
+        if (_computeEnergyVelocity) {
+            context.set(prefix + _label + ".energy_velocity", Vector<double>{});
+        }
+        if (_computeVolumeRegime) {
+            context.set(prefix + _label + ".volume_regime", Vector<double>{});
+        }
+    }
 }
 
 NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& context,
@@ -454,8 +483,8 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
                 break;
             }
         }
-        out.prefix = prefix;
-        out.warmup = true;
+        out._prefix = prefix;
+        out._warmup = true;
         return NodeProcessResult::Success;
     }
 
@@ -475,7 +504,7 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
         WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
         return NodeProcessResult::Skip;
     }
-    out.prefix = prefix;
+    out._prefix = prefix;
 
     if (_windowSize > 0) {
         // ===== 滚动模式：增量计算，只处理最新窗口 =====
@@ -490,6 +519,8 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
                 return NodeProcessResult::Skip;
             }
             stored = std::move(imfs);   // 分解结果直接搬进持久状态，不拷贝
+            // bootstrap：整段发布一次，之后每 epoch 走增量分支
+            out._imfs_incremental = false;
         } else {
             // 后续 epoch：只计算最新一个窗口（O(1) 而非 O(n)）
             const int w = _windowSize;
@@ -520,6 +551,7 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
             // 追加最新值到持久存储
             // 不足 _numIMFs 的 IMF 延续前一值，避免虚假零值
             const int actual = static_cast<int>(win_imfs.size());
+            out._imfs_new.assign(_numIMFs, 0.0);
             for (int k = 0; k < _numIMFs; ++k) {
                 if (k >= static_cast<int>(stored.size())) {
                     stored.emplace_back(Vector<double>(n - 1, 0.0));
@@ -528,11 +560,13 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
                     ? win_imfs[k].back()
                     : (stored[k].empty() ? 0.0 : stored[k].back());
                 stored[k].push_back(val);
+                out._imfs_new[k] = val;   // 本 epoch 的新值，增量发布用
             }
+            out._imfs_incremental = true;
         }
 
         // 直接指向持久状态：整段历史不再拷进 SymbolOutput
-        out.imfs_view = &stored;
+        out._imfs_view = &stored;
     } else {
         // ===== 全局模式：每次完整分解 =====
         Vector<Vector<double>> imfs;
@@ -540,16 +574,16 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
             WARN("EMDNode decomposition failed for input {}", inputKey);
             return NodeProcessResult::Skip;
         }
-        out.imfs_owned = std::move(imfs);
-        out.imfs_view = &out.imfs_owned;
-        out.imfs_movable = true;
+        out._imfs_owned = std::move(imfs);
+        out._imfs_view = &out._imfs_owned;
+        out._imfs_movable = true;
     }
 
-    const Vector<Vector<double>>& imfs = *out.imfs_view;
+    const Vector<Vector<double>>& imfs = *out._imfs_view;
 
     // 计算衍生特征（如果启用）：返回值是现算的新序列，发布时直接 move 进 context
     if (_computeEnergyVelocity) {
-        out.energy_velocity =
+        out._energy_velocity =
             computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
     }
     if (_computeVolumeRegime) {
@@ -557,15 +591,15 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
         String volKey = prefix + "volume";
         try {
             const auto& vol = context.get<Vector<double>>(volKey);
-            out.volume_regime =
+            out._volume_regime =
                 computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);
-            out.has_volume_regime = true;
+            out._has_volume_regime = true;
         } catch (...) {
             WARN("EMDNode: volume_regime requested but no volume input found for {}", prefix);
         }
     }
 
-    out.publish = true;
+    out._publish = true;
     return NodeProcessResult::Success;
 }
 
