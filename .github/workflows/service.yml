@@ -111,6 +111,28 @@ jobs:
           sudo cp -P deps-cache/osqp/install/lib/libosqp* /usr/local/lib/
           sudo ldconfig
 
+      # perf-cpp v1.1.1（Linux 硬件性能计数器）
+      # 只构建静态库 libperf-cpp.a：服务端二进制自带计数器实现，运行期不依赖 .so，
+      # 因此不需要随 release tarball 发布（runtime-libs artifact 不含它）。
+      - name: Cache perf-cpp build
+        uses: actions/cache@v4
+        id: cache-perfcpp
+        with:
+          path: |
+            deps-cache/perf-cpp/install
+          key: ${{ runner.os }}-perfcpp-v1.1.1
+          restore-keys: |
+            ${{ runner.os }}-perfcpp-
+
+      - name: Install perf-cpp from cache
+        if: steps.cache-perfcpp.outputs.cache-hit == 'true'
+        run: |
+          sudo mkdir -p /usr/local/lib/cmake
+          sudo cp -r deps-cache/perf-cpp/install/include/perfcpp /usr/local/include/
+          sudo cp -P deps-cache/perf-cpp/install/lib/libperf-cpp.a /usr/local/lib/
+          sudo cp -r deps-cache/perf-cpp/install/lib/cmake/perf-cpp /usr/local/lib/cmake/
+          ls -la /usr/local/lib/libperf-cpp.a
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -178,6 +200,32 @@ jobs:
           sudo cp -P ${{ github.workspace }}/deps-cache/osqp/install/lib/libosqpstatic.a /usr/local/lib/ 2>/dev/null || true
           sudo ldconfig
           ls -la /usr/local/lib/libosqp*
+
+      - name: Build perf-cpp (if cache miss)
+        if: steps.cache-perfcpp.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.1.1 https://github.com/jmuehlig/perf-cpp
+          cd perf-cpp
+          mkdir build && cd build
+          # BUILD_LIB_SHARED=OFF → 只出静态库 libperf-cpp.a（CMakeLists 的
+          # find_library(NAMES perf-cpp) 优先命中 .so，共享库会挤掉静态库）
+          # GEN_PROCESSOR_EVENTS=OFF → 不生成带绝对路径的 processor 事件源码，
+          # 保证缓存产物与工作目录解耦
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DBUILD_LIB_SHARED=OFF \
+                -DBUILD_EXAMPLES=OFF \
+                -DBUILD_TESTS=OFF \
+                -DGEN_PROCESSOR_EVENTS=OFF \
+                -DENABLE_CLANG_TIDY=OFF \
+                -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/deps-cache/perf-cpp/install ..
+          make -j$(nproc)
+          make install
+          sudo mkdir -p /usr/local/lib/cmake
+          sudo cp -r ${{ github.workspace }}/deps-cache/perf-cpp/install/include/perfcpp /usr/local/include/
+          sudo cp -P ${{ github.workspace }}/deps-cache/perf-cpp/install/lib/libperf-cpp.a /usr/local/lib/
+          sudo cp -r ${{ github.workspace }}/deps-cache/perf-cpp/install/lib/cmake/perf-cpp /usr/local/lib/cmake/
+          ls -la /usr/local/lib/libperf-cpp.a
 
       - name: Cache ONNX-runtime build
         uses: actions/cache@v4

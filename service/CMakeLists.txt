@@ -372,6 +372,58 @@ else()
     message("-- OSQP v1.0: NOT FOUND — MVO 优化器不可用")
 endif()
 
+# ── perf-cpp (硬件性能计数器, Linux 专用) ──
+# 静态库 /usr/local/lib/libperf-cpp.a（perf-cpp v1.1.1），头文件 /usr/local/include/perfcpp。
+# 开关: cmake .. -DENABLE_PERF_CPP=ON
+#
+# 只在优化档（Release）有意义：perf-cpp 是剖析热点用的硬件计数器工具，
+# 剖析 -O0 + ASAN 的 Debug 档没有参考价值；Debug 下会给出警告但仍允许链接，
+# 方便本地用 gdb/valgrind 对照。
+#
+# 运行时前提：perf_event_open 需要权限。kernel.perf_event_paranoid >= 2 时，
+# 非特权进程打不开硬件计数器（perf-cpp 抛 perf::CannotOpenCounterError）；
+# 调用方必须捕获异常并降级，不能让计数器缺失影响主流程。
+# CI runner 上该值通常是 4，即计数器不可用 —— 这是预期行为，构建/链接不受影响。
+#
+option(ENABLE_PERF_CPP "Link perf-cpp static lib (Linux hardware performance counters)" OFF)
+
+if(ENABLE_PERF_CPP)
+    if(WIN32)
+        message(FATAL_ERROR "ENABLE_PERF_CPP is Linux-only: perf-cpp depends on linux/perf_event.h")
+    endif()
+    if(NOT "${CMAKE_BUILD_TYPE}" STREQUAL "Release")
+        message(WARNING "ENABLE_PERF_CPP: build type is '${CMAKE_BUILD_TYPE}', not the optimized Release build — profiling results will not reflect production behaviour")
+    endif()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_GRAPH_PERF=1)
+    find_path(PERF_CPP_INCLUDE_DIR
+        NAMES perfcpp/counter_definition.hpp
+        HINTS /usr/local/include /usr/include
+    )
+    find_library(PERF_CPP_LIBRARY
+        NAMES perf-cpp
+        HINTS /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu
+    )
+    if(PERF_CPP_INCLUDE_DIR AND PERF_CPP_LIBRARY)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${PERF_CPP_INCLUDE_DIR})
+        # pthread 必须排在静态库之后：perf-cpp 的 mmap_buffer.o 用 std::thread，
+        # 依赖 pthread_create；本文件前面的 `-pthread` 出现在更早的链接位置，
+        # 在 --as-needed（Ubuntu 默认）下可能被丢弃。
+        target_link_libraries(${PROJECT_NAME} ${PERF_CPP_LIBRARY} pthread)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_PERF_CPP=1)
+        message("-- perf-cpp: static ${PERF_CPP_LIBRARY}")
+        message("-- perf-cpp: include ${PERF_CPP_INCLUDE_DIR}")
+    else()
+        message(FATAL_ERROR
+            "ENABLE_PERF_CPP=ON but perf-cpp was not found.\n"
+            "  expected: /usr/local/lib/libperf-cpp.a and /usr/local/include/perfcpp/\n"
+            "  install it with: git clone --depth 1 --branch v1.1.1 https://github.com/jmuehlig/perf-cpp\n"
+            "                  cmake -S perf-cpp -B perf-cpp/build -DCMAKE_BUILD_TYPE=Release \\\n"
+            "                        -DBUILD_LIB_SHARED=OFF -DENABLE_CLANG_TIDY=OFF \\\n"
+            "                        -DCMAKE_INSTALL_PREFIX=/usr/local\n"
+            "                  cmake --build perf-cpp/build -j && cmake --install perf-cpp/build")
+    endif()
+endif()
+
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
 endif()

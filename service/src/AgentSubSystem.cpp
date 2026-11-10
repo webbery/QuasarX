@@ -39,38 +39,9 @@
 #include "Metric/MonteCarloSimulator.h"
 
 namespace {
-// 性能剖析辅助：从起始时刻到当前的毫秒数（steady_clock 单调，不受系统时间调整影响）
-inline double ElapsedMs(std::chrono::steady_clock::time_point start) {
-    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-}
-
 // 回测中每 N 个 epoch 输出一次性能快照，避免长回测刷屏
 constexpr uint64_t kGraphPerfLogInterval = 200;
-
-// 逐 epoch 采样的分位数（拷贝一份后 nth_element，避免整表排序）
-double EpochPercentile(Vector<float> samples, double q) {
-    if (samples.empty()) return 0.0;
-    size_t idx = std::min(samples.size() - 1, static_cast<size_t>(q * samples.size()));
-    std::nth_element(samples.begin(), samples.begin() + idx, samples.end());
-    return samples[idx];
-}
-
-double EpochMax(const Vector<float>& samples) {
-    return samples.empty() ? 0.0 : *std::max_element(samples.begin(), samples.end());
-}
-
-// 首尾各 10% epoch 的均值比：>1 说明成本随数据增长（O(n²) 症状），<1 说明前置 warmup/懒加载开销
-double EpochDrift(const Vector<float>& samples) {
-    size_t n = samples.size();
-    if (n < 20) return 0.0;
-    size_t w = std::max<size_t>(1, n / 10);
-    double head = 0, tail = 0;
-    for (size_t i = 0; i < w; ++i) head += samples[i];
-    for (size_t i = n - w; i < n; ++i) tail += samples[i];
-    if (head <= 0) return 0.0;
-    return (tail / w) / (head / w);
-}
-}
+}   // namespace
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     auto default_config = handle->GetConfig().GetDefault();
@@ -333,17 +304,29 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
             uint64_t epoch = 0;
             bool success = true;
             auto startTick = std::chrono::high_resolution_clock::now();
-            DEBUG_GRAPH_PERF(
+            // 硬件计数器必须在当前 worker 线程里打开（perf_event_open 绑定线程），
+            // 打不开时降级为只做墙钟剖析，绝不影响回测
+            [[maybe_unused]] PerfCppCounters* hw = nullptr;
+            GRAPH_PERF(
                 ResetGraphPerf(flow);
                 context.EnablePerfProfile(true);
                 context.ResetPerfStat();
+                PerfCppCounters hwCounters;
+                if (hwCounters.open()) {
+                    hwCounters.start();
+                    hw = &hwCounters;
+                    INFO("[Perf] hardware counters enabled (cycles/instructions/cache-misses/branch-misses)");
+                }
+                else {
+                    WARN("[Perf] hardware counters unavailable: {} — wall-clock only", hwCounters.error());
+                }
             )
             // 使用 stepForward 推进回测时间
             while (flow._running && !Server::IsExit()) {
                 context.SetEpoch(++epoch);
 
                 // 推进回测时间
-                DEBUG_GRAPH_PERF(
+                GRAPH_PERF(
                     auto dataStart = std::chrono::steady_clock::now();
                 )
                 if (btContext && !exchange->stepForward(btContext)) {
@@ -351,16 +334,25 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     INFO("Backtest data finished for strategy {}", strategy);
                     break;
                 }
-                DEBUG_GRAPH_PERF(
-                    double dataMs = ElapsedMs(dataStart);
+                GRAPH_PERF(
+                    double dataMs = ms_since(dataStart);
                     flow._perf.dataMs += dataMs;
                     flow._perf.epochDataMs.push_back((float)dataMs);
 
+                    // 数据推进段的硬件计数：这次 read 关掉的是「上一轮最后一个节点 → 现在」
+                    // 的区间，也就是 stepForward 本身
+                    if (hw) {
+                        PerfHwSnapshot hwSnap;
+                        hw->read(hwSnap);
+                        flow._perf.hwDataCycles += hwSnap.cycles;
+                        flow._perf.hwDataInstructions += hwSnap.instructions;
+                    }
+
                     auto graphStart = std::chrono::steady_clock::now();
                 )
-                bool ok = RunGraph(strategy, flow, context);
-                DEBUG_GRAPH_PERF(
-                    double graphMs = ElapsedMs(graphStart);
+                bool ok = RunGraph(strategy, flow, context, hw);
+                GRAPH_PERF(
+                    double graphMs = ms_since(graphStart);
                     flow._perf.graphMs += graphMs;
                     flow._perf.epochGraphMs.push_back((float)graphMs);
                 )
@@ -368,11 +360,12 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     success = false;
                     break;
                 }
-                DEBUG_GRAPH_PERF(
+                GRAPH_PERF(
                     if (epoch % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
                 )
             }
-            DEBUG_GRAPH_PERF(
+            GRAPH_PERF(
+                if (hw) hw->stop();
                 LogGraphPerf(strategy, flow, context, true);
             )
             auto endTick = std::chrono::high_resolution_clock::now();
@@ -487,10 +480,21 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
 
             bool success = true;
             auto startTick = std::chrono::high_resolution_clock::now();
-            DEBUG_GRAPH_PERF(
+            // 同 StartBacktest：计数器必须在当前 worker 线程内打开
+            [[maybe_unused]] PerfCppCounters* hw = nullptr;
+            GRAPH_PERF(
                 ResetGraphPerf(flow);
                 context.EnablePerfProfile(true);
                 context.ResetPerfStat();
+                PerfCppCounters hwCounters;
+                if (hwCounters.open()) {
+                    hwCounters.start();
+                    hw = &hwCounters;
+                    INFO("[Perf] hardware counters enabled (cycles/instructions/cache-misses/branch-misses)");
+                }
+                else {
+                    WARN("[Perf] hardware counters unavailable: {} — wall-clock only", hwCounters.error());
+                }
             )
             // 使用 exchangeMgr 协调多 Exchange stepForward
             while (flow._running || !Server::IsExit()) {
@@ -498,22 +502,31 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                 context.SetEpoch(++flow._epochCount);
 
                 // 推进 Exchange 的回测时间
-                DEBUG_GRAPH_PERF(
+                GRAPH_PERF(
                     auto dataStart = std::chrono::steady_clock::now();
                 )
                 if (!exchangeMgr->StepAllHistoryExchanges(runId)) {
                     INFO("Backtest data finished for strategy {}, epoch={}", strategy, flow._epochCount);
                     break;
                 }
-                DEBUG_GRAPH_PERF(
-                    double dataMs = ElapsedMs(dataStart);
+                GRAPH_PERF(
+                    double dataMs = ms_since(dataStart);
                     flow._perf.dataMs += dataMs;
                     flow._perf.epochDataMs.push_back((float)dataMs);
+
+                    // 数据推进段的硬件计数（同 StartBacktest）
+                    if (hw) {
+                        PerfHwSnapshot hwSnap;
+                        hw->read(hwSnap);
+                        flow._perf.hwDataCycles += hwSnap.cycles;
+                        flow._perf.hwDataInstructions += hwSnap.instructions;
+                    }
+
                     auto graphStart = std::chrono::steady_clock::now();
                 )
-                bool ok = RunGraph(strategy, flow, context);
-                DEBUG_GRAPH_PERF(
-                    double graphMs = ElapsedMs(graphStart);
+                bool ok = RunGraph(strategy, flow, context, hw);
+                GRAPH_PERF(
+                    double graphMs = ms_since(graphStart);
                     flow._perf.graphMs += graphMs;
                     flow._perf.epochGraphMs.push_back((float)graphMs);
                 )
@@ -522,16 +535,17 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                     success = false;
                     break;
                 }
-                DEBUG_GRAPH_PERF(
+                GRAPH_PERF(
                     if (flow._epochCount % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
                 )
             }
-            DEBUG_GRAPH_PERF(
+            GRAPH_PERF(
+                if (hw) hw->stop();
                 LogGraphPerf(strategy, flow, context, true);
             )
             auto endTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
-            DEBUG_GRAPH_PERF(
+            GRAPH_PERF(
                 INFO("[Backtest] Loop exited: epochs={}, duration={:.3f}s, success={}", flow._epochCount, duration.count(), success);
             )
             if (success) {
@@ -1245,11 +1259,13 @@ FlowSubsystem::BacktestMcPaths FlowSubsystem::GetBacktestMcPaths(const String& s
     return it->second._mcPaths;
 }
 
-DEBUG_GRAPH_PERF(
+GRAPH_PERF(
 void FlowSubsystem::ResetGraphPerf(StrategyFlowInfo& flow) {
     flow._perf.epochs = 0;
     flow._perf.graphMs = 0;
     flow._perf.dataMs = 0;
+    flow._perf.hwDataCycles = 0;
+    flow._perf.hwDataInstructions = 0;
     flow._perf.epochGraphMs.clear();
     flow._perf.epochDataMs.clear();
     flow._perf.nodes.clear();
@@ -1300,6 +1316,16 @@ void FlowSubsystem::LogGraphPerf(const String& strategy, const StrategyFlowInfo&
         msg += fmt::format("\n[Perf]   #{} {} id={} calls={} total={:.3f}s avg={:.3f}ms max={:.3f}ms share={:.1f}%",
                            i + 1, stat->type, id, stat->calls, stat->totalMs / 1000.0,
                            stat->calls ? stat->totalMs / stat->calls : 0.0, stat->maxMs, share);
+        // 硬件计数器可用时补微架构指标：IPC 低 = 访存/分支受限，cmiss 高 = 吃内存带宽
+        if (stat->hwCycles > 0) {
+            const double ipc = stat->hwInstructions / stat->hwCycles;
+            const double cmiss = stat->hwInstructions > 0
+                ? stat->hwCacheMisses * 1000.0 / stat->hwInstructions : 0.0;
+            const double bmiss = stat->hwInstructions > 0
+                ? stat->hwBranchMisses * 1000.0 / stat->hwInstructions : 0.0;
+            msg += fmt::format(" ipc={:.2f} cmiss/ki={:.2f} bmiss/ki={:.2f} cycles={:.3f}G",
+                               ipc, cmiss, bmiss, stat->hwCycles / 1e9);
+        }
     }
     // graph_overhead = RunGraph 总耗时 - 各节点累计，反映图内的调度开销；
     // data_advance 是回测数据推进（stepForward）耗时，用于判断瓶颈在策略图还是数据侧
@@ -1308,44 +1334,108 @@ void FlowSubsystem::LogGraphPerf(const String& strategy, const StrategyFlowInfo&
                        overheadMs / 1000.0, perf.epochs ? overheadMs / perf.epochs : 0.0,
                        perf.dataMs / 1000.0, perf.epochs ? perf.dataMs / perf.epochs : 0.0);
 
+    // ── 硬件计数器汇总：判断数据推进段和图调度段的微架构特征 ──
+    if (perf.hwDataCycles > 0) {
+        msg += fmt::format("\n[Perf] hw: data_advance cycles={:.3f}G ipc={:.2f}",
+                           perf.hwDataCycles / 1e9,
+                           perf.hwDataCycles > 0 ? perf.hwDataInstructions / perf.hwDataCycles : 0.0);
+    }
+
     // ── DataContext 原语开销：辨别节点的耗时是"算得慢"还是"取值慢" ──
     // share_of_graph 是 context 累计耗时占 RunGraph 的比例；注意节点的 Process 内调用会同时
     // 计入节点 total 与该桶，两者是"包含"关系而非并列，不要相加。
+    //
+    // total 含插桩自身读时钟的成本，net 是扣掉之后的值，overhead 就是插桩污染。
+    // overhead 占比过高（>20%）说明这一轮 ctx 数字不可信，要么降采样要么分轮测。
     msg += "\n[Perf] ── DataContext ──";
-    msg += fmt::format("\n[Perf] ops={} total={:.3f}s avg={:.3f}us/op share_of_graph={:.1f}% keys={} bytes={:.2f}MB",
-                       ctxPerf.ops(), ctxMs / 1000.0,
-                       ctxPerf.ops() ? ctxMs * 1000.0 / ctxPerf.ops() : 0.0,
-                       perf.graphMs > 0 ? ctxMs * 100.0 / perf.graphMs : 0.0,
+    const double ctxOverMs = ctxPerf.overheadMs();
+    const double ctxNetMs = ctxPerf.netMs();
+    msg += fmt::format("\n[Perf] ops={} total={:.3f}s net={:.3f}s overhead={:.3f}s({:.1f}%) avg={:.3f}us/op net_share_of_graph={:.1f}% keys={} bytes={:.2f}MB",
+                       ctxPerf.ops(), ctxMs / 1000.0, ctxNetMs / 1000.0, ctxOverMs / 1000.0,
+                       ctxMs > 0 ? ctxOverMs * 100.0 / ctxMs : 0.0,
+                       ctxPerf.ops() ? ctxNetMs * 1000.0 / ctxPerf.ops() : 0.0,
+                       perf.graphMs > 0 ? ctxNetMs * 100.0 / perf.graphMs : 0.0,
                        ctxPerf.keys, ctxPerf.bytes / 1048576.0);
     auto bucketLine = [](const char* name, const DataContext::PerfCounter& c) {
-        return fmt::format("\n[Perf]   {} calls={} total={:.3f}s avg={:.3f}us max={:.3f}ms",
-                           name, c.calls, c.totalMs / 1000.0,
-                           c.calls ? c.totalMs * 1000.0 / c.calls : 0.0, c.maxMs);
+        return fmt::format("\n[Perf]   {} calls={} total={:.3f}s net={:.3f}s avg={:.3f}us max={:.3f}ms",
+                           name, c.calls, c.totalMs / 1000.0, c.netMs() / 1000.0,
+                           c.calls ? c.netMs() * 1000.0 / c.calls : 0.0, c.maxMs);
     };
     msg += bucketLine("get  ", ctxPerf.get);
     msg += bucketLine("set  ", ctxPerf.set);
     msg += bucketLine("add  ", ctxPerf.add);
     msg += bucketLine("exist", ctxPerf.exist);
 
+    // ── 未命中：以前完全不可见 ──
+    // _outputs.at() 抛 std::out_of_range 把控制流打断，miss 既不计时也不计数。
+    // 实时路径上 partial bar epoch 访问未就绪 key 是常态，异常展开比一次正常 get
+    // 贵几个数量级 —— 这个数字高就该把调用方改成先 exist() 再 get()。
+    if (ctxPerf.getMiss > 0 || ctxPerf.getBadType > 0) {
+        msg += fmt::format("\n[Perf]   miss: key_absent={} type_mismatch={} rate={:.1f}% of gets",
+                           ctxPerf.getMiss, ctxPerf.getBadType,
+                           ctxPerf.get.calls ? ctxPerf.getMiss * 100.0 / ctxPerf.get.calls : 0.0);
+        if (!ctxPerf.missKeys.empty()) {
+            Vector<Pair<String, uint64_t>> missRanked(ctxPerf.missKeys.begin(), ctxPerf.missKeys.end());
+            std::sort(missRanked.begin(), missRanked.end(),
+                      [](const auto& a, const auto& b) { return a.second > b.second; });
+            String line;
+            for (size_t i = 0; i < missRanked.size() && i < 5; ++i) {
+                line += fmt::format("{}{}({})", i ? " " : "", missRanked[i].first, missRanked[i].second);
+            }
+            msg += fmt::format("\n[Perf]   miss keys: {}", line);
+        }
+    }
+
+    // ── 写热点：set/add 按 key 的调用次数 ──
+    // 写路径是 context 开销的主要来源（读一次几十纳秒，写一次几微秒），
+    // 这个列表回答"是谁在反复写"。
+    if (!ctxPerf.keyWrites.empty()) {
+        Vector<Pair<String, uint64_t>> writeRanked(ctxPerf.keyWrites.begin(), ctxPerf.keyWrites.end());
+        std::sort(writeRanked.begin(), writeRanked.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        String line;
+        for (size_t i = 0; i < writeRanked.size() && i < 5; ++i) {
+            line += fmt::format("{}{}({})", i ? " " : "", writeRanked[i].first, writeRanked[i].second);
+        }
+        msg += fmt::format("\n[Perf]   top writes: {}", line);
+    }
+
+    // ── 最大的序列：定位 O(n²) 的元凶 ──
+    // 每 epoch append 的 Vector<double> 随 epoch 线性增长，扩容拷贝摊还 O(n)。
+    // 只看总 bytes 不知道是哪个 key 在膨胀，这个列表直接回答。
+    auto largest = context.TopKeysBySize(5);
+    if (!largest.empty()) {
+        String line;
+        for (size_t i = 0; i < largest.size(); ++i) {
+            line += fmt::format("{}{}({:.2f}MB)", i ? " " : "", largest[i].first,
+                                largest[i].second / 1048576.0);
+        }
+        msg += fmt::format("\n[Perf]   largest series: {}", line);
+    }
+
     // ── 逐 epoch 分布：drift >> 1 说明成本随序列长度增长（O(n²) 症状），<< 1 说明前置开销大 ──
     msg += "\n[Perf] ── per-epoch ──";
     msg += fmt::format("\n[Perf]   graph p50={:.3f}ms p95={:.3f}ms max={:.3f}ms drift={:.2f}x",
-                       EpochPercentile(perf.epochGraphMs, 0.50), EpochPercentile(perf.epochGraphMs, 0.95),
-                       EpochMax(perf.epochGraphMs), EpochDrift(perf.epochGraphMs));
+                       epoch_percentile(perf.epochGraphMs, 0.50), epoch_percentile(perf.epochGraphMs, 0.95),
+                       epoch_max(perf.epochGraphMs), epoch_drift(perf.epochGraphMs));
     msg += fmt::format("\n[Perf]   data  p50={:.3f}ms p95={:.3f}ms max={:.3f}ms drift={:.2f}x",
-                       EpochPercentile(perf.epochDataMs, 0.50), EpochPercentile(perf.epochDataMs, 0.95),
-                       EpochMax(perf.epochDataMs), EpochDrift(perf.epochDataMs));
+                       epoch_percentile(perf.epochDataMs, 0.50), epoch_percentile(perf.epochDataMs, 0.95),
+                       epoch_max(perf.epochDataMs), epoch_drift(perf.epochDataMs));
     INFO("{}", msg);
 }
 )
 
-bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
+bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context,
+                             PerfCppCounters* hw) {
     bool shouldSkipEpoch = false;
 
     // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
     bool inWarmup = context.IsInWarmup();
     auto epch = context.GetEpoch();
-    DEBUG_GRAPH_PERF(flow._perf.epochs++;)
+    GRAPH_PERF(flow._perf.epochs++;)
+    // 硬件计数器可用时按节点采集 cycles / instructions / cache-misses / branch-misses。
+    // read() 拿到的是「自上次读以来」的增量，所以每个节点读一次即可归因到节点。
+    const bool hwOn = hw != nullptr && hw->available();
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         String nodeType = "unknown";
@@ -1373,18 +1463,28 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             }
         }
 
-        DEBUG_GRAPH_PERF(
+        GRAPH_PERF(
             auto nodeStart = std::chrono::steady_clock::now();
         )
         auto result = node->Process(strategy, context);
-        DEBUG_GRAPH_PERF(
-            double nodeMs = ElapsedMs(nodeStart);
+        GRAPH_PERF(
+            double nodeMs = ms_since(nodeStart);
             // 累计节点耗时，供回测结束后的瓶颈分析（mutable：RunGraph 持 const flow 引用）
             auto& perfStat = flow._perf.nodes[node->id()];
             perfStat.type = nodeType;
             perfStat.calls++;
             perfStat.totalMs += nodeMs;
             if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
+            // 硬件计数器：本次读数 = 自上次读以来的增量 ≈ 本节点的执行成本
+            if (hwOn) {
+                PerfHwSnapshot hwSnap;
+                hw->read(hwSnap);
+                perfStat.hwCycles += hwSnap.cycles;
+                perfStat.hwInstructions += hwSnap.instructions;
+                perfStat.hwCacheMisses += hwSnap.cacheMisses;
+                perfStat.hwBranchMisses += hwSnap.branchMisses;
+                if (hwSnap.cycles > perfStat.hwMaxCycles) perfStat.hwMaxCycles = hwSnap.cycles;
+            }
             if (epch % 200 == 0) {
                 DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
                         epch, node->id(), nodeType, (int)result, nodeMs);
@@ -2111,6 +2211,23 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             }
                         }
 
+                        // 当前持仓（决策前口径）：ManualTiming 只产意图不下单，
+                        // 邮件要展示的是读者执行指令时的起点 —— 账上现在有什么、
+                        // 账上还剩多少钱。必须取在盯市之后，否则 _currentPrice
+                        // 是上一交易日的旧价，邮件里的持仓市值会偏低。
+                        //
+                        // 门槛是"账本里确实有这个策略的账户"，不是"有 StrategyCapital
+                        // 投影"：没有账户时账本返回空持仓 + 零现金，那种情况下报 ¥0
+                        // 会让读者以为钱被清空了，而不是"这个策略没分配资金"。
+                        Map<symbol_t, Position> currentPositions;
+                        bool holdingsKnown = false;
+                        if (auto* broker = _handle->GetBrokerSubSystem()) {
+                            if (broker->GetLedger()->HasStrategy(strategy)) {
+                                currentPositions = broker->GetLedger()->GetPositions(strategy);
+                                holdingsKnown = true;
+                            }
+                        }
+
                         // 决策后的现金与总资产：账本可用资金 + 卖出回款 − 买入支出。
                         // 与 portfolioValue（决策后持仓市值）同一时点、同一套价格。
                         double projectedCash = 0.0;
@@ -2137,7 +2254,8 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             marginCfg._warningRatio,
                             marginCfg._liquidationRatio,
                             /*accrualDays=*/1.0,
-                            projectedCash, projectedEquity, projectedKnown);
+                            projectedCash, projectedEquity, projectedKnown,
+                            currentPositions, holdingsKnown);
 
                         // 构建调试报告 + 发送邮件/SSE
                         EodDebugSpec debugSpec;

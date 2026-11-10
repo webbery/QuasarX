@@ -6,6 +6,7 @@
 #include "Nodes/ExecuteNode.h"
 #include "Strategy.h"
 #include "Util/datetime.h"
+#include "Util/perf.h"
 #include "Util/TradingCost.h"
 #include "Bridge/StrategyCapital.h"
 #include <atomic>
@@ -13,12 +14,23 @@
 #include <memory>
 #include <mutex>
 
-// ── 策略图性能剖析宏：Debug 下展开为代码块，Release 下展开为空 ──
-// 用于回测性能瓶颈定位，Release 下零开销且不占内存
-#ifdef _DEBUG
-    #define DEBUG_GRAPH_PERF(...) __VA_ARGS__
+// ── 策略图性能剖析宏 ──
+//
+// 剖析代码必须在 Release 下也能存活，否则跑 Release 回测时既没有节点级耗时，
+// 也没有 DataContext 的原语统计 —— 什么都测不出来。
+//
+// 由 CMake 的 ENABLE_GRAPH_PERF option 控制（定义 ENABLE_GRAPH_PERF=1 宏）：
+//   ENABLE_GRAPH_PERF=OFF（默认）→ 展开为空，Release 下零开销且不占内存
+//   ENABLE_GRAPH_PERF=ON           → 保留插桩代码，回测时自动采集并输出 [Perf] 报告
+//
+// 与 ENABLE_PERF_CPP 正交：那个开关只决定"能不能读硬件计数器"，
+// 这个开关只决定"要不要留墙钟插桩"。两者都开才是完整的剖析档。
+//
+// Debug 档（_DEBUG）永远保留剖析代码，方便本地对照。
+#if defined(_DEBUG) || defined(ENABLE_GRAPH_PERF)
+    #define GRAPH_PERF(...) __VA_ARGS__
 #else
-    #define DEBUG_GRAPH_PERF(...)
+    #define GRAPH_PERF(...)
 #endif
 
 class Server;
@@ -296,7 +308,14 @@ private:
     // bool StrategySell(const String& strategyName, symbol_t symbol, const DataFeatures& features);
     bool IsNearClose(symbol_t symb);
 
-    bool RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context);
+    /**
+     * @brief 执行策略图
+     * @param hw 硬件计数器（可为 nullptr）。非空且已 open() 时，节点级硬件计数
+     *            会被采集，用于判断瓶颈是访存受限还是分支受限。
+     * @note 计数器必须由调用方在**本线程内**打开（perf_event_open 绑定线程）
+     */
+    bool RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context,
+                  PerfCppCounters* hw = nullptr);
 
     void RegistIndicator(const String& strategy);
 
@@ -310,7 +329,7 @@ private:
      */
     void NotifyNodesDone(const String& strategy, const List<QNode*>& graph);
 
-    DEBUG_GRAPH_PERF(
+    GRAPH_PERF(
     /**
      * @brief 重置策略图耗时剖析统计（回测循环开始前调用）
      */
@@ -394,7 +413,7 @@ private:
         // 最近一次节点执行错误信息（RunGraph 中节点返回 Error 时设置）
         mutable String _lastError;
 
-    DEBUG_GRAPH_PERF(
+    GRAPH_PERF(
         // ── 策略图耗时剖析（仅用于回测性能瓶颈定位，不参与业务逻辑）──
         // 单个节点累计耗时；RunGraph 每次 Process 后累加
         struct NodePerfStat {
@@ -402,11 +421,20 @@ private:
             uint64_t calls = 0;     // Process 调用次数
             double totalMs = 0;     // 累计耗时
             double maxMs = 0;       // 单次最大耗时（用于发现冷启动/初始化尖峰）
+            // 硬件计数器累计（perf-cpp 可用时；不可用时全为 0）
+            double hwCycles = 0;        // CPU 周期
+            double hwInstructions = 0;  // 退休指令
+            double hwCacheMisses = 0;   // 缓存失效
+            double hwBranchMisses = 0;  // 分支预测失败
+            double hwMaxCycles = 0;     // 单次最大周期数（发现尖峰）
         };
         struct PerfProfile {
             uint64_t epochs = 0;                // RunGraph 调用次数（≈回测 epoch 数）
             double graphMs = 0;                 // RunGraph 累计耗时（节点 + 图调度）
             double dataMs = 0;                  // 回测数据推进累计耗时（stepForward）
+            // 硬件计数器：数据推进段（stepForward）的累计，与节点级分开统计
+            double hwDataCycles = 0;
+            double hwDataInstructions = 0;
             // 逐 epoch 采样（float：1 万 epoch 约 80KB），用于漂移与分位数分析
             Vector<float> epochGraphMs;
             Vector<float> epochDataMs;
