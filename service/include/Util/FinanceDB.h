@@ -31,6 +31,17 @@ public:
 
     bool deleteSymbol(const String& table, const String& symbol);
 
+    /// 删除类目表里满足条件的行：symbol 为空表示不限标的，
+    /// 日期范围留空表示不限日期（两者都空 = 清空全表，调用方应显式确认）。
+    /// 表名必须是已注册的类目（白名单），日期必须是 YYYY-MM-DD。
+    /// 返回删除行数；<0 表示参数非法或执行失败。
+    int deleteRows(const String& table, const String& symbol,
+                   const String& start_date, const String& end_date);
+
+    /// 类目数据概览：总行数 / 标的数 / 日期范围 / 近 recent_days 个交易日每日行数。
+    /// 用于前端首页展示（数据到哪天、每天多少行）。
+    nlohmann::json queryCategoryOverview(const String& table, int recent_days = 30);
+
     /// 删除某次分红事件（按 symbol + ex_dividend_date 唯一定位）
     bool deleteDividendEvent(const String& symbol, const String& ex_date);
 

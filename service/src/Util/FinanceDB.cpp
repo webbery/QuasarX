@@ -85,6 +85,23 @@ static const std::map<String, CategoryDef> CATEGORY_DEFS = {
             {"dupontEquityMultiplier", "dupont_equity_multiplier"},
         },
     }},
+    // 融资融券明细（日频，交易日粒度）。数据由 tools/fetch_margin_data.py 产出，
+    // CSV 列名与服务端类目字段映射一一对应，走通用 importCsv 通道入库。
+    // statDate = 交易日；pubDate = 交易日 + 1 天（交易所盘后才公布，
+    // 「次日可用」是为了避免当日决策用到当日两融数据造成回测前视）。
+    {"margin_daily", {
+        "融资融券",
+        {
+            {"rzBalance", "rz_balance"},
+            {"rzBuy", "rz_buy"},
+            {"rzRepay", "rz_repay"},
+            {"rqVolume", "rq_volume"},
+            {"rqSell", "rq_sell"},
+            {"rqRepay", "rq_repay"},
+            {"rqBalance", "rq_balance"},
+            {"totalBalance", "total_balance"},
+        },
+    }},
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -522,6 +539,129 @@ bool FinanceDB::deleteDividendEvent(const String& symbol, const String& ex_date)
         SPDLOG_ERROR("[FinanceDB] Failed to delete dividend event {} for {}", ex_date, symbol);
     }
     return ok;
+}
+
+int FinanceDB::deleteRows(const String& table, const String& symbol,
+                          const String& start_date, const String& end_date) {
+    if (!isInitialized()) return -1;
+
+    // 表名走类目白名单：表名来自接口参数，不能直接拼进 SQL
+    if (!isValidCategory(table)) {
+        SPDLOG_ERROR("[FinanceDB] deleteRows: unknown table '{}'", table);
+        return -1;
+    }
+    // 日期必须是 YYYY-MM-DD（同样是防注入 + 防手滑写错格式）
+    if (!start_date.empty() && !IsYmdDate(start_date)) {
+        SPDLOG_ERROR("[FinanceDB] deleteRows: bad start_date '{}'", start_date);
+        return -1;
+    }
+    if (!end_date.empty() && !IsYmdDate(end_date)) {
+        SPDLOG_ERROR("[FinanceDB] deleteRows: bad end_date '{}'", end_date);
+        return -1;
+    }
+
+    String where;
+    if (!symbol.empty()) {
+        where = fmt::format(" WHERE symbol = {}", encodeSymbol(symbol));
+    }
+    if (!start_date.empty()) {
+        where += fmt::format("{} stat_date >= '{}'", where.empty() ? " WHERE" : " AND", start_date);
+    }
+    if (!end_date.empty()) {
+        where += fmt::format("{} stat_date <= '{}'", where.empty() ? " WHERE" : " AND", end_date);
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    // DuckDB 的 DELETE 不返回行数，先 COUNT 再删
+    int64_t rows = 0;
+    {
+        String count_sql = fmt::format("SELECT COUNT(*) FROM {}{}", table, where);
+        duckdb_result res;
+        if (duckdb_query(conn(), count_sql.c_str(), &res) == DuckDBSuccess &&
+            duckdb_row_count(&res) > 0) {
+            rows = duckdb_value_int64(&res, 0, 0);
+        }
+        duckdb_destroy_result(&res);
+    }
+
+    String del_sql = fmt::format("DELETE FROM {}{}", table, where);
+    if (!exec(del_sql)) {
+        SPDLOG_ERROR("[FinanceDB] deleteRows failed: {}", del_sql);
+        return -1;
+    }
+
+    SPDLOG_INFO("[FinanceDB] deleteRows: {} rows removed from {} ({})", rows, table,
+                where.empty() ? "no filter" : where);
+    return static_cast<int>(rows);
+}
+
+nlohmann::json FinanceDB::queryCategoryOverview(const String& table, int recent_days) {
+    nlohmann::json result;
+    result["table"] = table;
+
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+    if (!isValidCategory(table)) {
+        result["error"] = fmt::format("Unknown table: {}", table);
+        return result;
+    }
+    if (recent_days <= 0) recent_days = 30;
+
+    result["name"] = categoryName(table);
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    // ── 总量 / 日期范围 ──
+    {
+        String sql = fmt::format(
+            "SELECT COUNT(*), COUNT(DISTINCT symbol), "
+            "strftime(MIN(stat_date), '%Y-%m-%d'), strftime(MAX(stat_date), '%Y-%m-%d') "
+            "FROM {}", table);
+        duckdb_result res;
+        if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+            const char* err = duckdb_result_error(&res);
+            result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+            duckdb_destroy_result(&res);
+            return result;
+        }
+        if (duckdb_row_count(&res) > 0) {
+            result["rows"] = duckdb_value_int64(&res, 0, 0);
+            result["symbols"] = duckdb_value_int64(&res, 1, 0);
+            char* first = duckdb_value_varchar(&res, 2, 0);
+            char* last = duckdb_value_varchar(&res, 3, 0);
+            result["start_date"] = first ? first : "";
+            result["latest_date"] = last ? last : "";
+            if (first) duckdb_free(first);
+            if (last) duckdb_free(last);
+        }
+        duckdb_destroy_result(&res);
+    }
+
+    // ── 近 N 个交易日每天的行数 ──
+    result["recent"] = nlohmann::json::array();
+    {
+        String sql = fmt::format(
+            "SELECT strftime(stat_date, '%Y-%m-%d') AS d, COUNT(*) AS c FROM {} "
+            "GROUP BY d ORDER BY d DESC LIMIT {}", table, recent_days);
+        duckdb_result res;
+        if (duckdb_query(conn(), sql.c_str(), &res) == DuckDBSuccess) {
+            idx_t n = duckdb_row_count(&res);
+            for (idx_t i = 0; i < n; ++i) {
+                char* d = duckdb_value_varchar(&res, 0, i);
+                nlohmann::json item;
+                item["date"] = d ? d : "";
+                item["rows"] = duckdb_value_int64(&res, 1, i);
+                if (d) duckdb_free(d);
+                result["recent"].push_back(item);
+            }
+        }
+        duckdb_destroy_result(&res);
+    }
+
+    return result;
 }
 
 // ═══════════════════════════════════════════════════════════

@@ -94,6 +94,28 @@ public:
         return ok;
     }
 
+    // 执行 SQL 并返回 DuckDB 错误文本（成功返回空字符串）。
+    // exec() / query() 只返回 bool，会把 DuckDB 的错误文本丢掉，导致
+    // 「DB 已失效」和「确实没有数据」在日志与接口上完全无法区分，故补此版本。
+    std::string execWithError(const std::string& sql) {
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        duckdb_result result;
+        if (duckdb_query(conn_, sql.c_str(), &result) == DuckDBSuccess) {
+            duckdb_destroy_result(&result);
+            return {};
+        }
+        const char* err = duckdb_result_error(&result);
+        std::string msg = err ? std::string(err) : std::string("unknown error");
+        duckdb_destroy_result(&result);
+        return msg;
+    }
+
+    // DuckDB 发生 FATAL 后整个连接会被 invalidate，之后所有查询都返回
+    // "database has been invalidated because of a previous fatal error"。
+    static bool isInvalidatedError(const std::string& err) {
+        return err.find("has been invalidated") != std::string::npos;
+    }
+
     bool isInitialized() const { return initialized_; }
 
     // 子类访问句柄（必须已持锁）

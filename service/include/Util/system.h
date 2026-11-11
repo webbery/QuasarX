@@ -323,13 +323,6 @@ enum class MarketType : char {
 // 获取股票的类型
 MarketType getMarketType(symbol_t stock);
 
-class RuntimeError : public std::exception {
-public:
-    RuntimeError(int code):_code(code) {}
-
-private:
-    int _code;
-};
 #ifdef __linux__
 class CPUPerformanceMesure {
 public:

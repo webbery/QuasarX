@@ -185,6 +185,17 @@ public:
     // pair.second 包含错误信息（如果有）
     std::pair<bool, String> ValidateStrategyConfig(const nlohmann::json& config);
 
+    /// 下载并导入两融明细（逐标的融资/融券余额）
+    ///
+    /// 拉 tools/fetch_margin_data.py → 写 {db_path}/margin/detail_<YYYYMMDD>.csv
+    /// → 走通用类目通道 FinanceDB::importCsv(csv, "margin_daily") 入库
+    /// （表结构按类目自动创建，ON CONFLICT 保证重跑幂等）。
+    ///
+    /// date 为空表示由脚本自动取最近有数据的交易日；env 是配置里的 python 环境名。
+    /// 返回导入行数；<0 表示失败，原因写入 error。不发射 SSE，由调用方决定事件。
+    /// 定时任务（Schedules）和 REST（MarginHandler）共用这一条链路。
+    int DownloadMarginData(const String& date, const String& env, String& error);
+
     // type 0-股票
     // StockHistorySimulation* CreateSimulation(const String& name, const String& strategy, int type = 0);
 private:
@@ -231,6 +242,13 @@ private:
     /// 必须由服务进程写：DuckDB 单写者，服务持有 finance.db 后外部脚本打不开。
     /// 抓取或解析失败时保留原名单（importMarginStocks 对空输入不清表）。
     void RefreshMarginStockList(nng_socket sseSock);
+
+    /// 20:00 调度入口：调用 DownloadMarginData，失败只记日志 + SSE 告警。
+    ///
+    /// 与可做空标的名单不同：两融明细是「每个交易日的存量数据」，必须按日增量落库；
+    /// 名单是「每月调整一次的名单」，按周全量重写。
+    /// 抓取失败不发邮件（当前策略；需要邮件时在此处补 SendEmail）。
+    void RefreshMarginData(nng_socket sseSock);
 
     void TimerWorker(nng_socket sock);
 

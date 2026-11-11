@@ -37,6 +37,8 @@ tags:
     description: 财务数据管理（GET=public，POST/DELETE=trader）
   - name: Dividend
     description: 分红除权数据（GET=public，POST/DELETE=trader）
+  - name: Margin
+    description: 两融（融资融券）明细数据（GET=public，POST/DELETE=trader）
   - name: Analysis
     description: 分析功能（public）
   - name: Backtest
@@ -3509,6 +3511,191 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DividendDeleteResponse"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ═══════════════════════════════════════════════════════════
+  #  两融（融资融券）明细数据
+  # ═══════════════════════════════════════════════════════════
+  /margin:
+    get:
+      summary: 查询两融明细数据
+      description: |
+        查询 finance.db 的 margin_daily 表（沪深两市逐标的融资/融券余额，日频）。
+
+        三种模式，按参数优先级：
+        - `symbol=...`：该标的历史（可带 start/end，返回按日期升序）
+        - `date=...`：某个交易日全市场
+        - 无参数 / `summary=1`：数据概览（最新日期、总行数、标的数、近 N 个交易日行数）
+
+        字段口径（金额单位统一为元、股数为股）：
+        - rz_balance 融资余额 / rz_buy 融资买入额 / rz_repay 融资偿还额（仅沪市）
+        - rq_volume 融券余量 / rq_sell 融券卖出量 / rq_repay 融券偿还量（仅沪市）
+        - rq_balance 融券余额（仅深市）/ total_balance 融资融券余额（仅深市）
+
+        数据可用日：`pub_date` = 交易日 + 1 天（交易所盘后才公布）。
+      tags:
+        - Margin
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 标的代码（sh.600000 / 600000.SH 均可）
+          example: sh.600000
+        - in: query
+          name: date
+          schema:
+            type: string
+          description: 交易日（YYYYMMDD 或 YYYY-MM-DD）
+          example: "2026-11-10"
+        - in: query
+          name: start
+          schema:
+            type: string
+            format: date
+          description: 起始日期（YYYY-MM-DD，配合 symbol 使用）
+        - in: query
+          name: end
+          schema:
+            type: string
+            format: date
+          description: 结束日期（YYYY-MM-DD，配合 symbol 使用）
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            maximum: 5000
+          description: 返回条数（symbol 模式默认 20；date 模式默认 10000、上限 50000）
+        - in: query
+          name: days
+          schema:
+            type: integer
+            default: 30
+            maximum: 250
+          description: 概览模式下统计最近多少个交易日
+        - in: query
+          name: summary
+          schema:
+            type: boolean
+          description: 置 1 返回数据概览（等价于不带 symbol/date）
+      responses:
+        '200':
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MarginQueryResponse"
+                  - $ref: "#/components/schemas/MarginOverviewResponse"
+        '400':
+          description: 参数格式错误（日期非法）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      summary: 触发两融明细下载与导入
+      security:
+        - BearerAuth: []
+      description: |
+        后台异步拉取 tools/fetch_margin_data.py（akshare → 上交所/深交所明细接口），
+        写 `{db_path}/margin/detail_<YYYYMMDD>.csv`，再走通用类目通道导入
+        finance.db 的 margin_daily 表（ON CONFLICT 保证重跑幂等）。
+
+        交易所接口按日返回全市场，没有逐标的查询的口子，所以每次都是全市场下载。
+        CSV 滚动保留 30 天。
+
+        通过 SSE 推送进度事件（事件名: `margin_download`，status=started/completed/failed）。
+      tags:
+        - Margin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarginDownloadRequest"
+      responses:
+        '200':
+          description: 下载任务已启动
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarginDownloadResponse"
+        '400':
+          description: 参数错误（日期非法 / body 不是合法 JSON）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 删除两融明细数据
+      security:
+        - BearerAuth: []
+      description: |
+        删除 margin_daily 里的数据，三种粒度：
+        - `all=1`：清空整张表（必须显式给，避免手滑）
+        - `date=YYYY-MM-DD`：删除某个交易日的全市场数据
+        - `symbol=...`（可带 start/end）：删除某标的（一段）数据
+
+        都不给时返回 400。
+      tags:
+        - Margin
+      parameters:
+        - in: query
+          name: all
+          schema:
+            type: integer
+            enum: [1]
+          description: 置 1 清空整张 margin_daily 表
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 标的代码（sh.600000 / 600000.SH 均可）
+          example: sh.600000
+        - in: query
+          name: date
+          schema:
+            type: string
+          description: 交易日（YYYYMMDD 或 YYYY-MM-DD），删除该日全市场数据
+          example: "2026-11-10"
+        - in: query
+          name: start
+          schema:
+            type: string
+            format: date
+          description: 起始日期（YYYY-MM-DD，配合 symbol 使用）
+        - in: query
+          name: end
+          schema:
+            type: string
+            format: date
+          description: 结束日期（YYYY-MM-DD，配合 symbol 使用）
+      responses:
+        '200':
+          description: 删除结果（rows 为实际删除行数）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarginDeleteResponse"
+        '400':
+          description: 参数错误或未指定删除范围
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         '500':
           description: 服务器内部错误
           content:
@@ -7189,6 +7376,170 @@ components:
         ex_date:
           type: string
           description: 被删除的除权除息日（删除单次分红事件时返回）
+
+    # ═══ 两融（融资融券）明细 ═══
+    MarginRecord:
+      type: object
+      description: |
+        单个标的某个交易日的两融明细。
+        金额单位统一为元、股数为股；交易所不提供的口径为 null
+        （沪市没有 rq_balance/total_balance，深市没有 rz_repay/rq_repay）。
+      properties:
+        code:
+          type: string
+          description: 内部符号格式（sh.600000 / sz.000001）
+          example: sh.600000
+        stat_date:
+          type: string
+          description: 交易日（YYYY-MM-DD）
+          example: "2026-11-10"
+        pub_date:
+          type: string
+          description: 数据可用日（交易日 + 1 天，交易所盘后才公布）
+          example: "2026-11-11"
+        rz_balance:
+          type: number
+          nullable: true
+          description: 融资余额（元）
+        rz_buy:
+          type: number
+          nullable: true
+          description: 融资买入额（元）
+        rz_repay:
+          type: number
+          nullable: true
+          description: 融资偿还额（元，仅沪市）
+        rq_volume:
+          type: number
+          nullable: true
+          description: 融券余量（股）
+        rq_sell:
+          type: number
+          nullable: true
+          description: 融券卖出量（股）
+        rq_repay:
+          type: number
+          nullable: true
+          description: 融券偿还量（股，仅沪市）
+        rq_balance:
+          type: number
+          nullable: true
+          description: 融券余额（元，仅深市）
+        total_balance:
+          type: number
+          nullable: true
+          description: 融资融券余额（元，仅深市）
+
+    MarginQueryResponse:
+      type: object
+      description: 按标的 / 按交易日查询的响应
+      properties:
+        code:
+          type: string
+          description: 查询的标的（按交易日查询时为空串）
+        category:
+          type: string
+          example: margin_daily
+        name:
+          type: string
+          example: 融资融券
+        count:
+          type: integer
+          description: 返回条数
+        date:
+          type: string
+          description: 按交易日查询时回显的日期（YYYY-MM-DD）
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarginRecord"
+          description: 记录列表（按 stat_date 升序）
+
+    MarginOverviewResponse:
+      type: object
+      description: 数据概览（无参数 / summary=1）
+      properties:
+        table:
+          type: string
+          example: margin_daily
+        name:
+          type: string
+          example: 融资融券
+        rows:
+          type: integer
+          description: 总行数
+        symbols:
+          type: integer
+          description: 覆盖的标的数
+        start_date:
+          type: string
+          description: 最早交易日
+        latest_date:
+          type: string
+          description: 最新交易日
+        recent:
+          type: array
+          description: 最近 N 个交易日每日行数
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                example: "2026-11-10"
+              rows:
+                type: integer
+                example: 4119
+
+    MarginDownloadRequest:
+      type: object
+      description: 两融明细下载请求体（所有字段可选）
+      properties:
+        date:
+          type: string
+          description: 指定交易日（YYYYMMDD 或 YYYY-MM-DD）；缺省由脚本自动取最近有数据的交易日
+          example: "20261110"
+        env:
+          type: string
+          description: Python 环境名称（config.json 的 python.environments）
+
+    MarginDownloadResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: started
+        date:
+          type: string
+          description: 本次下载的交易日；latest 表示自动取最近交易日
+          example: latest
+
+    MarginDeleteResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [deleted, dropped]
+          description: deleted=删除了部分行；dropped=整表被删除
+        table:
+          type: string
+          description: 整表删除时返回表名
+          example: margin_daily
+        date:
+          type: string
+          description: 按日删除时返回的交易日
+        symbol:
+          type: string
+          description: 按标的删除时返回的标的代码
+        start:
+          type: string
+          description: 按标的删除时的起始日期
+        end:
+          type: string
+          description: 按标的删除时的结束日期
+        rows:
+          type: integer
+          description: 实际删除行数
+          example: 4119
 
     # ═══ 日终模拟（simulate/bar） ═══
     SimulateBarRequest:
