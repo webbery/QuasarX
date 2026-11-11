@@ -41,7 +41,12 @@ public:
     /// 目录里可能躺着历史上别的任务留下的 CSV；不设限就会把池外标的
     /// （如 sh.601398）的分红事件写进 dividend 表，并触发这些标的的
     /// 复权重算 —— 复权因子一旦算错，原始价就被放大，行情特征随之失真。
-    int importAllDividends(const String& dividend_dir, const Set<String>& symbols = {});
+    ///
+    /// 返回值是成功导入/更新的总行数（>= 0）；失败的文件数通过 failed_files 回传。
+    /// 早期版本用负返回值表示"有文件失败"，但那样会把已成功导入的行数一并丢掉，
+    /// 调用方无法区分"没有数据"（0）和"数据不完整"（部分成功）。
+    int importAllDividends(const String& dividend_dir, const Set<String>& symbols = {},
+                           int* failed_files = nullptr);
 
     nlohmann::json queryDividendByDate(const String& date);
 

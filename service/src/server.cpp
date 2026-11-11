@@ -1280,13 +1280,14 @@ void Server::Schedules(time_t t) {
                 // 随后的复权重算按这些错误事件算因子，原始价被放大成
                 // 累计复权倍数，行情特征随之失真。
                 int imported = 0;
+                int failedFiles = 0;
                 if (!ok) {
                     WARN("[Schedules] fetch_dividend_data.py 执行失败，跳过分红导入与复权重算");
                 } else {
                     // 只导入名单内的标的：目录里可能躺着别的任务留下的 CSV
-                    imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend", allSymbols);
-                    if (imported < 0) {
-                        WARN("[Schedules] 分红导入有 {} 个文件失败，事件表不完整", -imported);
+                    imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend", allSymbols, &failedFiles);
+                    if (failedFiles > 0) {
+                        WARN("[Schedules] 分红导入有 {} 个文件失败，事件表不完整", failedFiles);
                     }
                 }
 

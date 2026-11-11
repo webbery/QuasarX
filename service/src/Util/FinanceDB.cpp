@@ -702,12 +702,25 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
 
     // ── 两阶段 upsert：先 SELECT 找已有键，再预编译 UPDATE/INSERT 逐行处理 ──
     //    不使用 ON CONFLICT：触发 DuckDB ART 索引 bug（参见 QuoteDB::importCsv）
+    //
+    //    键格式：两侧都归一化到 "YYYY-MM-DD"。
+    //    ex_dividend_date 是 TIMESTAMP 列，CSV 里是纯日期串。直接
+    //    CAST(ex_dividend_date AS VARCHAR) 得到的是 "2024-05-20 00:00:00"，
+    //    与 CSV 侧的 "2024-05-20" 恒不相等 —— existing 永远匹配不上，
+    //    upsert 退化成纯 INSERT，第二次导入同一文件就撞
+    //    UNIQUE(symbol, ex_dividend_date) 而整文件回滚，接口只能返回 -1。
+    //    故：DB 侧先截断到 DATE，CSV 侧取日期部分，两边都输出 "YYYY-MM-DD"。
+    auto dateKey = [](const String& s) -> String {
+        return s.size() >= 10 ? s.substr(0, 10) : s;
+    };
+
     int64_t sym_encoded = rows[0].symbol;
-    String min_ex = rows[0].ex_dividend_date;
-    String max_ex = rows[0].ex_dividend_date;
+    String min_ex = dateKey(rows[0].ex_dividend_date);
+    String max_ex = min_ex;
     for (const auto& r : rows) {
-        if (r.ex_dividend_date < min_ex) min_ex = r.ex_dividend_date;
-        if (r.ex_dividend_date > max_ex) max_ex = r.ex_dividend_date;
+        String k = dateKey(r.ex_dividend_date);
+        if (k < min_ex) min_ex = k;
+        if (k > max_ex) max_ex = k;
     }
 
     exec_unsafe("BEGIN TRANSACTION");
@@ -715,9 +728,11 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
     UnorderedSet<std::string> existing;
     {
         duckdb_result sel;
+        // 按整日区间覆盖：存了非午夜时分秒的行也不会被区间边界漏掉
         std::string sql = fmt::format(
-            "SELECT CAST(ex_dividend_date AS VARCHAR) FROM dividend "
-            "WHERE symbol = {} AND ex_dividend_date BETWEEN '{}' AND '{}'",
+            "SELECT CAST(CAST(ex_dividend_date AS DATE) AS VARCHAR) FROM dividend "
+            "WHERE symbol = {} AND ex_dividend_date >= CAST('{}' AS DATE) "
+            "AND ex_dividend_date < CAST('{}' AS DATE) + INTERVAL 1 DAY",
             sym_encoded, min_ex, max_ex);
         if (duckdb_query(conn(), sql.c_str(), &sel) != DuckDBSuccess) {
             const char* err = duckdb_result_error(&sel);
@@ -780,7 +795,9 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
 
     int updated = 0, inserted = 0;
     for (const auto& r : rows) {
-        bool is_update = existing.count(r.ex_dividend_date) > 0;
+        // 查表键与写入值统一用日期部分（"YYYY-MM-DD"），与 SELECT 侧同格式
+        const String ex_key = dateKey(r.ex_dividend_date);
+        bool is_update = existing.count(ex_key) > 0;
         duckdb_prepared_statement stmt = is_update ? upd : ins;
         duckdb_state st = DuckDBSuccess;
 
@@ -797,12 +814,12 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
             if (st == DuckDBSuccess) st = bindOptDouble(stmt, 10, r.ex_div_price);
             if (st == DuckDBSuccess) st = duckdb_bind_int8(stmt, 11, r.action_type);
             if (st == DuckDBSuccess) st = duckdb_bind_int64(stmt, 12, sym_encoded);
-            if (st == DuckDBSuccess) st = bindDate(stmt, 13, r.ex_dividend_date);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 13, ex_key);
         } else {
             if (st == DuckDBSuccess) st = duckdb_bind_int64(stmt, 1, sym_encoded);
             if (st == DuckDBSuccess) st = bindDate(stmt, 2, r.announce_date);
             if (st == DuckDBSuccess) st = duckdb_bind_varchar(stmt, 3, r.report_year.c_str());
-            if (st == DuckDBSuccess) st = bindDate(stmt, 4, r.ex_dividend_date);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 4, ex_key);
             if (st == DuckDBSuccess) st = bindDate(stmt, 5, r.record_date);
             if (st == DuckDBSuccess) st = bindDate(stmt, 6, r.implement_date);
             if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 7, r.bonus_per_10);
@@ -824,10 +841,17 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
 
         duckdb_result res;
         st = duckdb_execute_prepared(stmt, &res);
+
+        if (st != DuckDBSuccess) {
+            // 错误信息必须在 destroy 之前取，否则 DuckDB 原始报错（约束冲突等）
+            // 会随 result 一起丢掉，日志里只剩一句没有信息量的 "failed"
+            const char* err = duckdb_result_error(&res);
+            SPDLOG_ERROR("[FinanceDB] dividend execute_prepared failed at ex_date={}: {}",
+                         r.ex_dividend_date, err ? err : "unknown");
+        }
         duckdb_destroy_result(&res);
 
         if (st != DuckDBSuccess) {
-            SPDLOG_ERROR("[FinanceDB] dividend execute_prepared failed at ex_date={}", r.ex_dividend_date);
             duckdb_destroy_prepare(&upd);
             duckdb_destroy_prepare(&ins);
             exec_unsafe("ROLLBACK");
@@ -853,7 +877,9 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
 //  dividend 表 — 批量导入目录下所有 CSV
 // ═══════════════════════════════════════════════════════════
 
-int FinanceDB::importAllDividends(const String& dividend_dir, const Set<String>& symbols) {
+int FinanceDB::importAllDividends(const String& dividend_dir, const Set<String>& symbols,
+                                  int* failed_files) {
+    if (failed_files) *failed_files = 0;
     if (!std::filesystem::exists(dividend_dir)) {
         SPDLOG_INFO("[FinanceDB] dividend directory not found, creating: {}", dividend_dir);
         std::filesystem::create_directories(dividend_dir);
@@ -898,10 +924,10 @@ int FinanceDB::importAllDividends(const String& dividend_dir, const Set<String>&
     SPDLOG_INFO("[FinanceDB] Scanned {}: {} dividend CSV files found, {} total rows imported"
                 " ({} skipped out of scope, {} failed)",
                 dividend_dir, file_count, total, skipped_out_of_scope, failed);
-    if (failed > 0) {
-        // 用负数回传"有文件导入失败"，调用方必须能区分"没有数据"和"数据不完整"
-        return -failed;
-    }
+    // 成功行数与失败文件数分开回传。早期用负返回值表示"有文件失败"，但那样
+    // 会把已成功导入的行数一并丢掉，调用方无法区分"没有数据"（0）和
+    // "数据不完整"（部分成功），只能拿到一个无意义的负数。
+    if (failed_files) *failed_files = failed;
     return total;
 }
 
