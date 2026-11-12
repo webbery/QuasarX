@@ -1432,6 +1432,51 @@ static bool ExtractJsonManifest(const String& output, nlohmann::json& out) {
     }
 }
 
+int Server::ImportMarginDetailCsvs(const nlohmann::json& manifest, String& error) {
+    auto& financeDB = FinanceDB::instance();
+
+    // manifest["files"] 是本次要导入的 CSV 列表（每个交易所一个文件）。
+    // 老版本脚本只给 "file" 单数，兼容一下。
+    Vector<String> csvPaths;
+    if (manifest.contains("files") && manifest["files"].is_array()) {
+        for (const auto& f : manifest["files"]) {
+            if (f.is_string()) {
+                String p = f.get<String>();
+                if (!p.empty()) csvPaths.push_back(p);
+            }
+        }
+    }
+    if (csvPaths.empty()) {
+        String p = manifest.value("file", "");
+        if (!p.empty()) csvPaths.push_back(p);
+    }
+    if (csvPaths.empty()) {
+        error = "manifest 里没有 CSV 文件路径";
+        return -1;
+    }
+
+    int imported = 0;
+    for (const auto& p : csvPaths) {
+        std::error_code fs_ec;
+        if (!std::filesystem::exists(p, fs_ec)) {
+            WARN("[ImportMarginDetailCsvs] CSV 不存在，跳过: {}", p);
+            continue;
+        }
+        int n = financeDB.importCsv(p, "margin_daily");
+        if (n < 0) {
+            error = fmt::format("导入失败: {}", p);
+            return -1;
+        }
+        imported += n;
+        // 文件名带交易所后缀（detail_<date>.sh.csv），日志里一眼能看出这批是哪个所
+        INFO("[ImportMarginDetailCsvs] 已导入 {} 行两融明细（{}）",
+             n, std::filesystem::path(p).filename().string());
+    }
+    INFO("[ImportMarginDetailCsvs] 交易日 {} 合计导入 {} 行，{} 个文件",
+         manifest.value("date", "?"), imported, csvPaths.size());
+    return imported;
+}
+
 int Server::DownloadMarginData(const String& date, const String& env, String& error) {
     auto& financeDB = FinanceDB::instance();
 
@@ -1483,19 +1528,16 @@ int Server::DownloadMarginData(const String& date, const String& env, String& er
     }
 
     // 走通用类目通道：类目决定表结构，ON CONFLICT 保证重跑幂等
-    String csvPath = manifest.value("file", "");
-    int imported = financeDB.importCsv(csvPath, "margin_daily");
-    if (imported < 0) {
-        error = fmt::format("导入失败: {}", csvPath);
-        return -1;
-    }
-
-    INFO("[DownloadMarginData] 已导入 {} 行两融明细（交易日 {}），文件 {}",
-         imported, manifest.value("date", "?"), csvPath);
+    int imported = ImportMarginDetailCsvs(manifest, error);
+    if (imported < 0) return -1;
 
     // 滚动清理 30 天前的 CSV（约 450KB/日，留一个月足够排查）
+    //
+    // 判据用**文件修改时间**，不是文件名里的交易日。回补历史时文件名里的日期
+    // 可能是一两年前（detail_20220104.csv），但文件是刚写出来的，还得留着给
+    // 补齐脚本复用 —— 少一个交易所时只重下那一个即可，不必把另一家也重拉一遍。
+    // 按文件名日期删会把刚写好的文件立刻删掉，导致每次补齐都变成全量重下。
     const int kKeepDays = 30;
-    String today = ToString(time(nullptr), "%Y-%m-%d");
     int removed = 0;
     std::error_code it_ec;
     for (auto& entry : std::filesystem::directory_iterator(marginDir, it_ec)) {
@@ -1506,18 +1548,12 @@ int Server::DownloadMarginData(const String& date, const String& env, String& er
         if (filename.size() < 12 + 4) continue;
         if (filename.compare(filename.size() - 4, 4, ".csv") != 0) continue;
 
-        String compact = filename.substr(7, 8);
-        bool digits = true;
-        for (char c : compact) {
-            if (c < '0' || c > '9') { digits = false; break; }
-        }
-        if (!digits) continue;
-
-        String dash = fmt::format("{}-{}-{}", compact.substr(0, 4), compact.substr(4, 2),
-                                  compact.substr(6, 2));
-        if (!IsYmdDate(dash)) continue;
-        int64_t ageDays = (FromNaiveTimestamp(today) - FromNaiveTimestamp(dash))
-                          / 86400 / 1000000;
+        std::error_code lmt_ec;
+        auto mtime = std::filesystem::last_write_time(entry.path(), lmt_ec);
+        if (lmt_ec) continue;
+        int64_t ageDays = std::chrono::duration_cast<std::chrono::hours>(
+                              std::filesystem::file_time_type::clock::now() - mtime)
+                              .count() / 24;
         if (ageDays <= kKeepDays) continue;
 
         std::error_code rm_ec;
@@ -1526,7 +1562,7 @@ int Server::DownloadMarginData(const String& date, const String& env, String& er
         }
     }
     if (removed > 0) {
-        INFO("[DownloadMarginData] 清理 {} 天前的两融 CSV: {} 个", kKeepDays, removed);
+        INFO("[DownloadMarginData] 清理 {} 天未修改的两融 CSV: {} 个", kKeepDays, removed);
     }
 
     return imported;

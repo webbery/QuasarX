@@ -187,7 +187,7 @@ public:
 
     /// 下载并导入两融明细（逐标的融资/融券余额）
     ///
-    /// 拉 tools/fetch_margin_data.py → 写 {db_path}/margin/detail_<YYYYMMDD>.csv
+    /// 拉 tools/fetch_margin_data.py → 写 {db_path}/margin/detail_<YYYYMMDD>.<ex>.csv
     /// → 走通用类目通道 FinanceDB::importCsv(csv, "margin_daily") 入库
     /// （表结构按类目自动创建，ON CONFLICT 保证重跑幂等）。
     ///
@@ -195,6 +195,15 @@ public:
     /// 返回导入行数；<0 表示失败，原因写入 error。不发射 SSE，由调用方决定事件。
     /// 定时任务（Schedules）和 REST（MarginHandler）共用这一条链路。
     int DownloadMarginData(const String& date, const String& env, String& error);
+
+    /// 把抓取脚本产出的 CSV 导入 margin_daily 表。
+    ///
+    /// manifest 是 fetch_margin_data.py 打印的那行 JSON。一个交易日可能有多个文件
+    /// —— 每个交易所一个（detail_<date>.sh.csv / detail_<date>.sz.csv）：沪/深任何
+    /// 一家接口抖动都会让那天只剩另一半；补齐时脚本只重下缺的那个交易所。
+    /// 逐个导入即可，upsert 键是 (symbol, stat_date)，重复导入同一文件没有副作用。
+    /// 返回导入行数；<0 表示失败，原因写入 error。
+    int ImportMarginDetailCsvs(const nlohmann::json& manifest, String& error);
 
     // type 0-股票
     // StockHistorySimulation* CreateSimulation(const String& name, const String& strategy, int type = 0);

@@ -247,14 +247,70 @@ def resolve_latest_trade_date(ak):
     return ""
 
 
-def collect_detail(date_compact, ak):
-    """沪深两市个股明细合并。"""
+def exchange_of(code):
+    """内部符号 → 交易所标记。"""
+    if code.startswith("sh."):
+        return EXCHANGE_SSE
+    if code.startswith("sz."):
+        return EXCHANGE_SZSE
+    if code.startswith("bj."):
+        return "BSE"
+    return ""
+
+
+def exchange_suffix(ex):
+    """交易所 → 文件名后缀。"""
+    return {EXCHANGE_SSE: "sh", EXCHANGE_SZSE: "sz"}.get(ex, ex.lower() or "unknown")
+
+
+def csv_path_for(out_dir, date_compact, ex):
+    """每个交易所一个文件：detail_<YYYYMMDD>.<sh|sz>.csv。
+
+    文件名直接带上交易所，省得从内容反推「这份 CSV 是沪市还是深市」：
+    补齐时哪个文件在就说明那半边已经拿到，只重下缺的那个即可。
+    """
+    return os.path.join(out_dir, f"detail_{date_compact}.{exchange_suffix(ex)}.csv")
+
+
+def existing_exchanges(out_dir, date_compact):
+    """已经拿到数据的交易所（按 detail_<date>.<ex>.csv 是否存在判断）。"""
+    present = set()
+    for ex in (EXCHANGE_SSE, EXCHANGE_SZSE):
+        p = csv_path_for(out_dir, date_compact, ex)
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            present.add(ex)
+    if present:
+        log(f"[info] 复用已有 CSV（{date_compact}）：{sorted(present)}")
+    return present
+
+
+def count_csv_rows(path):
+    """数一个 CSV 的数据行数（去掉表头）。"""
+    if not path or not os.path.exists(path):
+        return 0
+    n = 0
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            for i, _ in enumerate(f):
+                if i:
+                    n += 1
+    except Exception:
+        return 0
+    return n
+
+
+def collect_detail(date_compact, ak, skip=()):
+    """沪深两市个股明细合并。skip 里的交易所不再请求（复用已有 CSV 的那部分）。"""
     sources = []
     rows = []
     for name, fn in (
         (EXCHANGE_SSE, fetch_sse_detail),
         (EXCHANGE_SZSE, fetch_szse_detail),
     ):
+        if name in skip:
+            sources.append({"name": name, "ok": True, "rows": 0, "error": "",
+                            "skipped": True, "reason": "reused from existing csv"})
+            continue
         got, err = fn(date_compact, ak)
         rows.extend(got)
         sources.append({"name": name, "ok": err is None, "rows": len(got), "error": err or ""})
@@ -308,6 +364,8 @@ def main():
     parser.add_argument("--out-dir", type=str, default="",
                         help="CSV 输出目录（默认当前目录下的 data/margin）")
     parser.add_argument("--summary", action="store_true", help="打印人类可读摘要")
+    parser.add_argument("--force-refetch", action="store_true",
+                        help="忽略已有 CSV，沪深两市全部重新抓取")
     args = parser.parse_args()
 
     try:
@@ -337,10 +395,50 @@ def main():
                              ensure_ascii=False))
             return EXIT_ALL_FAILED
 
+    # ── 输出目录 / 已有 CSV ──
+    # 回补历史时常见「沪市拿到了、深市没拿到」（反之亦然）：已经写好的那半边是好的，
+    # 补齐时复用它、只重下缺的那个交易所。每个交易所一个文件，文件名带交易所后缀：
+    # detail_<YYYYMMDD>.sh.csv / detail_<YYYYMMDD>.sz.csv
+    out_dir = args.out_dir or os.path.join("data", "margin")
+    os.makedirs(out_dir, exist_ok=True)
+    present = set()
+    if not args.force_refetch:
+        present = existing_exchanges(out_dir, date_compact)
+
     # ── 抓取 ──
-    rows, sources = collect_detail(date_compact, ak)
+    new_rows, sources = collect_detail(date_compact, ak, skip=present)
     failed = [s for s in sources if not s["ok"]]
-    empty = [s for s in sources if s["ok"] and s["rows"] == 0]
+    empty = [s for s in sources if s["ok"] and s["rows"] == 0 and not s.get("skipped")]
+
+    # 复用模式下的早退：这次一条新数据都没抓到 → 不重写文件，直接把情况说清楚
+    if present and not new_rows:
+        missing = [n for n in (EXCHANGE_SSE, EXCHANGE_SZSE) if n not in present]
+        files = [os.path.abspath(csv_path_for(out_dir, date_compact, ex))
+                 for ex in sorted(present)]
+        kept_rows = sum(count_csv_rows(f) for f in files)
+        if missing:
+            msg = (f"未抓到新数据（仍缺 {'/'.join(missing)}），保留已有 CSV："
+                   f"{', '.join(os.path.basename(f) for f in files)}")
+            log(msg)
+            print(json.dumps({
+                "ok": False, "date": dash_date(date_compact),
+                "requested_date": dash_date(requested) if requested else "",
+                "rows": kept_rows, "sources": sources, "files": files,
+                "exchanges": sorted(present), "missing": missing,
+                "error": msg,
+            }, ensure_ascii=False))
+            return EXIT_PARTIAL
+        msg = f"已有 CSV 已含沪深两市，无需重抓：{', '.join(os.path.basename(f) for f in files)}"
+        log(msg)
+        print(json.dumps({
+            "ok": True, "date": dash_date(date_compact),
+            "requested_date": dash_date(requested) if requested else "",
+            "rows": kept_rows, "sources": sources, "files": files,
+            "exchanges": sorted(present), "message": msg,
+        }, ensure_ascii=False))
+        return EXIT_OK
+
+    rows = new_rows
 
     # 目标日期无数据：显式指定日期时视为失败（静默换成别的日期会让人误以为补到了那天）；
     # 自动解析日期时回退到最近一个交易日（节假日属正常情况）。
@@ -366,17 +464,32 @@ def main():
 
         log(f"[info] {dash_date(date_compact)} 无数据，回退到最近交易日 {dash_date(fallback)}")
         date_compact = fallback
-        rows, sources = collect_detail(date_compact, ak)
+        present = set() if args.force_refetch else existing_exchanges(out_dir, date_compact)
+        new_rows, sources = collect_detail(date_compact, ak, skip=present)
         failed = [s for s in sources if not s["ok"]]
+        rows = new_rows
 
-    # ── 落盘 ──
-    out_dir = args.out_dir or os.path.join("data", "margin")
-    os.makedirs(out_dir, exist_ok=True)
+    # ── 落盘（每个交易所一个文件）──
     pub_date = next_day_dash(date_compact)
     for r in rows:
         r["pubDate"] = pub_date
-    csv_path = os.path.join(out_dir, f"detail_{date_compact}.csv")
-    write_csv(csv_path, rows)
+        r["statDate"] = dash_date(date_compact)
+    files = []
+    by_ex = {}
+    for r in rows:
+        by_ex.setdefault(exchange_of(r.get("code", "")), []).append(r)
+    for ex, ex_rows in by_ex.items():
+        if not ex:
+            continue
+        p = csv_path_for(out_dir, date_compact, ex)
+        write_csv(p, ex_rows)
+        files.append(os.path.abspath(p))
+    # 复用的那半边也在清单里（服务端逐个导入，upsert 幂等）
+    for ex in sorted(present):
+        p = csv_path_for(out_dir, date_compact, ex)
+        if os.path.abspath(p) not in files:
+            files.append(os.path.abspath(p))
+    files.sort()
 
     fetch_ok = len(failed) == 0 and len(rows) > 0
     manifest = {
@@ -387,10 +500,14 @@ def main():
         "requested_date": dash_date(requested) if requested else "",
         "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "out_dir": os.path.abspath(out_dir),
-        "file": os.path.abspath(csv_path),
+        "files": files,
+        "file": files[0] if files else "",
+        "exchanges": sorted({exchange_of(r.get("code", "")) for r in rows}),
         "rows": len(rows),
         "sources": sources,
     }
+    if present:
+        manifest["reused_exchanges"] = sorted(present)
     if failed:
         manifest["error"] = "; ".join(f"{s['name']}: {s['error']}" for s in failed)
     if empty:
