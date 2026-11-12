@@ -157,31 +157,8 @@ std::string to_utf8(const std::string& strGbk) {
     delete[] str;
     return result;
 #else
-    iconv_t cd = iconv_open("UTF-8", "GBK"); // 打开转换描述符
-    if (cd == (iconv_t)-1) {
-        std::cerr << "Failed to open iconv descriptor" << std::endl;
-        return "";
-    }
-
-    size_t inbytes = strGbk.size();
-    char* inbuf = const_cast<char*>(strGbk.data()); // iconv 要求非 const 指针
-    size_t outbytes = inbytes * 2 + 1; // UTF-8 可能占用更多空间
-    char* outbuf = new char[outbytes];
-    char* outptr = outbuf;
-
-    std::memset(outbuf, 0, outbytes);
-
-    size_t result = iconv(cd, &inbuf, &inbytes, &outptr, &outbytes);
-    iconv_close(cd);
-
-    std::string utf8Str;
-    if (result != (size_t)-1) {
-        utf8Str = outbuf; // 转换成功
-    } else {
-        std::cerr << "Conversion failed: " << std::strerror(errno) << std::endl;
-    }
-    delete[] outbuf;
-    return utf8Str;
+    // Linux 下默认就是 UTF-8，无需转换
+    return strGbk;
 #endif
 }
 
