@@ -27,29 +27,6 @@ static constexpr std::string_view SSE_HEARTBEAT = ": keepalive\n";
 
 namespace {
 
-/// 每条 SSE 连接一份的订阅状态。
-///
-/// 刻意不用 thread_local：nng_close 按值传参（int nng_close(nng_socket)），
-/// 关不掉调用方的 sock.id。挂在 worker 线程上会导致「下一条落到同线程的连接」
-/// 看到 sock.id != 0 而跳过 Subscribe()，直接对已关闭的 socket 调 nng_recv，
-/// 立刻失败 → return true → httplib 反复回调 → 空转烧核，且该连接一个事件都收不到。
-struct SseConn {
-    nng_socket sock{0};
-    uint32_t seq{0};
-    std::chrono::steady_clock::time_point next_heartbeat{};
-
-    ~SseConn() {
-        close();
-    }
-
-    void close() {
-        if (sock.id) {
-            nng_close(sock);
-            sock.id = 0;
-        }
-    }
-};
-
 std::atomic<uint32_t> g_sse_conn_seq{0};
 
 }  // namespace
@@ -108,43 +85,49 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
         _dispather = new std::thread(&ServerEventHandler::run, this);
     }
 
-    // 每个 get() 一份 conn，lambda 按值捕获 —— 订阅状态随连接走，不随线程走
-    auto conn = std::make_shared<SseConn>();
-    conn->seq = ++g_sse_conn_seq;
+    // 每个 get() 一份连接状态：socket 由 ScopedSocket 在订阅它的线程里关闭。
+    // 刻意不用 thread_local：nng_close 按值传参（int nng_close(nng_socket)），
+    // 关不掉调用方的 sock.id。挂在 worker 线程上会导致「下一条落到同线程的连接」
+    // 看到 socket 有效而跳过 Subscribe()，直接对已关闭的 socket 调 nng_recv，
+    // 立刻失败 → return true → httplib 反复回调 → 空转烧核，且该连接一个事件都收不到。
+    auto conn = std::make_shared<ScopedSocket>();
+    uint32_t seq = ++g_sse_conn_seq;
+    // 心跳时间戳随 lambda 的 mutable 捕获跨回调保存
+    auto next_heartbeat = std::chrono::steady_clock::now() + SSE_HEARTBEAT_INTERVAL;
 
     res.set_chunked_content_provider("text/event-stream",
-    [conn](size_t offset, httplib::DataSink& sink) {
+    [conn, seq, next_heartbeat](size_t offset, httplib::DataSink& sink) mutable {
         // 当客户端首次连接时，将其添加到分发器
-        if (conn->sock.id == 0) {
-            if (!Subscribe(URI_DISPATH_EVENT, conn->sock, SSE_RECV_TIMEOUT_MS)) {
-                // Subscribe 失败时可能已打开 socket，交给 ~SseConn 兜底关闭
+        if (!conn->valid()) {
+            if (!Subscribe(URI_DISPATH_EVENT, conn->get(), SSE_RECV_TIMEOUT_MS)) {
+                // Subscribe 失败时可能已打开 socket，交给 ScopedSocket 兜底关闭
                 WARN("[SSE] conn#{}: subscribe {} failed, close connection",
-                     conn->seq, URI_DISPATH_EVENT);
+                     seq, URI_DISPATH_EVENT);
                 return false;
             }
-            conn->next_heartbeat = std::chrono::steady_clock::now() + SSE_HEARTBEAT_INTERVAL;
+            next_heartbeat = std::chrono::steady_clock::now() + SSE_HEARTBEAT_INTERVAL;
             INFO("[SSE] conn#{}: subscribed {}, recv-timeout {}ms, heartbeat {}s",
-                 conn->seq, URI_DISPATH_EVENT, (int)SSE_RECV_TIMEOUT_MS,
+                 seq, URI_DISPATH_EVENT, (int)SSE_RECV_TIMEOUT_MS,
                  (int)std::chrono::duration_cast<std::chrono::seconds>(SSE_HEARTBEAT_INTERVAL).count());
         }
         if (!sink.is_writable() || Server::IsExit()) {
             INFO("[SSE] conn#{}: {}, close socket",
-                 conn->seq, Server::IsExit() ? "server exiting" : "client disconnected");
+                 seq, Server::IsExit() ? "server exiting" : "client disconnected");
             conn->close();
             sink.done();
             return false;
         }
         char* buff = NULL;
         size_t sz = 0;
-        int rv = nng_recv(conn->sock, &buff, &sz, NNG_FLAG_ALLOC);
+        int rv = nng_recv(conn->get(), &buff, &sz, NNG_FLAG_ALLOC);
         if (rv == NNG_ETIMEDOUT) {
             // 正常心跳：没有新事件。顺带按间隔发一条 SSE 注释行 ——
             // 这是空闲连接唯一的 socket 写入机会，写失败即说明对端已走，立刻回收。
             auto now = std::chrono::steady_clock::now();
-            if (now >= conn->next_heartbeat) {
-                conn->next_heartbeat = now + SSE_HEARTBEAT_INTERVAL;
+            if (now >= next_heartbeat) {
+                next_heartbeat = now + SSE_HEARTBEAT_INTERVAL;
                 if (!sink.write(SSE_HEARTBEAT.data(), SSE_HEARTBEAT.size())) {
-                    WARN("[SSE] conn#{}: heartbeat write failed, close connection", conn->seq);
+                    WARN("[SSE] conn#{}: heartbeat write failed, close connection", seq);
                     conn->close();
                     return false;
                 }
@@ -157,7 +140,7 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
                 nng_free(buff, sz);
             }
             WARN("[SSE] conn#{}: nng_recv failed: {}, close connection",
-                 conn->seq, nng_strerror(rv));
+                 seq, nng_strerror(rv));
             conn->close();
             return false;
         }
@@ -165,7 +148,7 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
         bool ok = sink.write(buff, sz);
         nng_free(buff, sz);
         if (!ok) {
-            WARN("[SSE] conn#{}: sink.write failed, close connection", conn->seq);
+            WARN("[SSE] conn#{}: sink.write failed, close connection", seq);
             conn->close();
         }
         return ok;

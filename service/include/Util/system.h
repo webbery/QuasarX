@@ -85,6 +85,55 @@ bool Puller(const String& uri, nng_socket& sock);
 // 发布方(可以多个)
 bool Pusher(const String& uri, nng_socket& sock);
 
+/// nng socket 的 RAII 持有者：作用域结束时在当前线程关闭 socket。
+///
+/// nng_socket 只有 id，且 nng_close 按值接收 socket（int nng_close(nng_socket)），
+/// 普通成员变量 / thread_local 的析构都不会自动关闭。SSE 这类场景里 socket
+/// 必须在创建并使用它的线程中关闭，用本类把生命周期绑定到作用域即可。
+class ScopedSocket {
+public:
+    ScopedSocket() = default;
+    explicit ScopedSocket(nng_socket sock) : _sock(sock) {}
+
+    ~ScopedSocket() { close(); }
+
+    ScopedSocket(const ScopedSocket&) = delete;
+    ScopedSocket& operator=(const ScopedSocket&) = delete;
+
+    ScopedSocket(ScopedSocket&& other) noexcept : _sock(other.release()) {}
+    ScopedSocket& operator=(ScopedSocket&& other) noexcept {
+        if (this != &other) {
+            close();
+            _sock = other.release();
+        }
+        return *this;
+    }
+
+    /// 供 Subscribe/Publish/Puller/Pusher/nng_recv 等需要 nng_socket& 的接口使用
+    nng_socket& get() { return _sock; }
+    const nng_socket& get() const { return _sock; }
+
+    bool valid() const { return _sock.id != 0; }
+    explicit operator bool() const { return valid(); }
+
+    /// 释放所有权；由调用方负责关闭
+    nng_socket release() {
+        nng_socket sock = _sock;
+        _sock.id = 0;
+        return sock;
+    }
+
+    void close() {
+        if (_sock.id != 0) {
+            nng_close(_sock);
+            _sock.id = 0;
+        }
+    }
+
+private:
+    nng_socket _sock{0};
+};
+
 struct QuoteInfo;
 struct symbol_t;
 bool ReadQuote(nng_socket& sock, QuoteInfo& quote, const Set<symbol_t>& filter = {});

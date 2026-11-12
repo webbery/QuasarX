@@ -139,15 +139,16 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
     auto csv_dir = db_path + "/option/" + exchange_subdir;
     fs::create_directories(csv_dir);
 
-    nng_socket sse_sock = _server->GetSocket();
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
 
     // 后台线程: 按品种循环 (失败跳过, 不中断)
-    std::thread([sse_sock, exchange, products, start_date, end_date, interpreter, csv_dir, db_path]() {
+    std::thread([exchange, products, start_date, end_date, interpreter, csv_dir, db_path]() {
         SetCurrentThreadName("OptionDataDownload");
+        // SSE socket 必须在当前工作线程创建并关闭
+        ScopedSocket sse(Server::GetSocket());
 
-        SendSSE(sse_sock, "option_data_download", {
+        SendSSE(sse.get(), "option_data_download", {
             {"status", "started"},
             {"exchange", exchange},
             {"products", std::to_string(products.size())},
@@ -159,7 +160,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
         auto& optDB = OptionDataDB::instance();
         if (!optDB.isInitialized()) {
             if (!optDB.init(db_path + "/option", "option.db")) {
-                SendSSE(sse_sock, "option_data_download", {
+                SendSSE(sse.get(), "option_data_download", {
                     {"status", "aborted"},
                     {"reason", "OptionDataDB init failed"}
                 });
@@ -179,7 +180,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
             if (!end_date.empty())   cmd += " --end "   + end_date;
 
             INFO("[OptionDataHandler] 开始下载 {} {} cmd: {}", exchange, prod, cmd);
-            SendSSE(sse_sock, "option_data_download", {
+            SendSSE(sse.get(), "option_data_download", {
                 {"status", "downloading"},
                 {"exchange", exchange},
                 {"product", prod}
@@ -202,7 +203,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                     if (line.empty()) continue;
                     if (line.back() == '\r') line.pop_back();
                     if (line.empty()) continue;
-                    SendSSE(sse_sock, "option_data_download", {
+                    SendSSE(sse.get(), "option_data_download", {
                         {"status", "script_log"},
                         {"exchange", exchange},
                         {"product", prod},
@@ -215,7 +216,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                 WARN("[OptionDataHandler] {} {} download failed (耗时 {}s): {}",
                      exchange, prod, elapsed, output);
                 fail_products++;
-                SendSSE(sse_sock, "option_data_download", {
+                SendSSE(sse.get(), "option_data_download", {
                     {"status", "product_failed"},
                     {"exchange", exchange},
                     {"product", prod},
@@ -247,7 +248,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
             std::error_code ec;
             fs::remove_all(prod_csv_dir, ec);
 
-            SendSSE(sse_sock, "option_data_download", {
+            SendSSE(sse.get(), "option_data_download", {
                 {"status", "imported"},
                 {"exchange", exchange},
                 {"product", prod},
@@ -267,7 +268,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
 
             auto quote_dir = db_path + "/quote";
 
-            SendSSE(sse_sock, "option_data_download", {
+            SendSSE(sse.get(), "option_data_download", {
                 {"status", "etf_download_started"},
                 {"exchange", exchange},
                 {"message", "开始下载标的 ETF 数据"}
@@ -278,7 +279,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                 if (it == SSE_UNDERLYING_ETFS.end()) continue;
                 const auto& etf_sym = it->second;
 
-                SendSSE(sse_sock, "option_data_download", {
+                SendSSE(sse.get(), "option_data_download", {
                     {"status", "etf_downloading"},
                     {"product", prod},
                     {"etf_symbol", etf_sym}
@@ -290,7 +291,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                     etf_sym, "daily", start_date, end_date, interpreter, quote_dir);
 
                 if (!r.download_ok) {
-                    SendSSE(sse_sock, "option_data_download", {
+                    SendSSE(sse.get(), "option_data_download", {
                         {"status", "etf_download_failed"},
                         {"product", prod},
                         {"etf_symbol", etf_sym}
@@ -300,7 +301,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
 
                 if (r.import_ok && r.imported > 0) {
                     etf_rows_total += r.imported;
-                    SendSSE(sse_sock, "option_data_download", {
+                    SendSSE(sse.get(), "option_data_download", {
                         {"status", "etf_imported"},
                         {"product", prod},
                         {"etf_symbol", etf_sym},
@@ -309,13 +310,13 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                 }
             }
 
-            SendSSE(sse_sock, "option_data_download", {
+            SendSSE(sse.get(), "option_data_download", {
                 {"status", "etf_download_done"},
                 {"total_etf_rows", std::to_string(etf_rows_total)}
             });
         }
 
-        SendSSE(sse_sock, "option_data_download", {
+        SendSSE(sse.get(), "option_data_download", {
             {"status", "done"},
             {"exchange", exchange},
             {"success_products", std::to_string(success_products)},

@@ -136,13 +136,14 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto db_path = _server->GetConfig().GetDatabasePath();
     auto data_dir = db_path;
 
-    nng_socket sse_sock = _server->GetSocket();
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
 
     // 后台线程：下载 + 导入
-    std::thread([sse_sock, symbols, years, interpreter, data_dir, db_path]() {
+    std::thread([symbols, years, interpreter, data_dir, db_path]() {
         SetCurrentThreadName("DividendDownload");
+        // SSE socket 必须在当前工作线程创建并关闭
+        ScopedSocket sse(Server::GetSocket());
 
         std::string cmd = interpreter + " tools/fetch_dividend_data.py"
                         + " \"" + symbols + "\""
@@ -152,7 +153,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         INFO("[DividendHandler] Running: {}", cmd);
 
-        SendSSE(sse_sock, "dividend_download", {
+        SendSSE(sse.get(), "dividend_download", {
             {"status", "started"},
             {"symbol_count", std::to_string(std::count(symbols.begin(), symbols.end(), ',') + 1)}
         });
@@ -162,7 +163,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         INFO("[DividendHandler] RunCommand returned ok={}, output={}", ok, output);
 
-        SendSSE(sse_sock, "dividend_download", {
+        SendSSE(sse.get(), "dividend_download", {
             {"status", ok ? "downloaded" : "download_failed"},
             {"output", output}
         });
@@ -171,7 +172,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
         auto& financeDB = FinanceDB::instance();
         if (!financeDB.isInitialized()) {
             if (!financeDB.init(db_path + "/finance", "finance.db")) {
-                SendSSE(sse_sock, "dividend_download", {
+                SendSSE(sse.get(), "dividend_download", {
                     {"status", "aborted"},
                     {"reason", "FinanceDB init failed"}
                 });
@@ -202,7 +203,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
         }
 
-        SendSSE(sse_sock, "dividend_download", {
+        SendSSE(sse.get(), "dividend_download", {
             {"status", "completed"},
             {"imported_rows", std::to_string(total)},
             {"failed_files", std::to_string(failed_files)},

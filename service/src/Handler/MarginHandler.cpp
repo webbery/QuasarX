@@ -60,13 +60,16 @@ void MarginHandler::post(const httplib::Request& req, httplib::Response& res) {
     }
     String env = params.value("env", String(""));
 
-    nng_socket sse_sock = _server->GetSocket();
     Server* server = _server;
 
     // 抓取要联网、耗时 1~3 分钟，不能阻塞 HTTP 线程
-    std::thread([server, sse_sock, date, env]() {
+    std::thread([server, date, env]() {
         SetCurrentThreadName("MarginDownload");
-        SendSSE(sse_sock, "margin_download", {
+        // GetSocket() 是 thread_local：socket 必须在实际使用它的线程里创建，
+        // 并由 ScopedSocket 在工作线程结束时关闭
+        ScopedSocket sse(Server::GetSocket());
+
+        SendSSE(sse.get(), "margin_download", {
             {"status", "started"},
             {"date", date.empty() ? "latest" : date}
         });
@@ -75,14 +78,14 @@ void MarginHandler::post(const httplib::Request& req, httplib::Response& res) {
         int rows = server->DownloadMarginData(date, env, error);
         if (rows < 0) {
             WARN("[MarginHandler] 下载失败: {}", error);
-            SendSSE(sse_sock, "margin_download", {
+            SendSSE(sse.get(), "margin_download", {
                 {"status", "failed"},
                 {"error", error}
             });
             return;
         }
 
-        SendSSE(sse_sock, "margin_download", {
+        SendSSE(sse.get(), "margin_download", {
             {"status", "completed"},
             {"rows", std::to_string(rows)}
         });

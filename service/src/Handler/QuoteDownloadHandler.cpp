@@ -53,8 +53,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
         }
     }
 
-    // 获取 SSE socket 和 Python 环境
-    nng_socket sse_sock = _server->GetSocket();
+    // Python 环境
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
 
@@ -86,7 +85,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     }
 
     // 复用核心下载逻辑（异步）
-    runDownloadJob(sse_sock, groups, freq, start, end, interpreter, quote_dir, overwrite);
+    runDownloadJob(groups, freq, start, end, interpreter, quote_dir, overwrite);
 
     // 立即返回（返回所有分组的信息）
     nlohmann::json resp;
@@ -103,15 +102,18 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     res.set_content(resp.dump(), "application/json");
 }
 
-void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
-                                          std::vector<DownloadGroup> groups,
+void QuoteDownloadHandler::runDownloadJob(std::vector<DownloadGroup> groups,
                                           const std::string& freq,
                                           const std::string& start,
                                           const std::string& end,
                                           const std::string& interpreter,
                                           const std::string& quote_dir,
                                           bool overwrite) {
-    std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter, overwrite]() {
+    std::thread([groups, quote_dir, freq, start, end, interpreter, overwrite]() {
+        SetCurrentThreadName("QuoteDownload");
+        // SSE socket 必须在当前工作线程创建并关闭
+        ScopedSocket sse(Server::GetSocket());
+
         for (auto& group : groups) {
             auto t_group_start = std::chrono::steady_clock::now();
             const auto& asset_type = group.asset_type;
@@ -122,7 +124,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
             INFO("[QuoteDownload] === {} group start: {} symbols, freq={}, start={}, end={} ===",
                  asset_type, sym_list.size(), freq, start.empty() ? "max" : start, end.empty() ? "today" : end);
 
-            SendSSE(sseSock, "quote_download", {
+            SendSSE(sse.get(), "quote_download", {
                 {"status", "started"}, {"asset_type", asset_type},
                 {"symbols", group.symbols_str}, {"total", std::to_string(sym_list.size())}
             });
@@ -148,7 +150,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                     failed++;
                     WARN("[QuoteDownload] [{}/{}] {} FAILED in {} ms",
                          i + 1, sym_list.size(), sym, sym_ms);
-                    SendSSE(sseSock, "quote_download", {
+                    SendSSE(sse.get(), "quote_download", {
                         {"status", "symbol_failed"},
                         {"asset_type", asset_type},
                         {"symbol", sym},
@@ -163,7 +165,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
 
                 INFO("[QuoteDownload] [{}/{}] {} done: {} rows ({} imported) in {} ms",
                      i + 1, sym_list.size(), sym, dlResult.rows, dlResult.imported, sym_ms);
-                SendSSE(sseSock, "quote_download", {
+                SendSSE(sse.get(), "quote_download", {
                     {"status", "symbol_downloaded"},
                     {"asset_type", asset_type},
                     {"symbol", sym},
@@ -174,7 +176,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
 
                 if (dlResult.import_ok) {
                     total_rows += dlResult.imported;
-                    SendSSE(sseSock, "quote_download", {
+                    SendSSE(sse.get(), "quote_download", {
                         {"status", "importing"},
                         {"table", table},
                         {"symbol", sym},
@@ -184,7 +186,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                     // 股票除权校验
                     if (table == "stock_1d") {
                         auto t_adj_start = std::chrono::steady_clock::now();
-                        validateAndReconcileAdj(sseSock, table, sym);
+                        validateAndReconcileAdj(sse.get(), table, sym);
                         auto adj_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - t_adj_start).count();
                         INFO("[QuoteDownload] validateAndReconcileAdj {} done in {} ms", sym, adj_ms);
@@ -197,7 +199,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
             INFO("[QuoteDownload] === {} group done: {} symbols ({} ok, {} failed), {} rows, total {} ms ===",
                  asset_type, sym_list.size(), downloaded, failed, total_rows, group_ms);
 
-            SendSSE(sseSock, "quote_download", {
+            SendSSE(sse.get(), "quote_download", {
                 {"status", "done"},
                 {"asset_type", asset_type},
                 {"table", table},
