@@ -549,6 +549,10 @@ public:
 
 bool get_system_status(nlohmann::json&);
 
+/// @brief 系统内存 (已用 MB, 总量 MB)。Linux 解析 `free`，失败返回 (0, 0)。
+/// 分配"这个进程能用多少"这类上限时按比例取，不要写死绝对值。
+std::pair<double, double> getMemoryInfo();
+
 /// @brief 获取当前进程的 RSS（Resident Set Size），单位 MB
 /// Linux 读 /proc/self/status VmRSS，Windows 用 GetProcessMemoryInfo
 /// 失败返回 0

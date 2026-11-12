@@ -26,7 +26,12 @@ template <typename Derived>
 class DuckDBBaseT {
 public:
     // 初始化 db 文件（自动建目录）
-    bool init(const std::string& db_dir, const std::string& db_filename) {
+    //
+    // max_memory_mb / threads 默认沿用 100MB×2（防止多个库叠加吃满内存）；
+    // 但像 finance.db 这种会被两融明细撑到几百 MB 的库，100MB 连全表扫描都会
+    // OOM（DuckDB 报 "failed to pin block of size ..."），派生类可以传更大的上限。
+    bool init(const std::string& db_dir, const std::string& db_filename,
+              int max_memory_mb = 100, int threads = 2) {
         if (initialized_) return true;
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         if (initialized_) return true;
@@ -34,7 +39,7 @@ public:
         std::filesystem::create_directories(db_dir);
         std::string db_path = db_dir + "/" + db_filename;
 
-        if (!DuckDBOpenWithLimits(db_path, &db_)) {
+        if (!DuckDBOpenWithLimits(db_path, &db_, max_memory_mb, threads)) {
             return false;
         }
         if (duckdb_connect(db_, &conn_) != DuckDBSuccess) {

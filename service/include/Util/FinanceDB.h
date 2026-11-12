@@ -1,8 +1,11 @@
 #pragma once
 #include "std_header.h"
 #include "Util/DuckDBBaseT.h"
+#include "Util/system.h"
 #include "json.hpp"
+#include <algorithm>
 #include <mutex>
+#include <thread>
 
 struct FinanceRow {
     String symbol;
@@ -14,6 +17,25 @@ struct FinanceRow {
 class FinanceDB : public DuckDBBaseT<FinanceDB> {
 public:
     static FinanceDB& instance();
+
+    /// 打开 finance.db。
+    ///
+    /// 通用上限是 100MB（多个库叠加时防 OOM），但两融明细入库后 finance.db 会长到
+    /// 几百 MB（逐标的 × 千日量级），100MB 下连一次全表扫描都会 "failed to pin
+    /// block"。这里按机器内存动态给：总内存的 20%，夹在 [256MB, 4GB]；线程取
+    /// 核数的一半，夹在 [1, 4] —— 远程机器 CPU/内存规格不同，不写死绝对值。
+    bool init(const String& db_dir, const String& db_filename) {
+        auto mem = getMemoryInfo();          // (已用 MB, 总量 MB)
+        double total_mb = mem.second;
+        int max_memory_mb = total_mb > 0 ? static_cast<int>(total_mb * 0.20) : 512;
+        max_memory_mb = std::max(256, std::min(max_memory_mb, 4096));
+
+        unsigned hw = std::thread::hardware_concurrency();
+        if (hw == 0) hw = 2;
+        int threads = static_cast<int>(std::max(1u, std::min(4u, hw / 2)));
+
+        return DuckDBBaseT<FinanceDB>::init(db_dir, db_filename, max_memory_mb, threads);
+    }
 
     int importCsv(const String& csv_path, const String& category);
 
