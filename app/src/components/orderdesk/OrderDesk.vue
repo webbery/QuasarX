@@ -4,10 +4,25 @@
     <div class="decision-list-panel">
       <div class="panel-header">
         <h3>策略决策列表</h3>
+        <span
+          v-if="decisionDate"
+          class="decision-date"
+          title="这批决策的归属交易日（当日收盘后回放产生，供下一交易日下单）"
+        >
+          归属日 {{ decisionDate }}
+        </span>
         <div class="filter-btns">
           <button :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button>
           <button :class="{ active: filter === 'pending' }" @click="filter = 'pending'">待确认</button>
           <button :class="{ active: filter === 'executed' }" @click="filter = 'executed'">已下单</button>
+          <button
+            class="btn-refresh"
+            @click="refreshDecisions"
+            :disabled="refreshing"
+            title="重新拉取最新一批决策"
+          >
+            <i :class="refreshing ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i>
+          </button>
         </div>
       </div>
       <div class="decision-table-wrap">
@@ -166,16 +181,29 @@
         <p>请从左侧选择一条决策</p>
       </div>
     </div>
+
+    <!-- 底部：交易明细记录 -->
+    <div class="trade-records-panel">
+      <TradeRecordsPanel :strategy-name="strategyName" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useDecision, DecisionAction, actionLabels, actionColors } from './composables/useDecision'
+import TradeRecordsPanel from './TradeRecordsPanel.vue'
 import { message } from '@/tool'
 
+interface Props {
+  /** 当前追踪的策略名，用于筛选交易明细记录 */
+  strategyName?: string
+}
+
+defineProps<Props>()
+
 const {
-  decisions, selectedId, selectedDecision, pendingDecisions,
+  decisions, selectedId, selectedDecision, pendingDecisions, decisionDate,
   fetchDecisions, executeDecision, closeDecision, registerSSE, unregisterSSE
 } = useDecision()
 
@@ -183,6 +211,18 @@ const filter = ref<'all' | 'pending' | 'executed'>('all')
 const editQuantity = ref(0)
 const editPrice = ref(0)
 const executing = ref(false)
+const refreshing = ref(false)
+
+/** 重新拉取最新一批决策（日终回放跑完后不用切 Tab 也能刷新） */
+const refreshDecisions = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await fetchDecisions()
+  } finally {
+    refreshing.value = false
+  }
+}
 
 const estimatedAmount = computed(() => {
   // B 口径：qty × price × (1 + commissionRate + slippageRate)
@@ -260,28 +300,44 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 上半区：决策列表 + 下单操作；下半区：交易明细记录 */
 .order-desk {
-  display: flex;
+  display: grid;
+  grid-template-rows: 1.1fr 0.9fr;
+  grid-template-columns: 1.2fr 0.8fr;
   gap: 1px;
   height: 100%;
+  min-height: 0;
   background: rgba(74, 158, 255, 0.1);
 }
 
 .decision-list-panel {
-  flex: 1.2;
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   background: rgba(15, 23, 42, 0.6);
   min-width: 0;
+  min-height: 0;
 }
 
 .decision-action-panel {
-  flex: 0.8;
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   background: rgba(15, 23, 42, 0.6);
   min-width: 280px;
   max-width: 380px;
+  min-height: 0;
+}
+
+.trade-records-panel {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .panel-header {
@@ -317,9 +373,36 @@ onUnmounted(() => {
 
 .filter-btns button.active,
 .filter-btns button:hover {
-  background: rgba(74, 158, 255, 0.15);
+  background: rgba(96, 165, 250, 0.15);
   color: #60a5fa;
-  border-color: rgba(74, 158, 255, 0.4);
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+/* 归属日徽标：这批决策属于哪个交易日 */
+.decision-date {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+  white-space: nowrap;
+}
+
+.filter-btns .btn-refresh {
+  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  color: #94a3b8;
+}
+
+.filter-btns .btn-refresh:hover:not(:disabled) {
+  color: #60a5fa;
+}
+
+.filter-btns .btn-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .decision-table-wrap {

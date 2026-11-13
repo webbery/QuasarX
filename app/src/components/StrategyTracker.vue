@@ -212,7 +212,7 @@
 
         <!-- 下单管理面板 -->
         <div v-if="activeTab === 'orderdesk'" class="tab-content">
-            <OrderDesk />
+            <OrderDesk :strategy-name="selectedStrategy" />
         </div>
     </div>
 </template>

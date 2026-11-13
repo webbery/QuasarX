@@ -55,7 +55,6 @@
       <TradeDetailTab
         v-if="activeTab === 'trades'"
         :trades="tradeRecords"
-        :holdings="holdingPeriods"
       />
 
       <!-- 空状态 -->
@@ -75,6 +74,7 @@ import BasicMetricsTab from './tabs/BasicMetricsTab.vue'
 import AttributionTab from './tabs/AttributionTab.vue'
 import SensitivityTab from './tabs/SensitivityTab.vue'
 import TradeDetailTab from './tabs/TradeDetailTab.vue'
+import { useStrategyTrades, type StrategyTrade } from '@/composables/useStrategyTrades'
 
 interface Props {
   strategyName?: string
@@ -170,33 +170,12 @@ interface PeriodSensitivity {
 
 const periodSensitivity = ref<PeriodSensitivity[]>([])
 
-// === 交易明细数据 ===
-interface TradeRecord {
-  id: string
-  symbol: string
-  direction: 'buy' | 'sell'
-  price: number
-  quantity: number
-  amount: number
-  commission: number
-  timestamp: string
-  pnl?: number
-}
-
-const tradeRecords = ref<TradeRecord[]>([])
-
-interface HoldingPeriod {
-  symbol: string
-  buyDate: string
-  sellDate: string
-  buyPrice: number
-  sellPrice: number
-  holdingDays: number
-  pnl: number
-  pnlPercent: number
-}
-
-const holdingPeriods = ref<HoldingPeriod[]>([])
+// === 交易明细数据（与「下单管理」的交易明细记录同源） ===
+const {
+  trades: tradeRecords,
+  fetchTrades,
+  reset: resetTrades,
+} = useStrategyTrades()
 
 // === 公共函数 ===
 
@@ -217,8 +196,7 @@ function clearData() {
   paramSensitivity.value = []
   costSensitivity.value = []
   periodSensitivity.value = []
-  tradeRecords.value = []
-  holdingPeriods.value = []
+  resetTrades()
   hasData.value = false
 }
 
@@ -233,12 +211,11 @@ let inflight = 0
 async function loadTradeData() {
   const seq = loadSeq
   const name = props.strategyName
-  const resp = await axios.get('/v0/strategy/trade', { params: { name } })
+  const trades = await fetchTrades(name)
   if (seq !== loadSeq || name !== props.strategyName) return
 
-  const data = resp.data
-  if (data.trades && data.trades.length > 0) {
-    mapTradeData(data)
+  if (trades.length > 0) {
+    applyTradeMeta(trades)
     hasData.value = true
   }
 }
@@ -293,55 +270,14 @@ function loadData() {
   return loadTab(activeTab.value)
 }
 
-function mapTradeData(data: any) {
-  const trades: TradeRecord[] = []
-  const holdings: HoldingPeriod[] = []
-
-  // 映射 trades
-  if (Array.isArray(data.trades)) {
-    data.trades.forEach((t: any, i: number) => {
-      trades.push({
-        id: `t${i}`,
-        symbol: t.symbol,
-        direction: t.direction,
-        price: t.price,
-        quantity: t.quantity,
-        amount: t.price * t.quantity,
-        commission: t.commission ?? 0,  // 从后端数据读取佣金，默认为0
-        timestamp: t.date,
-        pnl: t.pnl ?? undefined,
-      })
-    })
-  }
-
-  // 映射 holdings（排除未平仓的）
-  if (Array.isArray(data.holdings)) {
-    data.holdings.forEach((h: any) => {
-      if (h.open || !h.sell_date) return
-      holdings.push({
-        symbol: h.symbol,
-        buyDate: h.buy_date,
-        sellDate: h.sell_date,
-        buyPrice: h.buy_price,
-        sellPrice: h.sell_price,
-        holdingDays: h.holding_days || 1,
-        pnl: h.pnl || 0,
-        pnlPercent: h.pnl_pct || 0,
-      })
-    })
-  }
-
-  tradeRecords.value = trades
-  holdingPeriods.value = holdings
-
-  // 设置回测时间范围
-  if (data.trades && data.trades.length > 0) {
-    const dates = data.trades.map((t: any) => t.date).sort()
-    backtestInfo.value = {
-      startDate: dates[0],
-      endDate: dates[dates.length - 1],
-      initialCapital: 1000000,
-    }
+/** 由成交记录推导回测时间范围 */
+function applyTradeMeta(trades: StrategyTrade[]) {
+  if (trades.length === 0) return
+  const dates = trades.map(t => t.timestamp).sort()
+  backtestInfo.value = {
+    startDate: dates[0],
+    endDate: dates[dates.length - 1],
+    initialCapital: backtestInfo.value?.initialCapital ?? 1000000,
   }
 }
 

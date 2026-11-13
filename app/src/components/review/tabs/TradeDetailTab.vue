@@ -1,5 +1,6 @@
 <!-- app/src/components/review/tabs/TradeDetailTab.vue -->
-<!-- 交易明细 Tab - 交易记录表格、持仓周期分析、盈亏分布 -->
+<!-- 交易明细 Tab - 交易统计、交易时序、盈亏分布、累计盈亏（纯图表展示） -->
+<!-- 明细表格已迁移至「下单管理」的 TradeRecordsPanel.vue -->
 
 <template>
   <div class="trade-detail-tab">
@@ -33,6 +34,15 @@
       </div>
     </div>
 
+    <!-- 交易时序与单笔盈亏 -->
+    <div v-if="trades.length > 0" class="chart-card">
+      <div class="chart-title">
+        <div class="title-icon">🕘</div>
+        <span>交易时序与单笔盈亏</span>
+      </div>
+      <TradeTimelineChart :trades="trades" />
+    </div>
+
     <!-- 盈亏分布直方图 -->
     <div class="chart-card">
       <div class="chart-title">
@@ -50,135 +60,18 @@
       </div>
       <div class="chart-container" ref="cumPnlRef"></div>
     </div>
-
-    <!-- 持仓周期分析 -->
-    <div v-if="holdings.length > 0" class="chart-card">
-      <div class="chart-title">
-        <div class="title-icon">⏱️</div>
-        <span>持仓周期分析</span>
-      </div>
-      <div class="chart-container" ref="holdingPeriodRef"></div>
-    </div>
-
-    <!-- 交易记录表格 -->
-    <div class="chart-card">
-      <div class="chart-title">
-        <div class="title-icon">📋</div>
-        <span>交易记录明细</span>
-        <div class="table-actions">
-          <button class="btn-export" @click="exportCSV" :disabled="trades.length === 0">
-            <i class="fas fa-download"></i> 导出CSV
-          </button>
-        </div>
-      </div>
-      <div class="trade-table">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>标的</th>
-              <th>方向</th>
-              <th>价格</th>
-              <th>数量</th>
-              <th>金额</th>
-              <th>佣金</th>
-              <th>盈亏</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="trade in sortedTrades" :key="trade.id">
-              <td>{{ trade.timestamp }}</td>
-              <td>{{ trade.symbol }}</td>
-              <td>
-                <span :class="trade.direction === 'buy' ? 'badge-buy' : 'badge-sell'">
-                  {{ trade.direction === 'buy' ? '买入' : '卖出' }}
-                </span>
-              </td>
-              <td>¥{{ trade.price.toFixed(2) }}</td>
-              <td>{{ trade.quantity }}</td>
-              <td>¥{{ trade.amount.toFixed(2) }}</td>
-              <td>¥{{ trade.commission.toFixed(2) }}</td>
-              <td :class="trade.pnl !== undefined ? getReturnClass(trade.pnl) : ''">
-                {{ trade.pnl !== undefined ? `¥${trade.pnl.toFixed(2)}` : '-' }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- 持仓周期表格 -->
-    <div v-if="holdings.length > 0" class="chart-card">
-      <div class="chart-title">
-        <div class="title-icon">📅</div>
-        <span>持仓周期明细</span>
-      </div>
-      <div class="holding-table">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>标的</th>
-              <th>买入日期</th>
-              <th>卖出日期</th>
-              <th>买入价</th>
-              <th>卖出价</th>
-              <th>持仓天数</th>
-              <th>盈亏</th>
-              <th>收益率</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="h in sortedHoldings" :key="h.symbol + h.buyDate">
-              <td>{{ h.symbol }}</td>
-              <td>{{ h.buyDate }}</td>
-              <td>{{ h.sellDate }}</td>
-              <td>¥{{ h.buyPrice.toFixed(2) }}</td>
-              <td>¥{{ h.sellPrice.toFixed(2) }}</td>
-              <td>{{ h.holdingDays }} 天</td>
-              <td :class="getReturnClass(h.pnl)">
-                ¥{{ h.pnl.toFixed(2) }}
-              </td>
-              <td :class="getReturnClass(h.pnlPercent)">
-                {{ h.pnlPercent >= 0 ? '+' : '' }}{{ h.pnlPercent.toFixed(2) }}%
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
-
-interface TradeRecord {
-  id: string
-  symbol: string
-  direction: 'buy' | 'sell'
-  price: number
-  quantity: number
-  amount: number
-  commission: number
-  timestamp: string
-  pnl?: number
-}
-
-interface HoldingPeriod {
-  symbol: string
-  buyDate: string
-  sellDate: string
-  buyPrice: number
-  sellPrice: number
-  holdingDays: number
-  pnl: number
-  pnlPercent: number
-}
+import { registerDarkTheme } from '@/lib/echartsTheme'
+import TradeTimelineChart from './TradeTimelineChart.vue'
+import type { StrategyTrade } from '@/composables/useStrategyTrades'
 
 interface Props {
-  trades: TradeRecord[]
-  holdings: HoldingPeriod[]
+  trades: StrategyTrade[]
 }
 
 const props = defineProps<Props>()
@@ -186,20 +79,14 @@ const props = defineProps<Props>()
 // === 图表引用 ===
 const pnlDistRef = ref<HTMLElement | null>(null)
 const cumPnlRef = ref<HTMLElement | null>(null)
-const holdingPeriodRef = ref<HTMLElement | null>(null)
 
 let pnlDistChart: echarts.EChartsType | null = null
 let cumPnlChart: echarts.EChartsType | null = null
-let holdingPeriodChart: echarts.EChartsType | null = null
 
 // === 计算属性 ===
 
 const sortedTrades = computed(() => {
   return [...props.trades].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-})
-
-const sortedHoldings = computed(() => {
-  return [...props.holdings].sort((a, b) => a.buyDate.localeCompare(b.buyDate))
 })
 
 const tradeStats = computed(() => {
@@ -217,16 +104,11 @@ const tradeStats = computed(() => {
   }
 })
 
-// === 辅助函数 ===
-
-function getReturnClass(value: number): string {
-  return value >= 0 ? 'return-positive' : 'return-negative'
-}
-
 // === 盈亏分布图表 ===
 
 function initPnlDistChart() {
   if (!pnlDistRef.value) return
+  registerDarkTheme()
   pnlDistChart = echarts.init(pnlDistRef.value, 'quasarx-dark')
 }
 
@@ -293,6 +175,7 @@ function updatePnlDistChart() {
 
 function initCumPnlChart() {
   if (!cumPnlRef.value) return
+  registerDarkTheme()
   cumPnlChart = echarts.init(cumPnlRef.value, 'quasarx-dark')
 }
 
@@ -354,106 +237,6 @@ function updateCumPnlChart() {
   cumPnlChart.setOption(option, true)
 }
 
-// === 持仓周期图表 ===
-
-function initHoldingPeriodChart() {
-  if (!holdingPeriodRef.value) return
-  holdingPeriodChart = echarts.init(holdingPeriodRef.value, 'quasarx-dark')
-}
-
-function updateHoldingPeriodChart() {
-  if (!holdingPeriodChart || props.holdings.length === 0) return
-
-  const holdings = sortedHoldings.value
-  const labels = holdings.map((h, i) => `#${i + 1}`)
-  const days = holdings.map(h => h.holdingDays)
-  const pnlPercents = holdings.map(h => h.pnlPercent)
-
-  const option = {
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(26, 34, 54, 0.9)',
-      borderColor: '#2a3449',
-      textStyle: { color: '#e0e0e0' },
-    },
-    legend: {
-      data: ['持仓天数', '收益率'],
-      textStyle: { color: '#a0aec0' },
-      top: 10,
-    },
-    grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: labels,
-      axisLine: { lineStyle: { color: '#6E7079' } },
-      axisLabel: { color: '#a0aec0' },
-      splitLine: { show: false },
-    },
-    yAxis: [
-      {
-        type: 'value',
-        name: '持仓天数',
-        axisLine: { lineStyle: { color: '#6E7079' } },
-        axisLabel: { color: '#a0aec0', formatter: '{value} 天' },
-        splitLine: { lineStyle: { color: '#2a3449', type: 'dashed' } },
-      },
-      {
-        type: 'value',
-        name: '收益率',
-        axisLine: { lineStyle: { color: '#6E7079' } },
-        axisLabel: { color: '#a0aec0', formatter: '{value}%' },
-        splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: '持仓天数',
-        type: 'bar',
-        data: days.map(v => ({
-          value: v,
-          itemStyle: { color: '#2962ff' },
-        })),
-        yAxisIndex: 0,
-      },
-      {
-        name: '收益率',
-        type: 'line',
-        data: pnlPercents.map(v => ({
-          value: v,
-          itemStyle: { color: v >= 0 ? '#10b981' : '#ff1744' },
-        })),
-        yAxisIndex: 1,
-        lineStyle: { width: 3 },
-        symbol: 'circle',
-        symbolSize: 6,
-      },
-    ],
-  }
-
-  holdingPeriodChart.setOption(option, true)
-}
-
-// === 导出 CSV ===
-
-function exportCSV() {
-  if (props.trades.length === 0) return
-
-  const lines = ['时间,标的,方向,价格,数量,金额,佣金,盈亏']
-  sortedTrades.value.forEach(t => {
-    lines.push(`${t.timestamp},${t.symbol},${t.direction === 'buy' ? '买入' : '卖出'},${t.price},${t.quantity},${t.amount},${t.commission},${t.pnl !== undefined ? t.pnl : ''}`)
-  })
-
-  const csvContent = lines.join('\n')
-  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `trades_${new Date().toISOString().split('T')[0]}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
 // === 响应式更新 ===
 
 watch(() => props.trades, () => {
@@ -461,18 +244,14 @@ watch(() => props.trades, () => {
   updateCumPnlChart()
 }, { deep: true })
 
-watch(() => props.holdings, updateHoldingPeriodChart, { deep: true })
-
 // === 生命周期 ===
 
 onMounted(() => {
   initPnlDistChart()
   initCumPnlChart()
-  initHoldingPeriodChart()
 
   updatePnlDistChart()
   updateCumPnlChart()
-  updateHoldingPeriodChart()
 
   window.addEventListener('resize', onResize)
 })
@@ -480,14 +259,12 @@ onMounted(() => {
 onUnmounted(() => {
   pnlDistChart?.dispose()
   cumPnlChart?.dispose()
-  holdingPeriodChart?.dispose()
   window.removeEventListener('resize', onResize)
 })
 
 function onResize() {
   pnlDistChart?.resize()
   cumPnlChart?.resize()
-  holdingPeriodChart?.resize()
 }
 </script>
 
@@ -583,111 +360,6 @@ function onResize() {
   width: 100%;
 }
 
-.table-actions {
-  margin-left: auto;
-}
-
-.btn-export {
-  padding: 6px 16px;
-  background: linear-gradient(90deg, #059669, #047857);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.btn-export:hover:not(:disabled) {
-  background: linear-gradient(90deg, #047857, #065f46);
-}
-
-.btn-export:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* === 表格 === */
-
-.trade-table,
-.holding-table {
-  overflow-x: auto;
-  max-height: 500px;
-  overflow-y: auto;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.data-table thead tr {
-  border-bottom: 2px solid var(--border, #2a3449);
-  position: sticky;
-  top: 0;
-  background: var(--panel-bg, #1a2236);
-  z-index: 10;
-}
-
-.data-table th {
-  padding: 10px 14px;
-  text-align: left;
-  color: #94a3b8;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.data-table tbody tr {
-  border-bottom: 1px solid rgba(42, 52, 77, 0.4);
-}
-
-.data-table tbody tr:hover {
-  background-color: rgba(42, 52, 77, 0.3);
-}
-
-.data-table td {
-  padding: 10px 14px;
-  color: var(--text, #e0e0e0);
-  white-space: nowrap;
-}
-
-.return-positive {
-  color: #10b981 !important;
-  font-weight: 600;
-}
-
-.return-negative {
-  color: #ff1744 !important;
-  font-weight: 600;
-}
-
-/* === 买卖标签 === */
-
-.badge-buy {
-  display: inline-block;
-  padding: 2px 8px;
-  background: rgba(16, 185, 129, 0.2);
-  color: #10b981;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.badge-sell {
-  display: inline-block;
-  padding: 2px 8px;
-  background: rgba(255, 23, 68, 0.2);
-  color: #ff1744;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 /* === 响应式 === */
 
 @media (max-width: 1400px) {
@@ -707,15 +379,6 @@ function onResize() {
 
   .chart-container {
     height: 280px;
-  }
-
-  .data-table {
-    font-size: 12px;
-  }
-
-  .data-table th,
-  .data-table td {
-    padding: 8px 10px;
   }
 }
 </style>
