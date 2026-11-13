@@ -65,9 +65,9 @@ private:
   std::mutex _mutex;
 };
 
-class ATR: public IStopLoss {
+class ATRSL: public IStopLoss {
 public:
-  ATR() {}
+  ATRSL() {}
 
   virtual void check(const Map<symbol_t, QuoteInfo>&, List<symbol_t>&& sells);
 

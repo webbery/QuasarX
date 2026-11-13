@@ -150,7 +150,7 @@ IStopLoss* StopLossHandler::GetOrGenerate(StopLossType type) {
        case StopLossType::Step:
          break;
        case StopLossType::ATR:
-         sl = new ATR();
+         sl = new ATRSL();
          break;
        default:
          sl = new SLPercentage();

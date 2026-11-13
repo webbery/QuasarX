@@ -1,4 +1,3 @@
-#include "Nodes/ProtectionNode.h"
 #include "Interprecter/Stmt.h"
 #include "DataContext.h"
 #include "BrokerSubSystem.h"
@@ -9,196 +8,112 @@
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "server.h"
+#include "Nodes/ProtectionNode.h"
 
 ProtectionNode::ProtectionNode(Server* server) : _server(server) {
 }
 
 ProtectionNode::~ProtectionNode() {
     if (_formulaParser) delete _formulaParser;
-    // Phase 0: 内部计算器由 unique_ptr 自动清理
+    // _guards 由 unique_ptr 自动清理
 }
 
 bool ProtectionNode::Init(const nlohmann::json& config) {
     auto& params = config["params"];
 
-    // 支持三种格式：
-    // 1. 前端中文扁平格式: "止损开关": { "value": true }, "止损比例": { "value": 0.05 }
-    // 2. 后端导出英文格式: "stop_loss_enabled": { "value": true }, "stop_loss_percent": 0.05
-    // 3. 嵌套格式: "stop_loss": { "enabled": true, "percent": 0.05 }
+    // 使用 GuardFactory 创建 Guard 实例
+    _guards = GuardFactory::createGuards(params);
 
-    String formulaExpr;
-
-    if (params.contains("止损开关")) {
-        // 前端中文格式
-        _sl.enabled = params["止损开关"]["value"];
-        _sl.percent = params["止损比例"]["value"];
-        _tp.enabled = params["止盈开关"]["value"];
-        _tp.percent = params["止盈比例"]["value"];
-        _ts.enabled = params["追踪止损开关"]["value"];
-        _ts.percent = params["追踪止损比例"]["value"];
-        _time.enabled = params["时间止损开关"]["value"];
-        _time.max_bars = params["最大持仓Bar数"]["value"];
-        if (params.contains("公式止损开关")) {
-            _formula.enabled = params["公式止损开关"]["value"];
-        }
-        if (params.contains("公式止损表达式")) {
-            formulaExpr = params["公式止损表达式"]["value"].get<String>();
-        }
-        // Phase 0: 4 类新止损（中文格式）
-        if (params.contains("ATR止损开关")) {
-            _atr_sl.enabled = params["ATR止损开关"]["value"];
-            _atr_sl.period = params.value("ATR周期", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
-            _atr_sl.multiplier = params.value("ATR倍数", nlohmann::json::object({{"value", 2.0}}))["value"].get<double>();
-        }
-        if (params.contains("MA止损开关")) {
-            _ma_sl.enabled = params["MA止损开关"]["value"];
-            _ma_sl.period = params.value("MA周期", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
-        }
-        if (params.contains("R2止损开关")) {
-            _r2_sl.enabled = params["R2止损开关"]["value"];
-            _r2_sl.period = params.value("R2周期", nlohmann::json::object({{"value", 10}}))["value"].get<int>();
-            _r2_sl.threshold = params.value("R2阈值", nlohmann::json::object({{"value", 0.5}}))["value"].get<double>();
-        }
-        if (params.contains("MAE止损开关")) {
-            _mae_sl.enabled = params["MAE止损开关"]["value"];
-            _mae_sl.percent = params.value("MAE比例", nlohmann::json::object({{"value", 0.05}}))["value"].get<double>();
-        }
-    } else if (params.contains("stop_loss_enabled")) {
-        // 后端导出英文扁平格式
-        _sl.enabled = params["stop_loss_enabled"]["value"];
-        _sl.percent = params["stop_loss_percent"]["value"];
-        _tp.enabled = params["take_profit_enabled"]["value"];
-        _tp.percent = params["take_profit_percent"]["value"];
-        _ts.enabled = params["trailing_stop_enabled"]["value"];
-        _ts.percent = params["trailing_stop_percent"]["value"];
-        _time.enabled = params["time_stop_enabled"]["value"];
-        _time.max_bars = params["max_bars"]["value"];
-        if (params.contains("formula_stop_enabled")) {
-            _formula.enabled = params["formula_stop_enabled"]["value"];
-        }
-        if (params.contains("formula_stop_expression")) {
-            formulaExpr = params["formula_stop_expression"]["value"].get<String>();
-        }
-        // Phase 0: 4 类新止损（英文扁平格式）
-        if (params.contains("atr_stop_loss_enabled")) {
-            _atr_sl.enabled = params["atr_stop_loss_enabled"]["value"];
-            _atr_sl.period = params.value("atr_period", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
-            _atr_sl.multiplier = params.value("atr_multiplier", nlohmann::json::object({{"value", 2.0}}))["value"].get<double>();
-        }
-        if (params.contains("ma_stop_loss_enabled")) {
-            _ma_sl.enabled = params["ma_stop_loss_enabled"]["value"];
-            _ma_sl.period = params.value("ma_period", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
-        }
-        if (params.contains("r2_stop_loss_enabled")) {
-            _r2_sl.enabled = params["r2_stop_loss_enabled"]["value"];
-            _r2_sl.period = params.value("r2_period", nlohmann::json::object({{"value", 10}}))["value"].get<int>();
-            _r2_sl.threshold = params.value("r2_threshold", nlohmann::json::object({{"value", 0.5}}))["value"].get<double>();
-        }
-        if (params.contains("mae_stop_loss_enabled")) {
-            _mae_sl.enabled = params["mae_stop_loss_enabled"]["value"];
-            _mae_sl.percent = params.value("mae_percent", nlohmann::json::object({{"value", 0.05}}))["value"].get<double>();
-        }
-    } else if (params.contains("stop_loss")) {
-        // 嵌套格式（直接 JSON 配置）
-        _sl.enabled = params["stop_loss"]["enabled"];
-        _sl.percent = params["stop_loss"]["percent"];
-        _tp.enabled = params["take_profit"]["enabled"];
-        _tp.percent = params["take_profit"]["percent"];
-        _ts.enabled = params["trailing_stop"]["enabled"];
-        _ts.percent = params["trailing_stop"]["percent"];
-        _time.enabled = params["time_stop"]["enabled"];
-        _time.max_bars = params["time_stop"]["max_bars"];
-        if (params.contains("formula_stop")) {
-            _formula.enabled = params["formula_stop"]["enabled"];
-            formulaExpr = params["formula_stop"].value("expression", "");
-        }
-        // Phase 0: 4 类新止损（嵌套格式）
-        if (params.contains("atr_stop_loss")) {
-            _atr_sl.enabled = params["atr_stop_loss"].value("enabled", false);
-            _atr_sl.period = params["atr_stop_loss"].value("period", 20);
-            _atr_sl.multiplier = params["atr_stop_loss"].value("multiplier", 2.0);
-        }
-        if (params.contains("ma_stop_loss")) {
-            _ma_sl.enabled = params["ma_stop_loss"].value("enabled", false);
-            _ma_sl.period = params["ma_stop_loss"].value("period", 20);
-        }
-        if (params.contains("r2_stop_loss")) {
-            _r2_sl.enabled = params["r2_stop_loss"].value("enabled", false);
-            _r2_sl.period = params["r2_stop_loss"].value("period", 10);
-            _r2_sl.threshold = params["r2_stop_loss"].value("threshold", 0.5);
-        }
-        if (params.contains("mae_stop_loss")) {
-            _mae_sl.enabled = params["mae_stop_loss"].value("enabled", false);
-            _mae_sl.percent = params["mae_stop_loss"].value("percent", 0.05);
-        }
+    // 日志输出创建的 Guard
+    INFO("[ProtectionNode] Created {} guards:", _guards.size());
+    for (const auto& guard : _guards) {
+        INFO("[ProtectionNode]   - {} (enabled={})", guard->name(), guard->enabled());
     }
 
-    // 初始化公式止损
-    if (_formula.enabled && !formulaExpr.empty()) {
+    // 公式止损需要特殊处理（暂不纳入 Guard 架构）
+    String formulaExpr;
+    if (params.contains("公式止损开关") && params["公式止损开关"]["value"].get<bool>()) {
+        _formulaEnabled = true;
+        formulaExpr = params.value("公式止损表达式", nlohmann::json::object())["value"].get<String>();
+    } else if (params.contains("formula_stop_enabled") && params["formula_stop_enabled"]["value"].get<bool>()) {
+        _formulaEnabled = true;
+        formulaExpr = params.value("formula_stop_expression", nlohmann::json::object())["value"].get<String>();
+    } else if (params.contains("formula_stop") && params["formula_stop"]["enabled"].get<bool>()) {
+        _formulaEnabled = true;
+        formulaExpr = params["formula_stop"].value("expression", "");
+    }
+
+    if (_formulaEnabled && !formulaExpr.empty()) {
+        _formulaExpr = formulaExpr;
         _formulaParser = new FormulaParser(_server);
         if (!_formulaParser->parse(formulaExpr)) {
             WARN("[ProtectionNode] failed to parse formula expression: {}", formulaExpr);
             delete _formulaParser;
             _formulaParser = nullptr;
-            _formula.enabled = false;
+            _formulaEnabled = false;
             return false;
         }
-
-        // 从上游输入收集 symbols 和 variant names
-        for (auto& item : _ins) {
-            auto outs = item.second->out_elements();
-            for (auto& [key, type] : outs) {
-                Vector<String> tokens;
-                split(key, tokens, ".");
-                if (tokens.size() >= 2) {
-                    symbol_t sym = to_symbol(tokens[0] + "." + tokens[1]);
-                    if (std::find(_formulaSymbols.begin(), _formulaSymbols.end(), sym) == _formulaSymbols.end()) {
-                        _formulaSymbols.push_back(sym);
-                    }
-                }
-                if (!tokens.empty()) {
-                    _formulaVariants.insert(tokens.back());
-                }
-            }
-        }
-
-        INFO("[ProtectionNode] Formula stop enabled: expr='{}' symbols={} variants={}",
-             formulaExpr, _formulaSymbols.size(), _formulaVariants.size());
-    }
-
-    // Phase 0: 日志输出新止损配置
-    if (_atr_sl.enabled) {
-        INFO("[ProtectionNode] ATR stop loss enabled: period={}, multiplier={}", _atr_sl.period, _atr_sl.multiplier);
-    }
-    if (_ma_sl.enabled) {
-        INFO("[ProtectionNode] MA stop loss enabled: period={}", _ma_sl.period);
-    }
-    if (_r2_sl.enabled) {
-        INFO("[ProtectionNode] R2 stop loss enabled: period={}, threshold={}", _r2_sl.period, _r2_sl.threshold);
-    }
-    if (_mae_sl.enabled) {
-        INFO("[ProtectionNode] MAE stop loss enabled: percent={}", _mae_sl.percent);
+        INFO("[ProtectionNode] Formula stop enabled: expr='{}'", formulaExpr);
     }
 
     return true;
 }
 
-static double get_position_cost(Server* server, DataContext& context, const String& strategy, symbol_t symbol) {
+const nlohmann::json ProtectionNode::getParams() {
+    return {
+        {"止损", {
+            {"止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"止损比例", {{"type", "number"}, {"value", 0.08}, {"step", 0.01}, {"min", 0.01}, {"max", 0.5}}}
+        }},
+        {"止盈", {
+            {"止盈开关", {{"type", "checkbox"}, {"value", false}}},
+            {"止盈比例", {{"type", "number"}, {"value", 0.05}, {"step", 0.01}, {"min", 0.01}, {"max", 0.5}}}
+        }},
+        {"追踪止损", {
+            {"追踪止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"追踪止损比例", {{"type", "number"}, {"value", 0.03}, {"step", 0.01}, {"min", 0.01}, {"max", 0.3}}}
+        }},
+        {"时间止损", {
+            {"时间止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"最大持仓Bar数", {{"type", "number"}, {"value", 10}, {"min", 1}, {"max", 100}}}
+        }},
+        {"ATR止损", {
+            {"ATR止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"ATR周期", {{"type", "number"}, {"value", 20}, {"min", 5}, {"max", 60}}},
+            {"ATR倍数", {{"type", "number"}, {"value", 2.0}, {"step", 0.5}, {"min", 1.0}, {"max", 5.0}}}
+        }},
+        {"MA止损", {
+            {"MA止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"MA周期", {{"type", "number"}, {"value", 20}, {"min", 5}, {"max", 60}}}
+        }},
+        {"R2止损", {
+            {"R2止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"R2周期", {{"type", "number"}, {"value", 10}, {"min", 5}, {"max", 30}}},
+            {"R2阈值", {{"type", "number"}, {"value", 0.5}, {"step", 0.1}, {"min", 0.0}, {"max", 1.0}}}
+        }},
+        {"MAE止损", {
+            {"MAE止损开关", {{"type", "checkbox"}, {"value", false}}},
+            {"MAE比例", {{"type", "number"}, {"value", 0.05}, {"step", 0.01}, {"min", 0.01}, {"max", 0.3}}}
+        }}
+    };
+}
+
+Map<String, ArgType> ProtectionNode::out_elements() {
+    return {};
+}
+
+static double get_position_cost_impl(Server* server, DataContext& context, const String& strategy, symbol_t symbol) {
     if (server->GetRunningMode() == RuningType::Backtest) {
-        // 回测模式下 BacktestContext 不保存成本价，返回 0
-        // ProtectionNode 在新建仓时自己记录当前价作为成本
-        return 0.0;
+        return 0.0;  // 回测模式由 ProtectionNode 自己记录
     } else {
         auto* broker = server->GetBrokerSubSystem();
         auto* capital = broker->GetStrategyCapital(strategy);
         auto pos = capital->getPosition(symbol);
         return pos._avgPrice;
     }
-    return 0.0;
 }
 
-// 触发时被平掉的持仓量（供风控事件展示）
-static int64_t get_position_qty(Server* server, DataContext& context, const String& strategy, symbol_t symbol) {
+static int64_t get_position_qty_impl(Server* server, DataContext& context, const String& strategy, symbol_t symbol) {
     if (server->GetRunningMode() == RuningType::Backtest) {
         auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
@@ -214,6 +129,14 @@ static int64_t get_position_qty(Server* server, DataContext& context, const Stri
     return capital->getHoldingQuantity(symbol);
 }
 
+double ProtectionNode::get_position_cost(const String& strategy, DataContext& context, symbol_t symbol) {
+    return get_position_cost_impl(_server, context, strategy, symbol);
+}
+
+int64_t ProtectionNode::get_position_qty(const String& strategy, DataContext& context, symbol_t symbol) {
+    return get_position_qty_impl(_server, context, strategy, symbol);
+}
+
 void ProtectionNode::syncPositions(const String& strategy, DataContext& context) {
     // 获取当前所有有持仓的标的
     Set<symbol_t> current_symbols;
@@ -224,32 +147,32 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             auto run_id = context.getBacktestRunId();
             auto btCtx = histExchange->getBacktestContext(run_id);
             if (btCtx) {
-                // INFO("[ProtectionNode] syncPositions: run_id={}, epoch={}", run_id, context.GetEpoch());
                 for (const auto& sym : btCtx->getSymbols()) {
                     int64_t pos = btCtx->getPosition(sym);
-                    // INFO("[ProtectionNode]   symbol={} position={}", get_symbol(sym), pos);
                     if (pos != 0) {
                         current_symbols.insert(sym);
                     }
                 }
-            } else {
-                INFO("[ProtectionNode] syncPositions: btCtx is null for run_id={}", run_id);
             }
-        } else {
-            INFO("[ProtectionNode] syncPositions: histExchange is null");
         }
     } else {
         auto* broker = _server->GetBrokerSubSystem();
         auto* capital = broker->GetStrategyCapital(strategy);
-        // 日终策略会重放 160 根历史 bar，而仓位是之后才建立的：
-        // 早于建仓时刻的 bar 上这个仓位根本不存在，不能参与止损判定。
-        // 不排除的话，建仓前的高点会进追踪止损的参考高点，建仓当根就可能误触发
-        // （2026-11-03：sz.300450 以 29.15 建仓，参考高点却是 5 月的 57.01）。
         const time_t now = context.Current();
         for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
             if (pos._quantity == 0) continue;
             const time_t entry_time = capital->getPositionEntryTime(symbol);
-            if (entry_time > 0 && now > 0 && now < entry_time) continue;
+            if (entry_time > 0 && now > 0 && now < entry_time) {
+                // 静默跳过会让"持仓明明在、风控却没触发"完全无从排查。
+                // 只在决策 bar 记一条：日线回放时这段在每个历史 epoch 都成立，
+                // 全记会把日志刷成 160 行/标的。
+                if (context.IsDecisionBar()) {
+                    STRATEGY_INFO(strategy,
+                                  "[ProtectionNode] position skipped: {} entry_time={} > bar_time={}",
+                                  get_symbol(symbol), entry_time, now);
+                }
+                continue;
+            }
             current_symbols.insert(symbol);
         }
     }
@@ -270,18 +193,13 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             EntryInfo info;
             info._entry_bar = context.GetEpoch();
 
-            // 当前 Bar 的复权因子：把原始价换算到 .close 序列所在的复权口径
             double factor = context.GetAdjFactor(symbol);
-
-            // 获取成本价（实盘模式从 position 读取，回测模式为 0）
-            double cost = get_position_cost(_server, context, strategy, symbol);
+            double cost = get_position_cost(strategy, context, symbol);
             if (cost > 0) {
-                // pos._price 是撮合成交价（原始价），换算成复权口径后再与 .close 序列比较，
-                // 否则除权日附近会拿原始成本和复权现价比，算出来的止损位是错的。
                 info._raw_cost = cost;
                 info._avg_price = cost * factor;
             } else {
-                // 回测模式或无成本价：用当前 Bar 收盘价（复权）作为近似入场价
+                // 回测模式或无成本价：用当前收盘价作为入场价
                 String close_key = get_symbol(symbol) + ".close";
                 if (context.exist(close_key)) {
                     auto price_var = context.get<Vector<double>>(close_key);
@@ -289,15 +207,12 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                         info._avg_price = price_var.back();
                     }
                 }
-                // 折算回原始价，保证展示口径与 _raw_cost 一致
                 if (info._avg_price > 0 && factor > 0) {
                     info._raw_cost = info._avg_price / factor;
                 }
             }
 
-            // 初始最高/最低价：以建仓价为起点，再并入当前 bar 的收盘价（复权口径）。
-            // 不能直接拿当前收盘价当起点 —— 建仓时间未知时，回放窗口里任意一根
-            // bar 的收盘价都会变成"建仓以来的极值"，追踪止损/MAE 就都算错了。
+            // 初始化最高/最低价
             double high = info._avg_price > 0 ? info._avg_price : 0.0;
             double low = high;
             String close_key = get_symbol(symbol) + ".close";
@@ -310,20 +225,64 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                 }
             }
             info._highest_price = high;
-            info._lowest_price = low;  // Phase 0: MAE 用
+            info._lowest_price = low;
 
             _entry_info[symbol] = info;
             if (_server->GetRunningMode() != RuningType::Backtest) {
-                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info._raw_cost);
-            } else {
-                INFO("[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info._raw_cost);
+                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} cost={}",
+                             get_symbol(symbol), info._raw_cost);
             }
         }
     }
 }
 
+RiskTriggerType ProtectionNode::checkAllGuards(symbol_t symbol, DataContext& context, const EntryInfo& info) {
+    for (const auto& guard : _guards) {
+        if (guard->enabled()) {
+            RiskTriggerType hit = guard->check(symbol, context, info);
+            if (hit != RiskTriggerType::None) {
+                return hit;
+            }
+        }
+    }
+    return RiskTriggerType::None;
+}
+
+void ProtectionNode::updateAllGuards(symbol_t symbol, DataContext& context, EntryInfo& info) {
+    for (const auto& guard : _guards) {
+        if (guard->enabled()) {
+            guard->update(symbol, context, info);
+        }
+    }
+}
+
+void ProtectionNode::handleTrigger(symbol_t symbol, RiskTriggerType type, const String& strategy,
+                                   DataContext& context, const EntryInfo& info) {
+    _pending_close.insert(symbol);
+
+    ProtectionEvent evt;
+    evt._bar_index = context.GetEpoch();
+    evt._datetime = context.Current();
+    evt._symbol = symbol;
+    evt._type = type;
+    evt._entry_price = info._raw_cost > 0 ? info._raw_cost : info._avg_price;
+    evt._current_price = context.GetRawPrice(symbol);
+    evt._quantity = get_position_qty(strategy, context, symbol);
+    _events.push_back(evt);
+
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
+                     get_symbol(symbol), to_string(type),
+                     evt._entry_price, evt._current_price, evt._quantity);
+    } else {
+        INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
+             get_symbol(symbol), to_string(type),
+             evt._entry_price, evt._current_price, evt._quantity);
+    }
+}
+
 NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& context) {
-    // 每轮开始时重置风控上下文
+    // 重置风控上下文
     auto* rc = context.GetRiskContext();
     rc->reset();
 
@@ -334,257 +293,93 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         return NodeProcessResult::Success;
     }
 
-    // 实盘策略（日终+实时）：非决策bar只更新内部状态，不触发止损
-    // 回测模式：每根bar都执行（计算真实触发时机）
-    // Why: 日终策略回放历史bar时，ProtectionNode不应根据历史价格误触发止损
-    //      实时策略每根bar都触发止损检查过于激进，应该在最后一根bar决策
+    // 实盘策略：非决策 bar 只更新内部状态，不触发止损
     bool isRealtimeStrategy = (_server->GetRunningMode() != RuningType::Backtest);
     bool isDecisionBar = context.IsDecisionBar();
-    
+
     if (isRealtimeStrategy && !isDecisionBar) {
-        // 非决策bar：只更新 highest/lowest price，不触发止损检查
+        // 非决策 bar：只更新 Guard 状态
         for (auto& [symbol, info] : _entry_info) {
-            String close_key = get_symbol(symbol) + ".close";
-            if (context.exist(close_key)) {
-                auto price_var = context.get<Vector<double>>(close_key);
-                if (!price_var.empty()) {
-                    double current = price_var.back();
-                    if (current > 0) {
-                        info._highest_price = std::max(info._highest_price, current);
-                        info._lowest_price = std::min(info._lowest_price, current);
-                    }
-                }
-            }
+            updateAllGuards(symbol, context, info);
         }
         return NodeProcessResult::Success;
     }
 
-    // 回测模式 或 决策bar：正常执行止损检查
-    int current_bar = context.GetEpoch();
+    // 回测模式 或 决策 bar：检查止损
     RiskTriggerType triggered = RiskTriggerType::None;
     Set<symbol_t> triggered_symbols;
 
-    // 公式止损：一次性计算所有标的
-    Map<symbol_t, double> formulaResults;
-    if (_formula.enabled && _formulaParser && !_formulaSymbols.empty()) {
-        formulaResults = _formulaParser->computeNumeric(_formulaSymbols, _formulaVariants, context);
-    }
-
-    for (const auto& [symbol, info] : _entry_info) {
+    for (auto& [symbol, info] : _entry_info) {
         if (info._avg_price <= 0) continue;
         if (_pending_close.count(symbol)) continue;
 
-        // 获取当前价
-        double current_price = 0.0;
-        String close_key = get_symbol(symbol) + ".close";
-        if (context.exist(close_key)) {
-            auto price_var = context.get<Vector<double>>(close_key);
-            if (!price_var.empty()) {
-                current_price = price_var.back();
-            }
-        }
-        if (current_price <= 0) continue;
-
-        // 同一标的上多条止损规则，命中第一条即止（保持原有优先级）。
-        // 命中的标的要全部记下来：不同标的可以各自触发各自的止损，
-        // 只有触发的那几只该被平仓，其余持仓不该被连带清掉。
-        RiskTriggerType hit = RiskTriggerType::None;
-
-        // 1. 检查止损: current < entry * (1 - percent)
-        if (_sl.enabled) {
-            double sl_price = info._avg_price * (1.0 - _sl.percent);
-            if (current_price <= sl_price) {
-                INFO("[ProtectionNode] StopLoss TRIGGERED!");
-                hit = RiskTriggerType::StopLoss;
-            }
-        }
-
-        // 2. 检查止盈: current > entry * (1 + percent)
-        if (hit == RiskTriggerType::None && _tp.enabled) {
-            double tp_price = info._avg_price * (1.0 + _tp.percent);
-            if (current_price >= tp_price) {
-                hit = RiskTriggerType::TakeProfit;
-            }
-        }
-
-        // 3. 检查追踪止损: current < highest * (1 - percent)
-        //    highest 只统计建仓之后的 bar（见 syncPositions），
-        //    否则回放窗口里建仓前的高点会把参考价抬到不可能达到的位置。
-        if (hit == RiskTriggerType::None && _ts.enabled) {
-            double highest = info._highest_price > 0 ? info._highest_price : info._avg_price;
-            double ts_price = highest * (1.0 - _ts.percent);
-            if (current_price <= ts_price) {
-                hit = RiskTriggerType::TrailingStop;
-            }
-        }
-
-        // 4. 检查时间止损: held_bars > max_bars
-        if (hit == RiskTriggerType::None && _time.enabled) {
-            int held_bars = current_bar - info._entry_bar;
-            if (held_bars >= _time.max_bars) {
-                hit = RiskTriggerType::TimeStop;
-            }
-        }
-
-        // 5. 检查公式止损：表达式结果非零即触发
-        if (hit == RiskTriggerType::None && _formula.enabled) {
-            auto it = formulaResults.find(symbol);
-            if (it != formulaResults.end() && it->second != 0.0) {
-                hit = RiskTriggerType::FormulaStop;
-            }
-        }
-
-        // ===== Phase 0: 4 类新止损 =====
-
-        // 6. ATR 自适应止损: current < entry - multiplier * ATR(period)
-        if (hit == RiskTriggerType::None && _atr_sl.enabled) {
-            // 懒初始化计算器
-            if (!_atr_calc[symbol]) {
-                _atr_calc[symbol] = std::make_unique<ATR>(_atr_sl.period);
-            }
-            // 构造输入参数
-            Map<String, context_t> args;
-            String prefix = get_symbol(symbol) + ".";
-            if (context.exist(prefix + "high"))  args["high"]  = context.get<Vector<double>>(prefix + "high");
-            if (context.exist(prefix + "low"))   args["low"]   = context.get<Vector<double>>(prefix + "low");
-            if (context.exist(prefix + "close")) args["close"] = context.get<Vector<double>>(prefix + "close");
-
-            context_t result = (*_atr_calc[symbol])(args);
-            double atr = std::visit([](const auto& v) -> double {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<T, double>) return v;
-                else if constexpr (std::is_same_v<T, Vector<double>>)
-                    return v.empty() ? std::nan("") : v.back();
-                else return std::nan("");
-            }, result);
-
-            if (!std::isnan(atr) && atr > 0) {
-                double sl_price = info._avg_price - _atr_sl.multiplier * atr;
-                if (current_price <= sl_price) {
-                    hit = RiskTriggerType::AtrStopLoss;
-                }
-            }
-        }
-
-        // 7. MA 跌破止损: current <= MA(period)
-        if (hit == RiskTriggerType::None && _ma_sl.enabled) {
-            if (!_ma_calc[symbol]) {
-                _ma_calc[symbol] = std::make_unique<MA>(_ma_sl.period);
-            }
-            Map<String, context_t> args;
-            String close_key = get_symbol(symbol) + ".close";
-            if (context.exist(close_key)) {
-                args["close"] = context.get<Vector<double>>(close_key);
-            }
-            context_t result = (*_ma_calc[symbol])(args);
-            double ma = std::visit([](const auto& v) -> double {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<T, double>) return v;
-                else if constexpr (std::is_same_v<T, Vector<double>>)
-                    return v.empty() ? std::nan("") : v.back();
-                else return std::nan("");
-            }, result);
-
-            if (!std::isnan(ma) && current_price <= ma) {
-                hit = RiskTriggerType::MaStopLoss;
-            }
-        }
-
-        // 8. R² 趋势消失止损: R2(period) <= threshold
-        if (hit == RiskTriggerType::None && _r2_sl.enabled) {
-            if (!_r2_calc[symbol]) {
-                _r2_calc[symbol] = std::make_unique<R2>(_r2_sl.period);
-            }
-            Map<String, context_t> args;
-            String close_key = get_symbol(symbol) + ".close";
-            if (context.exist(close_key)) {
-                args["close"] = context.get<Vector<double>>(close_key);
-            }
-            context_t result = (*_r2_calc[symbol])(args);
-            double r2 = std::visit([](const auto& v) -> double {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<T, double>) return v;
-                else if constexpr (std::is_same_v<T, Vector<double>>)
-                    return v.empty() ? std::nan("") : v.back();
-                else return std::nan("");
-            }, result);
-
-            if (!std::isnan(r2) && r2 <= _r2_sl.threshold) {
-                hit = RiskTriggerType::R2StopLoss;
-            }
-        }
-
-        // 9. MAE 最大不利偏移止损: (entry - lowest) / entry >= percent
-        if (hit == RiskTriggerType::None && _mae_sl.enabled) {
-            double lowest = info._lowest_price > 0 ? info._lowest_price : info._avg_price;
-            double mae = (info._avg_price - lowest) / info._avg_price;
-            if (mae >= _mae_sl.percent) {
-                hit = RiskTriggerType::MaeStopLoss;
-            }
-        }
+        RiskTriggerType hit = checkAllGuards(symbol, context, info);
 
         if (hit != RiskTriggerType::None) {
             if (triggered == RiskTriggerType::None) {
-                triggered = hit;   // 首个触发的类型作为主类型上报
+                triggered = hit;
             }
             triggered_symbols.insert(symbol);
         }
 
-        // 更新最高价和最低价（触发与否都要更新）
-        auto& entry = _entry_info[symbol];
-        if (current_price > entry._highest_price) {
-            entry._highest_price = current_price;
-        }
-        if (current_price < entry._lowest_price || entry._lowest_price == 0) {
-            entry._lowest_price = current_price;
-        }
+        // 更新状态
+        updateAllGuards(symbol, context, info);
     }
 
+    // 写入风控上下文
     if (!triggered_symbols.empty()) {
         rc->_trigger_type = triggered;
         rc->_action = RiskAction::Close;
-
-        for (symbol_t sym : triggered_symbols) {
-            _pending_close.insert(sym);
-
-            const auto& trig_info = _entry_info[sym];
-            ProtectionEvent evt;
-            evt._bar_index = current_bar;
-            evt._datetime = context.Current();
-            evt._symbol = sym;
-            evt._type = triggered;
-            // 事件里记原始价：成本取撮合成交价，现价取当前 Bar 原始报价。
-            // 止损判定用的 _avg_price 是复权口径，两者不能混用于展示，
-            // 否则除权日附近算出来的盈亏是错的。
-            evt._entry_price = trig_info._raw_cost > 0 ? trig_info._raw_cost : trig_info._avg_price;
-            evt._current_price = context.GetRawPrice(sym);
-            evt._quantity = get_position_qty(_server, context, strategy, sym);
-            _events.push_back(evt);
-
-            if (_server->GetRunningMode() != RuningType::Backtest) {
-                STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
-                     get_symbol(sym), to_string(triggered),
-                     evt._entry_price, evt._current_price, evt._quantity);
-            } else {
-                INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
-                     get_symbol(sym), to_string(triggered),
-                     evt._entry_price, evt._current_price, evt._quantity);
-            }
-        }
-
-        // 触发标的写进 RiskContext：下游只平这些标的，
-        // 其余持仓不跟着一起清掉。
+        // 触发标的必须写进 RiskContext：Triggered() 的判据就是这个集合，
+        // 只写 type/action 的话 ExecuteNode 永远不会走紧急平仓分支。
         rc->_trigger_symbols = triggered_symbols;
+        for (symbol_t sym : triggered_symbols) {
+            handleTrigger(sym, triggered, strategy, context, _entry_info[sym]);
+        }
     }
 
     return NodeProcessResult::Success;
 }
 
-const nlohmann::json ProtectionNode::getParams() {
-    return {"stop_loss", "take_profit", "trailing_stop", "time_stop", "formula_stop",
-            "atr_stop_loss", "ma_stop_loss", "r2_stop_loss", "mae_stop_loss"};
-}
+void ProtectionNode::postExecuteCheck(const String& strategy, DataContext& context) {
+    // 在 ExecuteNode 执行后检查新买入的标的
+    // 先同步持仓（包括今天新买入的）
+    syncPositions(strategy, context);
 
-Map<String, ArgType> ProtectionNode::out_elements() {
-    return {};
+    if (_entry_info.empty()) {
+        return;
+    }
+
+    // 检查所有持仓
+    RiskTriggerType triggered = RiskTriggerType::None;
+    Set<symbol_t> triggered_symbols;
+
+    for (auto& [symbol, info] : _entry_info) {
+        if (info._avg_price <= 0) continue;
+        if (_pending_close.count(symbol)) continue;
+
+        RiskTriggerType hit = checkAllGuards(symbol, context, info);
+
+        if (hit != RiskTriggerType::None) {
+            if (triggered == RiskTriggerType::None) {
+                triggered = hit;
+            }
+            triggered_symbols.insert(symbol);
+        }
+    }
+
+    // 如果有触发，写入风控上下文
+    if (!triggered_symbols.empty()) {
+        auto* rc = context.GetRiskContext();
+        rc->_trigger_type = triggered;
+        rc->_action = RiskAction::Close;
+        // 同 Process：Triggered() 判据是 _trigger_symbols，缺了它下游看不到风控
+        rc->_trigger_symbols = triggered_symbols;
+
+        for (symbol_t sym : triggered_symbols) {
+            handleTrigger(sym, triggered, strategy, context, _entry_info[sym]);
+        }
+
+        INFO("[ProtectionNode] postExecuteCheck triggered {} symbols", triggered_symbols.size());
+    }
 }

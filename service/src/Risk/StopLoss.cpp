@@ -71,16 +71,16 @@ void StepPercentage::update(const symbol_t& symbol, const StopLossInfo& info) {
     _price_map[symbol]._percent = info._percent;
 }
 
-void ATR::check(const Map<symbol_t, QuoteInfo>&, List<symbol_t>&& sells) {
+void ATRSL::check(const Map<symbol_t, QuoteInfo>&, List<symbol_t>&& sells) {
     
 }
 
-void ATR::add(const symbol_t& symbol, const StopLossInfo& info) {
+void ATRSL::add(const symbol_t& symbol, const StopLossInfo& info) {
 
 }
-void ATR::del(const List<symbol_t>& symbol) {
+void ATRSL::del(const List<symbol_t>& symbol) {
 
 }
-void ATR::update(const symbol_t& symbol, const StopLossInfo& info) {
+void ATRSL::update(const symbol_t& symbol, const StopLossInfo& info) {
     
 }
