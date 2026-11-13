@@ -14,6 +14,7 @@ import { z } from "zod"
 import { createStrategyNode, getAllNodes, getNode, searchNodes } from "../nodes"
 import { useHistoryStore } from "@/stores/history"
 import { applyAuthHeader } from "./common/auth"
+import { makeArtifact, type PatchOp, type ToolArtifactResult } from "@/lib/agent/artifacts"
 
 // === 策略图 CRUD（使用 historyStore 管理）===
 
@@ -158,6 +159,217 @@ async function getStrategy(id: string): Promise<string> {
   return `\`\`\`json\n${JSON.stringify(flowData, null, 2)}\n\`\`\``
 }
 
+/* === 策略图差异比对（生成修改提案用） === */
+
+/** 常见参数名 → 人类可读名称 */
+const PARAM_LABELS: Record<string, string> = {
+  threshold: '阈值',
+  stop_loss: '止损线',
+  stop_loss_threshold: '止损阈值',
+  take_profit: '止盈线',
+  trailing_stop: '追踪止损',
+  weight: '权重',
+  position_size: '仓位',
+  position_ratio: '仓位比例',
+  max_position: '最大持仓',
+  lookback: '回看周期',
+  period: '周期',
+  source: '数据源',
+  field: '字段',
+  frequency: '频率',
+}
+
+/**
+ * 比对两份策略图，产出修改操作列表。
+ * 只比对节点与节点参数（params），不比对位置（position）与连线（edges），
+ * 避免纯排版调整被当成实质修改。
+ */
+export function diffStrategyGraphs(before: any, after: any): PatchOp[] {
+  const ops: PatchOp[] = []
+  const beforeNodes = new Map<string, any>((before?.nodes || []).map((n: any) => [String(n.id), n]))
+  const afterNodes = new Map<string, any>((after?.nodes || []).map((n: any) => [String(n.id), n]))
+
+  // 新增节点
+  for (const [id, node] of afterNodes) {
+    if (beforeNodes.has(id)) continue
+    ops.push({
+      op: 'add',
+      nodeId: id,
+      nodeLabel: node.data?.label,
+      path: 'node',
+      label: `新增节点「${node.data?.label || id}」`,
+      after: node,
+    })
+  }
+
+  // 删除节点
+  for (const [id, node] of beforeNodes) {
+    if (afterNodes.has(id)) continue
+    ops.push({
+      op: 'remove',
+      nodeId: id,
+      nodeLabel: node.data?.label,
+      path: 'node',
+      label: `删除节点「${node.data?.label || id}」`,
+      before: node,
+    })
+  }
+
+  // 参数修改
+  for (const [id, afterNode] of afterNodes) {
+    const beforeNode = beforeNodes.get(id)
+    if (!beforeNode) continue
+
+    const beforeParams = beforeNode.data?.params || {}
+    const afterParams = afterNode.data?.params || {}
+    const keys = new Set([...Object.keys(beforeParams), ...Object.keys(afterParams)])
+    const nodeLabel = afterNode.data?.label || id
+
+    for (const key of keys) {
+      const b = beforeParams[key]
+      const a = afterParams[key]
+      if (JSON.stringify(b) === JSON.stringify(a)) continue
+      ops.push({
+        op: 'update',
+        nodeId: id,
+        nodeLabel,
+        path: `params.${key}`,
+        label: `${nodeLabel} · ${PARAM_LABELS[key] || key}`,
+        before: b,
+        after: a,
+      })
+    }
+  }
+
+  return ops
+}
+
+/**
+ * 把策略图写入版本历史。
+ * 这是「应用修改」的唯一写入口 —— Agent 的任何改动都必须经过用户确认才会调用它。
+ */
+export async function applyStrategyUpdate(
+  id: string,
+  flowData: any,
+  remark?: string,
+): Promise<{ ok: boolean; versionId?: string; message: string }> {
+  const historyStore = useHistoryStore()
+  const strategy = historyStore.strategies.find((s) => s.id === id)
+  if (!strategy) {
+    return { ok: false, message: `未找到策略图 "${id}"` }
+  }
+
+  try {
+    const versionId = await historyStore.addVersion(
+      id,
+      flowData,
+      remark || `Agent 更新 ${new Date().toLocaleString('zh-CN')}`,
+    )
+    await historyStore.touchStrategy(id)
+    return { ok: true, versionId, message: `已写入版本 ${versionId}` }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return { ok: false, message: `写入策略版本失败：${reason}` }
+  }
+}
+
+/**
+ * 生成策略修改提案（不写入任何数据）。
+ * 产出 PatchArtifact，由用户在界面上确认后才写入。
+ */
+async function proposeStrategyUpdate(id: string, data: any): Promise<ToolArtifactResult> {
+  const historyStore = useHistoryStore()
+  const strategy = historyStore.strategies.find((s) => s.id === id)
+  if (!strategy) {
+    return { text: `未找到策略图 "${id}"，请先使用 create_strategy 创建` }
+  }
+
+  // 解析并规范化策略图数据
+  const sourceFlowData = data?.nodes && data?.edges ? data : data?.graph || data
+  let flowData: any
+  try {
+    flowData = normalizeStrategyGraphNodes(sourceFlowData)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return { text: `策略图 "${strategy.name}" (${id}) 提案生成失败：${reason}` }
+  }
+
+  // 校验结构
+  const validation = validateStrategyGraph(flowData)
+
+  // 取当前版本作为 diff 基线
+  const latestVersion = historyStore.getLatestVersion(id)
+  let currentFlow: any = null
+  if (latestVersion) {
+    try {
+      currentFlow = await historyStore.loadVersionFlowData(latestVersion.id)
+    } catch {
+      currentFlow = null
+    }
+  }
+
+  const ops = currentFlow ? diffStrategyGraphs(currentFlow, flowData) : []
+
+  const summary = ops.length
+    ? `共 ${ops.length} 处修改`
+    : currentFlow
+      ? '与当前版本无实质差异'
+      : '当前策略尚无已保存版本，本次将创建首个版本'
+
+  const artifact = makeArtifact(
+    'patch',
+    `策略修改提案 · ${strategy.name}`,
+    {
+      summary,
+      target: {
+        strategyId: id,
+        strategyName: strategy.name,
+        versionBefore: latestVersion?.id,
+      },
+      ops,
+      validation,
+      graph: { nodes: flowData.nodes || [], edges: flowData.edges || [] },
+    },
+    {
+      subtitle: summary,
+      source: `strategy · propose_update · ${id}`,
+      actions: [
+        {
+          id: 'apply-patch',
+          kind: 'apply_patch',
+          label: '应用到策略画布',
+          handler: 'strategy.apply_patch',
+          params: { strategyId: id },
+          pendingLabel: '写入中…',
+          doneLabel: '已应用',
+        },
+      ],
+      ui: { height: undefined },
+    },
+  )
+
+  const lines = [
+    `已生成策略修改提案（**未写入**，需用户确认）：`,
+    `- 策略: ${strategy.name} (${id})`,
+    `- ${summary}`,
+  ]
+  if (ops.length) {
+    lines.push(`- 修改明细:`)
+    ops.forEach((op) => {
+      lines.push(
+        `  · [${op.op}] ${op.label}` +
+        (op.op === 'update' ? `：${JSON.stringify(op.before)} → ${JSON.stringify(op.after)}` : ''),
+      )
+    })
+  }
+  if (!validation.valid) {
+    lines.push(`- ⚠️ 结构校验未通过：${validation.errors.join('；')}`)
+  }
+  lines.push(`提案已展示在对话流中，用户确认后才会写入版本历史。`)
+
+  return { text: lines.join('\n'), artifact }
+}
+
 /** 更新策略图 */
 async function updateStrategy(id: string, data: any): Promise<string> {
   const historyStore = useHistoryStore()
@@ -188,11 +400,12 @@ async function updateStrategy(id: string, data: any): Promise<string> {
     ].join('\n')
   }
 
-  // 保存为新版本
-  const versionId = await historyStore.addVersion(id, flowData, `Agent 更新 ${new Date().toLocaleString('zh-CN')}`)
-
-  // 更新策略的 updatedAt
-  await historyStore.touchStrategy(id)
+  // 保存为新版本（写入口统一走 applyStrategyUpdate）
+  const applied = await applyStrategyUpdate(id, flowData)
+  if (!applied.ok || !applied.versionId) {
+    return `策略图 "${strategy.name}" (${id}) 更新失败：${applied.message}`
+  }
+  const versionId = applied.versionId
 
   // 返回更新结果 + 策略图 JSON 内容（方便调试检查）
   return [
@@ -970,6 +1183,12 @@ export const strategyTool = tool(
         return await updateStrategy(keyword, data)
       }
 
+      case "propose_update": {
+        if (!keyword) return "错误：propose_update 需要提供 keyword 参数（策略 id）"
+        if (!data) return "错误：propose_update 需要提供 data 参数（新策略图 JSON）"
+        return await proposeStrategyUpdate(keyword, data)
+      }
+
       case "delete_strategy": {
         if (!keyword) return "错误：delete_strategy 需要提供 keyword 参数（策略 id）"
         return await deleteStrategy(keyword)
@@ -1139,18 +1358,18 @@ export const strategyTool = tool(
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）—— 直接写入，无人工确认\\n- propose_update: 生成策略修改提案（keyword=id, data=JSON）—— 只生成 diff 提案不写入，用户确认后才落库。修改策略时优先用这个\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
-        "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
+        "list_strategies", "get_strategy", "create_strategy", "update_strategy", "propose_update", "delete_strategy",
         "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage",
         "multi_freq_usage",
         "query_strategy_performance", "query_risk_aggregated", "query_capital_risk", "query_risk_status",
         "query_strategy_logs"
       ]).describe("操作类型"),
-      keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
-      data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy 时必填）"),
+      keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/propose_update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
+      data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy / propose_update 时必填）"),
       category: z.string().optional().describe("节点分类过滤（list_nodes 时可选）: input/process/signal/execution/ml/risk/utility"),
       name: z.union([z.string(), z.number()]).optional().describe("策略名或 ID（query_strategy_performance/query_strategy_logs）"),
       start: z.string().optional().describe("起始时间（query_strategy_logs，YYYY-MM-DD）"),

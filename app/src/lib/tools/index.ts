@@ -32,6 +32,7 @@ import { riskMonitorTool } from "./riskMonitor"
 import { orderQueryTool } from "./orderQuery"
 import { performanceTool } from "./performanceTool"
 import { mathTool } from "./mathTool"
+import { chartTool } from "./chart"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -53,6 +54,7 @@ const builtinTools: StructuredToolInterface[] = [
   orderQueryTool,
   performanceTool,
   mathTool,
+  chartTool,
 ]
 
 // === 插件 Tool 加载 ===

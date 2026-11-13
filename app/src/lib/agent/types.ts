@@ -1,5 +1,6 @@
 import { Annotation } from "@langchain/langgraph";
 import { BaseMessage } from "@langchain/core/messages";
+import type { ArtifactEnvelope } from "./artifacts";
 
 /** Agent 类型标识 */
 export type AgentType = "supervisor" | "chat" | "strategy" | "risk" | "portfolio" | "analysis";
@@ -14,9 +15,11 @@ export interface AgentEvent {
   /** 事件内容（思考过程 / Tool 调用 / 回复） */
   content: string;
   /** 事件类型 */
-  eventType: "thought" | "tool_call" | "tool_result" | "response" | "error";
+  eventType: "thought" | "tool_call" | "tool_result" | "response" | "error" | "artifact";
   /** 时间戳 */
   timestamp: number;
+  /** 产物载荷（仅 eventType === "artifact" 时有值） */
+  payload?: ArtifactEnvelope;
 }
 
 /** LangGraph State */
@@ -93,7 +96,7 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   ],
   strategy: [
     "strategy", "backtest", "quote", "calculator", "skill",
-    "data_manager", "analysis", "performance",
+    "data_manager", "analysis", "performance", "chart",
     "ask_risk", "ask_portfolio", "ask_chat",
   ],
   risk: [
@@ -108,7 +111,7 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   ],
   analysis: [
     "analysis", "math_tool", "option_pricing", "data_manager", "performance",
-    "calculator",
+    "calculator", "chart",
   ],
 };
 
@@ -194,7 +197,14 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 若风控 Agent 反馈风险等级为【高】，立即停止迭代并输出警告
   - 若风险等级为【中】，根据反馈优化后重新评估，最多迭代 3 轮
   - 若风险等级为【低】，最多迭代优化 10 轮
-  - 迭代期间若累计风险评分无改善，强制终止迭代`,
+  - 迭代期间若累计风险评分无改善，强制终止迭代
+
+  **修改策略必须走提案**：用 \`strategy(action="propose_update", keyword=策略id, data=新策略图JSON)\`
+  生成修改提案（只出 diff、不写入），由用户在界面上确认后才会落库。
+  除非用户明确要求"立即生效、不用确认"，否则不要用 update_strategy 直接写入。
+
+  **出图用 chart 工具**：需要展示回测收益/回撤/分布时调用 \`chart\`，
+  不要自己编造图表数值。`,
 
   risk: `你是一个专业的风控专家，负责风险管理和合规检查。
 
@@ -254,7 +264,9 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   2. **关键数值**：列出主要指标，保留 4 位小数
   3. **统计显著性**：协整检验、CUSUM、Granger 等需明确 p-value
   4. **数据范围**：明确 start_date / end_date / symbol 列表
-  5. **可视化建议**：如需进一步看图，建议调用哪个 API（signal_analysis / covariance_diagnostics）
+  5. **可视化**：如需出图，调用 \`chart\` 工具（dataset 取 performance / price / drawdown / distribution / daily_returns），
+     可用 moments 标注关键时刻（变点、回撤极值等），图表会直接渲染在对话流中。
+     禁止自己编造图表数值，所有图形必须由工具产出。
 
   数据要求：
   - 禁止凭印象给数字，所有指标必须来自 Tool 返回

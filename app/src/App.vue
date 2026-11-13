@@ -280,7 +280,7 @@
     <DecisionNotification @navigate="onDecisionNavigate" />
 </template>
 <script setup >
-import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch } from "vue";
+import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch, nextTick } from "vue";
 import axios from 'axios';
 import { message } from "./tool";
 import { useHistoryStore } from './stores/history'
@@ -677,6 +677,11 @@ onMounted(() => {
   // 监听数据中心选中期权合约
   window.addEventListener('datacenter-option-contract-selected', onDataCenterOptionSelected)
   window.addEventListener('datacenter-option-cleared', onDataCenterOptionCleared)
+
+  // 浮窗唤起 Agent 面板
+  window.addEventListener('open-agent-panel', onOpenAgentPanel)
+  // Agent 产物上的「执行回测」动作
+  window.addEventListener('agent:run-backtest', onAgentRunBacktest)
 })
 
 onUnmounted(() => {
@@ -687,6 +692,8 @@ onUnmounted(() => {
   window.removeEventListener('datacenter-symbol-selected', onDataCenterSymbolSelected)
   window.removeEventListener('datacenter-option-contract-selected', onDataCenterOptionSelected)
   window.removeEventListener('datacenter-option-cleared', onDataCenterOptionCleared)
+  window.removeEventListener('open-agent-panel', onOpenAgentPanel)
+  window.removeEventListener('agent:run-backtest', onAgentRunBacktest)
   uninitServerEvent()
   if (_strategyTimer) {
     clearInterval(_strategyTimer)
@@ -873,6 +880,31 @@ const onHandleRunBacktest = async () => {
       console.error('回测执行失败:', error);
     }
     isBacktesting.value = false;
+  }
+}
+
+/** 打开 Agent 分析面板：切到可视化分析视图并定位到 agent tab */
+const onOpenAgentPanel = () => {
+  currentView.value = VIEWS.VISUAL_VIEW
+  nextTick(() => {
+    window.dispatchEvent(new CustomEvent('switch-analysis-tab', { detail: { tab: 'agent' } }))
+  })
+}
+
+/**
+ * Agent 产物上的「执行回测」动作。
+ * 回测逻辑住在策略设计视图的组件里，所以先切过去再调用。
+ */
+const onAgentRunBacktest = async () => {
+  if (currentView.value !== VIEWS.DESIGN_STATEGY) {
+    currentView.value = VIEWS.DESIGN_STATEGY
+    await nextTick()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  try {
+    await onHandleRunBacktest()
+  } catch (error) {
+    console.warn('[Agent] 触发回测失败，请手动点击「执行回测」', error)
   }
 }
 

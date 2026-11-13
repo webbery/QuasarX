@@ -126,8 +126,10 @@ function computeDistributionFeatures(buy: any[], sell: any[]): { skewness: numbe
 
 /**
  * 从回测结果构建图表数据集
+ *
+ * 同时被 chart tool 复用（依赖方向 chart → backtest，单向无环）
  */
-function buildChartFromResult(result: BacktestResult) {
+export function buildChartFromResult(result: BacktestResult) {
   const { buy, sell, features } = result
 
   // 从买卖信号中提取价格序列

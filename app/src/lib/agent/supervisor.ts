@@ -403,8 +403,11 @@ export function buildSupervisorGraph(
  * 运行 Supervisor 图
  *
  * @param userInput 用户输入
- * @param sessionId 会话 ID
- * @param checkpointer Checkpoint 持久化器
+ * @param sessionId 会话 ID（同时作为 LangGraph thread_id）
+ * @param checkpointer Checkpoint 持久化器（可选）
+ *   注意：历史由 historyMessages 手动注入，是唯一事实来源。
+ *   传入 checkpointer 时 LangGraph 会把已存 checkpoint 与注入历史 concat，
+ *   跨轮次会造成历史重复 —— 所以分支模式下不传，checkpoint 仅作可选审计轨迹。
  * @param emitEvent 事件回调
  * @param historyMessages 手动注入的历史消息历史（优先级高于 checkpoint 恢复）
  * @returns 最终状态
@@ -412,29 +415,31 @@ export function buildSupervisorGraph(
 export async function runSupervisorGraph(
   userInput: string,
   sessionId: string,
-  checkpointer: IndexedDBSaver,
+  checkpointer?: IndexedDBSaver,
   emitEvent?: (event: AgentEvent) => void,
   historyMessages?: Array<HumanMessage | AIMessage>,
 ) {
   const graph = buildSupervisorGraph(emitEvent, checkpointer);
 
   // 调试：尝试从 checkpoint 恢复历史
-  const debugConfig = { configurable: { thread_id: sessionId } };
-  const savedTuple = await checkpointer.getTuple(debugConfig);
-  if (savedTuple) {
-    const channelValues = savedTuple.checkpoint.channel_values as Record<string, any> | undefined;
-    const checkpointMessages: any[] = Array.isArray(channelValues?.messages) ? channelValues.messages : [];
-    console.log('[LangGraph Checkpoint] 找到历史 checkpoint:', {
-      checkpointId: savedTuple.config.configurable?.checkpoint_id,
-      messagesCount: checkpointMessages.length,
-      messagesPreview: checkpointMessages.map((m: any) => ({
-        type: m.lc?.id?.[m.lc.id.length - 1] || m.constructor?.name || 'unknown',
-        role: m._getType?.(),
-        contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
-      })),
-    });
-  } else {
-    console.log('[LangGraph Checkpoint] 未找到历史，首次对话');
+  if (checkpointer) {
+    const debugConfig = { configurable: { thread_id: sessionId } };
+    const savedTuple = await checkpointer.getTuple(debugConfig);
+    if (savedTuple) {
+      const channelValues = savedTuple.checkpoint.channel_values as Record<string, any> | undefined;
+      const checkpointMessages: any[] = Array.isArray(channelValues?.messages) ? channelValues.messages : [];
+      console.log('[LangGraph Checkpoint] 找到历史 checkpoint:', {
+        checkpointId: savedTuple.config.configurable?.checkpoint_id,
+        messagesCount: checkpointMessages.length,
+        messagesPreview: checkpointMessages.map((m: any) => ({
+          type: m.lc?.id?.[m.lc.id.length - 1] || m.constructor?.name || 'unknown',
+          role: m._getType?.(),
+          contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
+        })),
+      });
+    } else {
+      console.log('[LangGraph Checkpoint] 未找到历史，首次对话');
+    }
   }
 
   // 决定使用哪组历史消息：优先使用手动注入的 historyMessages
