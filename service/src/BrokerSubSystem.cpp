@@ -1297,8 +1297,7 @@ int BrokerSubSystem::AddDecision(const String& strategy, symbol_t symbol, Decisi
     rec._executed_price = 0;
     rec._closed = false;
     rec._reserved = 0;
-    std::strncpy(rec._strategy, strategy.c_str(), sizeof(rec._strategy) - 1);
-    rec._strategy[sizeof(rec._strategy) - 1] = '\0';
+    rec._strategy = strategy;
 
     _todayDecisions.push_back(rec);
 
@@ -1312,29 +1311,10 @@ int BrokerSubSystem::AddDecision(const String& strategy, symbol_t symbol, Decisi
     return rec._id;
 }
 
-Vector<DecisionRecord> BrokerSubSystem::GetDecisions(const String& date) {
-    // 优先从 DuckDB 查询（支持历史日期）
-    auto records = DecisionDB::instance().queryByDate(date);
+// 把进程内已执行/已确认的状态合并进 DuckDB 查询结果
+Vector<DecisionRecord> BrokerSubSystem::MergeDecisionState(Vector<DecisionRecord> records) {
+    if (records.empty()) return records;
 
-    // 仅当查询当日且 DuckDB 无数据时，才 fallback 到内存
-    if (records.empty()) {
-        time_t now = time(nullptr);
-        struct tm tm_val;
-#ifdef _WIN32
-        localtime_s(&tm_val, &now);
-#else
-        localtime_r(&now, &tm_val);
-#endif
-        char buf[16];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
-        if (date == buf) {
-            std::lock_guard<std::mutex> lock(_decisionMtx);
-            return _todayDecisions;
-        }
-        return {};
-    }
-
-    // 合并：内存中已执行/已确认的决策更新 DuckDB 结果
     std::lock_guard<std::mutex> lock(_decisionMtx);
     for (auto& dbRec : records) {
         for (const auto& memRec : _todayDecisions) {
@@ -1352,6 +1332,42 @@ Vector<DecisionRecord> BrokerSubSystem::GetDecisions(const String& date) {
         }
     }
     return records;
+}
+
+Vector<DecisionRecord> BrokerSubSystem::GetDecisions(const String& date) {
+    // 优先从 DuckDB 查询（支持历史日期）
+    auto records = DecisionDB::instance().queryByDate(date);
+
+    // 仅当查询当日且 DuckDB 无数据时，才 fallback 到内存
+    if (records.empty()) {
+        if (date == ToString(Now(), "%Y-%m-%d")) {
+            std::lock_guard<std::mutex> lock(_decisionMtx);
+            return _todayDecisions;
+        }
+        return {};
+    }
+
+    // 合并：内存中已执行/已确认的决策更新 DuckDB 结果
+    return MergeDecisionState(std::move(records));
+}
+
+// 最新归属日的一批决策（GET /trade/decisions 不带日期时走这里）
+Vector<DecisionRecord> BrokerSubSystem::GetLatestDecisions(String* outDate) {
+    String latest = DecisionDB::instance().queryLatestDate();
+    if (!latest.empty()) {
+        auto records = DecisionDB::instance().queryByDate(latest);
+        if (!records.empty()) {
+            if (outDate) *outDate = latest;
+            return MergeDecisionState(std::move(records));
+        }
+    }
+
+    // 库里没有（刚启动、落库失败等）→ 退回进程内缓存
+    std::lock_guard<std::mutex> lock(_decisionMtx);
+    if (outDate && !_todayDecisions.empty()) {
+        *outDate = ToString(_todayDecisions.back()._timestamp, "%Y-%m-%d");
+    }
+    return _todayDecisions;
 }
 
 bool BrokerSubSystem::MarkDecisionExecuted(int id, int64_t exec_qty, double exec_price) {

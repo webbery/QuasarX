@@ -83,11 +83,20 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
 #endif
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
 
+    // 策略名直接拼进 SQL 字面量：转义单引号。名字里带引号时整条 INSERT 会失败，
+    // 决策就静默丢了（面板看不到 → 没法下单）。
+    std::string strategySql;
+    strategySql.reserve(record._strategy.size() * 2);
+    for (char c : record._strategy) {
+        if (c == '\'') strategySql.push_back('\'');
+        strategySql.push_back(c);
+    }
+
     std::string sql = fmt::format(
         "INSERT OR REPLACE INTO decisions (id, strategy, symbol, action, is_open, quantity, price, epoch, timestamp, executed, exec_qty, exec_price, closed) "
         "VALUES ({}, '{}', {}, {}, {}, {}, {:.6f}, {}, TIMESTAMP '{}', {}, {}, {:.6f}, {})",
         record._id,
-        record._strategy,
+        strategySql,
         sym_encoded,
         static_cast<int>(record._action),
         record._is_open ? 1 : 0,
@@ -137,8 +146,7 @@ std::vector<DecisionRecord> DecisionDB::queryByDate(const std::string& date) {
 
             const char* strategy = duckdb_value_varchar(&result, 1, i);
             if (strategy) {
-                std::strncpy(rec._strategy, strategy, sizeof(rec._strategy) - 1);
-                rec._strategy[sizeof(rec._strategy) - 1] = '\0';
+                rec._strategy = strategy;
                 duckdb_free((void*)strategy);
             }
 
@@ -163,6 +171,35 @@ std::vector<DecisionRecord> DecisionDB::queryByDate(const std::string& date) {
     });
 
     return results;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  最新归属日
+// ═══════════════════════════════════════════════════════════
+
+// decisions 表按 timestamp 的日期过滤，而 timestamp 是决策的归属日
+// （日终回放的模拟交易日），与墙钟日期差一天是常态。
+// 查"最新一批决策"必须先问库要最新归属日，不能拿今天当默认。
+std::string DecisionDB::queryLatestDate() {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return {};
+
+    std::string date;
+    const char* sql =
+        "SELECT strftime(MAX(CAST(timestamp AS DATE)), '%Y-%m-%d') FROM decisions";
+
+    query(sql, [&](duckdb_result& result) -> bool {
+        if (duckdb_row_count(&result) > 0 && !duckdb_value_is_null(&result, 0, 0)) {
+            const char* d = duckdb_value_varchar(&result, 0, 0);
+            if (d) {
+                date = d;
+                duckdb_free((void*)d);
+            }
+        }
+        return true;
+    });
+
+    return date;
 }
 
 // ═══════════════════════════════════════════════════════════

@@ -22,6 +22,9 @@ public:
     // 按日期查询决策列表（date 格式 "YYYY-MM-DD"）
     std::vector<DecisionRecord> queryByDate(const std::string& date);
 
+    // 最新归属日（decisions 表里最大的 timestamp 日期，格式 "YYYY-MM-DD"）；无记录返回空串
+    std::string queryLatestDate();
+
     // 检查决策是否存在
     bool exists(int id);
 

@@ -56,5 +56,8 @@ struct DecisionRecord {
     bool           _closed   : 1;
     uint8_t        _reserved : 3;
 
-    char _strategy[32];
+    // 策略名用 String 而非定长 char[]：完整名字可能很长
+    // （如 "CTA_v16_lowturn_ablate5_fundamental"，35 字符）。早先用 char[32]
+    // 会被截成 31 字符，导致按策略名精确匹配的查询落空、手动下单记到错误的账本桶。
+    String _strategy;
 };
