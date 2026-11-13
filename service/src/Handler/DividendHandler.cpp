@@ -1,6 +1,7 @@
 #include "Handler/DividendHandler.h"
 #include "Util/FinanceDB.h"
 #include "Util/PythonRunner.h"
+#include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "server.h"
 #include <filesystem>
@@ -67,10 +68,26 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
         }
         auto dividend_dir = params.value("dividend_dir", std::string("data/dividend"));
-        int total = financeDB.importAllDividends(dividend_dir);
+
+        // 可选作用域：给了 symbols 就只导入这些标的的 CSV。
+        // 目录里可能躺着别的任务/别的测试留下的 CSV，全量导入会把池外标的的
+        // 分红事件写进 dividend 表；反过来，某个文件失败也不该把整次导入
+        // 已成功的行数吃掉 —— 两者分开统计。
+        Set<String> scope;
+        if (params.contains("symbols") && !params["symbols"].get<String>().empty()) {
+            Vector<String> tokens;
+            split(params["symbols"].get<String>(), tokens, ",");
+            for (const auto& t : tokens) {
+                if (!t.empty()) scope.insert(toInternalSymbol(t));
+            }
+        }
+
+        int failed_files = 0;
+        int total = financeDB.importAllDividends(dividend_dir, scope, &failed_files);
         nlohmann::json resp;
         resp["status"] = "completed";
         resp["imported_rows"] = total;
+        resp["failed_files"] = failed_files;
         res.set_content(resp.dump(), "application/json");
         return;
     }
@@ -119,13 +136,14 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto db_path = _server->GetConfig().GetDatabasePath();
     auto data_dir = db_path;
 
-    nng_socket sse_sock = _server->GetSocket();
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
 
     // 后台线程：下载 + 导入
-    std::thread([sse_sock, symbols, years, interpreter, data_dir, db_path]() {
+    std::thread([symbols, years, interpreter, data_dir, db_path]() {
         SetCurrentThreadName("DividendDownload");
+        // SSE socket 必须在当前工作线程创建并关闭
+        ScopedSocket sse(Server::GetSocket());
 
         std::string cmd = interpreter + " tools/fetch_dividend_data.py"
                         + " \"" + symbols + "\""
@@ -135,7 +153,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         INFO("[DividendHandler] Running: {}", cmd);
 
-        SendSSE(sse_sock, "dividend_download", {
+        SendSSE(sse.get(), "dividend_download", {
             {"status", "started"},
             {"symbol_count", std::to_string(std::count(symbols.begin(), symbols.end(), ',') + 1)}
         });
@@ -145,7 +163,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         INFO("[DividendHandler] RunCommand returned ok={}, output={}", ok, output);
 
-        SendSSE(sse_sock, "dividend_download", {
+        SendSSE(sse.get(), "dividend_download", {
             {"status", ok ? "downloaded" : "download_failed"},
             {"output", output}
         });
@@ -154,7 +172,7 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
         auto& financeDB = FinanceDB::instance();
         if (!financeDB.isInitialized()) {
             if (!financeDB.init(db_path + "/finance", "finance.db")) {
-                SendSSE(sse_sock, "dividend_download", {
+                SendSSE(sse.get(), "dividend_download", {
                     {"status", "aborted"},
                     {"reason", "FinanceDB init failed"}
                 });
@@ -167,26 +185,28 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
         // 导入池外标的的分红事件会让后续复权重算按错误事件算因子。
         Set<String> scope;
         {
-            std::stringstream ss(symbols);
-            std::string token;
-            while (std::getline(ss, token, ',')) {
-                auto t = token;
-                auto sp = t.find_first_of(" \t");
-                if (sp != std::string::npos) t = t.substr(0, sp);
+            Vector<String> tokens;
+            split(symbols, tokens, ",");
+            for (const auto& t : tokens) {
                 if (!t.empty()) scope.insert(toInternalSymbol(t));
             }
         }
         int total = 0;
+        int failed_files = 0;
         if (!ok) {
             // 下载失败不导入：残留 CSV 是旧数据，导入后会让复权因子错乱
             WARN("[DividendHandler] 下载失败，跳过分红导入");
         } else {
-            total = financeDB.importAllDividends(data_dir + "/dividend", scope);
+            total = financeDB.importAllDividends(data_dir + "/dividend", scope, &failed_files);
+            if (failed_files > 0) {
+                WARN("[DividendHandler] 分红导入有 {} 个文件失败，事件表不完整", failed_files);
+            }
         }
 
-        SendSSE(sse_sock, "dividend_download", {
+        SendSSE(sse.get(), "dividend_download", {
             {"status", "completed"},
             {"imported_rows", std::to_string(total)},
+            {"failed_files", std::to_string(failed_files)},
             {"success", ok ? "true" : "false"}
         });
     }).detach();

@@ -18,9 +18,8 @@ const pinia = createPinia();
 app.config.globalProperties.$message = message
 app.use(pinia)
 
-// 启动时清空聊天历史并隐藏聊天框
+// 启动时隐藏浮窗；会话与分支从 localStorage 恢复（不再清空历史）
 const chatStore = useChatStore()
-chatStore.clearMessages()
 chatStore.visible = false
 
 app.mount('#app')

@@ -9,6 +9,7 @@ export interface AnalysisPanelItem {
 }
 
 const defaultPanels: AnalysisPanelItem[] = [
+  { id: 'agent', label: 'Agent 分析面板', enabled: true },
   { id: 'volatility', label: '波动率分析', enabled: true },
   { id: 'signal', label: '信号分析', enabled: true },
   { id: 'pca', label: 'PCA 主成分', enabled: true },

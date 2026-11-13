@@ -54,19 +54,41 @@ void HistorySimulationBase::SetFilter(const QuoteFilter& filter) {
     }
 }
 
-bool HistorySimulationBase::Login(AccountType t) {
-    // 重载会清空并重建 _csvs/_org_csvs，必须与 stepForward 的共享读互斥：
-    // 日终回放现在每次都会 forceReload，两个策略并发时另一个可能正在读缓存，
-    // 不互斥就会读到半清空的 map。
-    std::unique_lock<std::shared_mutex> dataLock(_dataMutex);
-    _finish = false;
-    Clear();
+namespace {
 
-    for (auto& code : _filter._symbols) {
-        if (!LoadData(code)) {
-            WARN("Failed to load data for '{}'", code);
+/// 删掉缓存里所有不在 keep 集合中的键（std::map::erase(it) 返回下一个迭代器）
+template <typename T>
+void eraseIfUnused(Map<symbol_t, T>& cache, const Set<symbol_t>& keep) {
+    for (auto itr = cache.begin(); itr != cache.end();) {
+        if (keep.count(itr->first)) {
+            ++itr;
+        } else {
+            itr = cache.erase(itr);
         }
     }
+}
+
+}  // namespace
+
+bool HistorySimulationBase::Login(AccountType t) {
+    // 重载会改写 _csvs/_org_csvs，必须与 stepForward / createBacktestContext 的
+    // 共享读互斥：日终回放每次都会 forceReload，两个策略并发时另一个可能正在读缓存，
+    // 不互斥就会读到写了一半的 map。
+    std::unique_lock<std::shared_mutex> dataLock(_dataMutex);
+    _finish = false;
+
+    // 只刷新本次请求的标的，绝不整表清空。_csvs/_org_csvs 是交易所级共享缓存，
+    // 日终回放每个策略每次执行都会 forceReload 走到这里；整表清空会把并发跑的
+    // 另一个策略的标的连带抹掉，对方 stepForward 查不到自己的 symbol，回放窗口
+    // 塌缩成 0 根 bar
+    DropCachedSymbols(_filter._symbols);
+    EvictUnusedSymbols();
+
+    // 每轮回放的状态，与行情缓存无关，照旧重置
+    _reports.clear();
+    _cur_id = 0;
+
+    LoadFilteredSymbols();
 
     // 清除加载日期范围（一次性使用，避免影响后续 Login 调用）
     _loadStartDate.clear();
@@ -75,6 +97,40 @@ bool HistorySimulationBase::Login(AccountType t) {
     OnDataLoaded();
     _dataLoadSuccess = true;
     return true;
+}
+
+void HistorySimulationBase::DropCachedSymbols(const Set<String>& codes) {
+    for (auto& code : codes) {
+        auto symbol = to_symbol(code);
+        _csvs.erase(symbol);
+        _org_csvs.erase(symbol);
+    }
+}
+
+void HistorySimulationBase::EvictUnusedSymbols() {
+    // 保留：本次请求的标的 + 所有活跃回测上下文正在使用的标的。
+    // 一次 Login 只扫描一次，开销可以接受；换来的是缓存体积有界，
+    // 又不会误删并发策略正在跑的数据。
+    Set<symbol_t> inUse;
+    for (auto& code : _filter._symbols) {
+        inUse.insert(to_symbol(code));
+    }
+    _backtestContexts.visit_all([&inUse](const auto& item) {
+        for (auto symbol : item.second->getSymbols()) {
+            inUse.insert(symbol);
+        }
+    });
+
+    eraseIfUnused(_csvs, inUse);
+    eraseIfUnused(_org_csvs, inUse);
+}
+
+void HistorySimulationBase::LoadFilteredSymbols() {
+    for (auto& code : _filter._symbols) {
+        if (!LoadData(code)) {
+            WARN("Failed to load data for '{}'", code);
+        }
+    }
 }
 
 bool HistorySimulationBase::IsLogin() {
@@ -111,12 +167,8 @@ order_id HistorySimulationBase::AddOrder(run_id_t run_id, const symbol_t& symbol
     }
 
     // 回退：找不到 context，只返回 id
-    OrderInfo info;
-    info._id = ++_cur_id;
-    info._order = order;
-
     order_id id;
-    id._id = info._id;
+    id._id = ++_cur_id;
     if (is_stock(symbol)) {
         id._type = 0;
     }
@@ -564,6 +616,12 @@ run_id_t HistorySimulationBase::createBacktestContext(
     }
 
     // 计算共同时间范围
+    //
+    // 下面的对齐计算（startIndex / commonBars / tradingStartEpochs）直接读 _csvs
+    // 里的 bar 序列，必须与 Login 的重载互斥：否则并发跑的另一个策略正在重载缓存时，
+    // 这里会读到空条目，commonBars 塌成 0，整轮回放零根 bar，决策全丢。
+    std::shared_lock<std::shared_mutex> dataLock(_dataMutex);
+
     time_t maxStartTime = 0;
     time_t minEndTime = std::numeric_limits<time_t>::max();
 
@@ -654,6 +712,9 @@ run_id_t HistorySimulationBase::createBacktestContext(
             commonBars = 0;  // 没有数据的 symbol，共同 bar 数为 0
         }
     }
+
+    // 对齐计算到此结束，放开共享锁：后面只写 context，不再读共享缓存
+    dataLock.unlock();
 
     // 交易起点偏移作为 warmup 下限写入 context（AgentSubSystem 会与推断 warmup 取 max）
     context->setWarmupEpochsHint(static_cast<int>(tradingStartEpochs));

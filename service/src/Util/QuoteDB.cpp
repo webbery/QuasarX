@@ -7,6 +7,40 @@
 #include <sstream>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+
+// ═══════════════════════════════════════════════════════════
+//  DuckDB 错误辅助
+// ═══════════════════════════════════════════════════════════
+//
+//  DuckDBBaseT::exec() / query() 只返回 bool，会把 DuckDB 的错误文本丢掉，
+//  导致「DB 已失效」和「确实没有数据」在日志和接口上完全无法区分。
+//  这里用基类的 execWithError() 取到错误文本，并把 FATAL 失效单独告警。
+
+namespace {
+
+// 失效是致命问题且会持续刷屏（每次导入/查询都失败），只告警一次，
+// 但要明确告诉运维：必须重启 service 才能恢复。
+std::atomic<bool> g_invalidated_warned{false};
+
+void reportDuckDbError(const std::string& what, const std::string& err) {
+    if (DuckDBBaseT<QuoteDB>::isInvalidatedError(err)) {
+        if (g_invalidated_warned.exchange(true)) return;  // 已告警过，避免刷屏
+        SPDLOG_ERROR(
+            "[QuoteDB] {} failed: {}\n"
+            "[QuoteDB] ★ DuckDB 实例已失效（invalidated），后续所有行情读写都会失败，"
+            "行情列表接口 (/v0/quote) 将返回空列表，前端表现为「暂无已导入的行情数据」。\n"
+            "[QuoteDB] ★ 处理：立即重启 service 重新打开 quote.db；若重启后仍失败，"
+            "需重建索引（DROP INDEX + CREATE INDEX）。\n"
+            "[QuoteDB] ★ 根因参考 duckdb/duckdb#27397：自动 checkpoint 未 apply unbound index 的 "
+            "buffered replay，导致索引条目丢失/残留，物理 row id 复用后触发 ART 索引损坏。",
+            what, err);
+        return;
+    }
+    SPDLOG_ERROR("[QuoteDB] {} failed: {}", what, err);
+}
+
+}  // namespace
 
 // ═══════════════════════════════════════════════════════════
 //  symbol 编解码
@@ -75,10 +109,21 @@ void QuoteDB::ensureTable(const std::string& table) {
             UNIQUE(symbol, datetime)
         )
     )", table);
-    exec_unsafe(sql);
+    std::string err = execWithError(sql);
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("ensureTable({})", table), err);
+        return;
+    }
 
-    exec_unsafe(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_sym_time ON {}(symbol, datetime)", table, table));
-    exec_unsafe(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_time ON {}(datetime DESC)", table, table));
+    err = execWithError(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_sym_time ON {}(symbol, datetime)", table, table));
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("ensureTable: CREATE INDEX idx_{}_sym_time({})", table, table), err);
+    }
+
+    err = execWithError(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_time ON {}(datetime DESC)", table, table));
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("ensureTable: CREATE INDEX idx_{}_time({})", table, table), err);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -93,6 +138,11 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     auto t_start = std::chrono::high_resolution_clock::now();
 
     std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] importCsv: QuoteDB not initialized, skip {}/{}", table, symbol_str);
+        return -1;
+    }
 
     ensureTable(table);
 
@@ -226,17 +276,25 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     if (overwrite) {
         std::string del_sql = fmt::format(
             "DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
-        if (!exec_unsafe(del_sql)) {
-            SPDLOG_ERROR("[QuoteDB] overwrite: delete existing data failed for {} ({})",
-                         symbol_str, table);
+        std::string del_err = execWithError(del_sql);
+        if (!del_err.empty()) {
+            reportDuckDbError(fmt::format("overwrite: delete existing data ({}/{})", table, symbol_str), del_err);
             return -1;
         }
-        exec_unsafe("CHECKPOINT");
+        std::string ckpt_err = execWithError("CHECKPOINT");
+        if (!ckpt_err.empty()) {
+            reportDuckDbError(fmt::format("overwrite: CHECKPOINT ({}/{})", table, symbol_str), ckpt_err);
+            return -1;
+        }
         SPDLOG_INFO("[QuoteDB] overwrite: deleted existing data for {} from {}, proceeding with full insert",
                     symbol_str, table);
     }
 
-    exec_unsafe("BEGIN TRANSACTION");
+    std::string begin_err = execWithError("BEGIN TRANSACTION");
+    if (!begin_err.empty()) {
+        reportDuckDbError(fmt::format("importCsv: BEGIN TRANSACTION ({}/{})", table, symbol_str), begin_err);
+        return -1;
+    }
     auto t_begin = std::chrono::high_resolution_clock::now();
 
     std::string min_dt = merged.front().datetime;
@@ -256,7 +314,8 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
             table, sym_encoded, min_dt, max_dt);
         if (duckdb_query(conn(), sql.c_str(), &sel) != DuckDBSuccess) {
             const char* err = duckdb_result_error(&sel);
-            SPDLOG_ERROR("[QuoteDB] select existing datetime failed: {}", err ? err : "unknown");
+            reportDuckDbError(fmt::format("select existing datetime ({}/{})", table, symbol_str),
+                              err ? std::string(err) : std::string("unknown error"));
             duckdb_destroy_result(&sel);
             exec_unsafe("ROLLBACK");
             return -1;
@@ -386,11 +445,19 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
         return -1;
     }
 
-    exec_unsafe("COMMIT");
+    std::string commit_err = execWithError("COMMIT");
+    if (!commit_err.empty()) {
+        // COMMIT 失败意味着本次导入并未落盘，绝不能按「已导入」计数返回
+        reportDuckDbError(fmt::format("importCsv: COMMIT ({}/{})", table, symbol_str), commit_err);
+        return -1;
+    }
 
     // 强制刷写 appender 的 buffered replay 到 ART 索引，
     // 避免后续查询触发 ApplyBufferedReplays 时索引不一致导致 segfault
-    exec_unsafe("PRAGMA wal_checkpoint(RESTART)");
+    std::string ckpt_err = execWithError("PRAGMA wal_checkpoint(RESTART)");
+    if (!ckpt_err.empty()) {
+        reportDuckDbError(fmt::format("importCsv: wal_checkpoint ({}/{})", table, symbol_str), ckpt_err);
+    }
 
     auto t_commit = std::chrono::high_resolution_clock::now();
     auto commit_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_commit - t_begin).count();
@@ -437,8 +504,9 @@ bool QuoteDB::upsertBar(const std::string& table, const QuoteBar& bar) {
         bar.volume, bar.turnover, (int)bar.ext,
         adj_open, adj_close, adj_high, adj_low);
 
-    if (!exec(sql)) {
-        SPDLOG_ERROR("[QuoteDB] upsertBar failed for {} at {}", bar.symbol, bar.datetime);
+    std::string err = execWithError(sql);
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("upsertBar({}, {}@{})", table, bar.symbol, bar.datetime), err);
         return false;
     }
     return true;
@@ -460,8 +528,11 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     // 检查表是否存在（quote.db 刚创建时表尚未建立）
     auto tables = listTables();
     if (std::find(tables.begin(), tables.end(), table) == tables.end()) {
+        // tables 为空通常是 listTables 查询本身失败（错误已单独打点），
+        // 而不是真的没有表，提示语要区分开，否则会把「DB 已失效」误读成「表不存在」
         SPDLOG_WARN("[QuoteDB] query: table '{}' not found in main schema (available tables: {})",
-                     table, tables.empty() ? "<none>" : fmt::format("{}", fmt::join(tables, ", ")));
+                     table, tables.empty() ? "<none, listTables 查询失败或库里确实无表>"
+                                           : fmt::format("{}", fmt::join(tables, ", ")));
         return result;
     }
 
@@ -524,32 +595,49 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
 std::vector<std::string> QuoteDB::listTables() {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<std::string> tables;
-    if (!isInitialized()) return tables;
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] listTables: QuoteDB not initialized");
+        return tables;
+    }
 
-    DuckDBBaseT<QuoteDB>::query("SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name",
-          [&](duckdb_result& res) -> bool {
-              idx_t rows = duckdb_row_count(&res);
-              for (idx_t i = 0; i < rows; i++) {
-                  tables.push_back(duckdb_value_varchar(&res, 0, i));
-              }
-              return true;
-          });
+    const std::string sql =
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name";
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        reportDuckDbError("listTables", err ? std::string(err) : std::string("unknown error"));
+        duckdb_destroy_result(&res);
+        return tables;
+    }
+    idx_t rows = duckdb_row_count(&res);
+    for (idx_t i = 0; i < rows; i++) {
+        tables.push_back(duckdb_value_varchar(&res, 0, i));
+    }
+    duckdb_destroy_result(&res);
     return tables;
 }
 
 std::vector<std::string> QuoteDB::listSymbols(const std::string& table) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<std::string> symbols;
-    if (!isInitialized()) return symbols;
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] listSymbols({}): QuoteDB not initialized", table);
+        return symbols;
+    }
 
     std::string sql = fmt::format("SELECT DISTINCT symbol FROM {}", table);
     duckdb_result res;
-    if (duckdb_query(conn(), sql.c_str(), &res) == DuckDBSuccess) {
-        idx_t rows = duckdb_row_count(&res);
-        for (idx_t i = 0; i < rows; i++) {
-            int64_t encoded = duckdb_value_int64(&res, 0, i);
-            symbols.push_back(decodeSymbol(encoded));
-        }
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        reportDuckDbError(fmt::format("listSymbols({})", table),
+                          err ? std::string(err) : std::string("unknown error"));
+        duckdb_destroy_result(&res);
+        return symbols;
+    }
+    idx_t rows = duckdb_row_count(&res);
+    for (idx_t i = 0; i < rows; i++) {
+        int64_t encoded = duckdb_value_int64(&res, 0, i);
+        symbols.push_back(decodeSymbol(encoded));
     }
     duckdb_destroy_result(&res);
     return symbols;
@@ -562,20 +650,25 @@ std::vector<std::string> QuoteDB::listSymbols(const std::string& table) {
 bool QuoteDB::dropTable(const std::string& table) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     std::string sql = fmt::format("DROP TABLE IF EXISTS {}", table);
-    return exec(sql);
+    std::string err = execWithError(sql);
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("dropTable({})", table), err);
+        return false;
+    }
+    return true;
 }
 
 bool QuoteDB::deleteSymbol(const std::string& table, const std::string& symbol) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     int64_t sym_encoded = encodeSymbol(symbol);
     std::string sql = fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
-    bool ok = exec(sql);
-    if (!ok) {
-        SPDLOG_ERROR("[QuoteDB] Failed to delete symbol {} from {}", symbol, table);
-    } else {
-        SPDLOG_INFO("[QuoteDB] Deleted symbol {} from {}", symbol, table);
+    std::string err = execWithError(sql);
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("deleteSymbol({}, {})", table, symbol), err);
+        return false;
     }
-    return ok;
+    SPDLOG_INFO("[QuoteDB] Deleted symbol {} from {}", symbol, table);
+    return true;
 }
 
 bool QuoteDB::deleteBar(const std::string& table, const std::string& symbol, const std::string& datetime) {
@@ -586,19 +679,22 @@ bool QuoteDB::deleteBar(const std::string& table, const std::string& symbol, con
     std::string sql = fmt::format(
         "DELETE FROM {} WHERE symbol = {} AND CAST(datetime AS VARCHAR) LIKE '{}%'",
         table, sym_encoded, datetime);
-    bool ok = exec(sql);
-    if (!ok) {
-        SPDLOG_ERROR("[QuoteDB] Failed to delete bar {}@{} from {}", datetime, symbol, table);
-    } else {
-        SPDLOG_INFO("[QuoteDB] Deleted bar {}@{} from {}", datetime, symbol, table);
+    std::string err = execWithError(sql);
+    if (!err.empty()) {
+        reportDuckDbError(fmt::format("deleteBar({}, {}@{})", table, symbol, datetime), err);
+        return false;
     }
-    return ok;
+    SPDLOG_INFO("[QuoteDB] Deleted bar {}@{} from {}", datetime, symbol, table);
+    return true;
 }
 
 std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::string& table) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<SymbolTimeRange> result;
-    if (!isInitialized()) return result;
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] getSymbolTimeRanges({}): QuoteDB not initialized", table);
+        return result;
+    }
 
     std::string sql = fmt::format(
         "SELECT symbol, MIN(datetime), MAX(datetime), COUNT(*) FROM {} GROUP BY symbol ORDER BY symbol",
@@ -606,6 +702,9 @@ std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::st
 
     duckdb_result db_result;
     if (duckdb_query(conn(), sql.c_str(), &db_result) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&db_result);
+        reportDuckDbError(fmt::format("getSymbolTimeRanges({})", table),
+                          err ? std::string(err) : std::string("unknown error"));
         duckdb_destroy_result(&db_result);
         return result;
     }
@@ -622,33 +721,66 @@ std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::st
     }
 
     duckdb_destroy_result(&db_result);
+    if (result.empty()) {
+        SPDLOG_WARN("[QuoteDB] getSymbolTimeRanges: table '{}' returned 0 symbols", table);
+    }
     return result;
 }
 
 int QuoteDB::updateAdjPrices(const std::string& table, int64_t encoded_symbol,
                              const std::vector<AdjPriceUpdate>& updates) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
-    if (!isInitialized()) return -1;
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] updateAdjPrices({}): QuoteDB not initialized", table);
+        return -1;
+    }
 
-    exec_unsafe("BEGIN TRANSACTION");
+    std::string begin_err = execWithError("BEGIN TRANSACTION");
+    if (!begin_err.empty()) {
+        reportDuckDbError(fmt::format("updateAdjPrices: BEGIN TRANSACTION ({})", table), begin_err);
+        return -1;
+    }
+
     int updated = 0;
+    int failed = 0;
     for (auto& u : updates) {
         String sql = fmt::format(
             "UPDATE {} SET adj_open={:.6f}, adj_close={:.6f}, adj_high={:.6f}, adj_low={:.6f} "
             "WHERE symbol={} AND datetime='{}'",
             table, u.adj_open, u.adj_close, u.adj_high, u.adj_low,
             encoded_symbol, u.datetime);
-        if (exec(sql)) ++updated;
+        std::string err = execWithError(sql);
+        if (err.empty()) {
+            ++updated;
+        } else {
+            ++failed;
+            // 前几条打完整错误，避免 200+ 行全打刷屏
+            if (failed <= 3) {
+                reportDuckDbError(fmt::format("updateAdjPrices: UPDATE ({}, {})", table, u.datetime), err);
+            }
+        }
     }
-    exec_unsafe("COMMIT");
 
+    std::string commit_err = execWithError("COMMIT");
+    if (!commit_err.empty()) {
+        reportDuckDbError(fmt::format("updateAdjPrices: COMMIT ({})", table), commit_err);
+        return -1;
+    }
+
+    if (failed > 0) {
+        SPDLOG_ERROR("[QuoteDB] updateAdjPrices: {}/{} rows failed for symbol={} in {}",
+                     failed, updates.size(), encoded_symbol, table);
+    }
     SPDLOG_INFO("[QuoteDB] updateAdjPrices: {} rows updated for symbol={}", updated, encoded_symbol);
     return updated;
 }
 
 double QuoteDB::getLatestClose(const std::string& table, const std::string& symbol_str) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
-    if (!isInitialized()) return 0.0;
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] getLatestClose({}): QuoteDB not initialized", table);
+        return 0.0;
+    }
 
     int64_t encoded = encodeSymbol(symbol_str);
     std::string sql = fmt::format(
@@ -657,6 +789,9 @@ double QuoteDB::getLatestClose(const std::string& table, const std::string& symb
 
     duckdb_result result;
     if (duckdb_query(conn(), sql.c_str(), &result) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&result);
+        reportDuckDbError(fmt::format("getLatestClose({}, {})", table, symbol_str),
+                          err ? std::string(err) : std::string("unknown error"));
         duckdb_destroy_result(&result);
         return 0.0;
     }

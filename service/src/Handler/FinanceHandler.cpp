@@ -75,14 +75,15 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
         return;
     }
 
-    nng_socket sse_sock = _server->GetSocket();
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
     auto task_id = next_task_id();
 
     // 后台线程：逐标的下载 + 就地导入（结构同 QuoteDownloadHandler::runDownloadJob）
-    std::thread([sse_sock, codes, category, start, end, interpreter, csv_dir, task_id]() {
+    std::thread([codes, category, start, end, interpreter, csv_dir, task_id]() {
         SetCurrentThreadName("FinanceDownload");
+        // SSE socket 必须在当前工作线程创建并关闭
+        ScopedSocket sse(Server::GetSocket());
 
         // 确定要导入的类别
         std::vector<std::string> categories;
@@ -95,7 +96,7 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
         auto& financeDB = FinanceDB::instance();
         auto total = std::to_string(codes.size());
 
-        SendSSE(sse_sock, "finance_download", {
+        SendSSE(sse.get(), "finance_download", {
             {"status", "started"}, {"task_id", task_id}, {"total", total}
         });
 
@@ -119,7 +120,7 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
             if (!ok || !financeDB.isInitialized()) {
                 failed++;
                 WARN("[FinanceHandler] {} download failed: {}", sym, output);
-                SendSSE(sse_sock, "finance_download", {
+                SendSSE(sse.get(), "finance_download", {
                     {"status", "symbol_failed"}, {"task_id", task_id},
                     {"code", sym}, {"error", "download failed"},
                     {"downloaded", std::to_string(processed)}, {"total", total}
@@ -140,14 +141,14 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
             total_rows += rows;
 
             INFO("[FinanceHandler] {} done: {} rows", sym, rows);
-            SendSSE(sse_sock, "finance_download", {
+            SendSSE(sse.get(), "finance_download", {
                 {"status", "symbol_downloaded"}, {"task_id", task_id},
                 {"code", sym}, {"rows", std::to_string(rows)},
                 {"downloaded", std::to_string(processed)}, {"total", total}
             });
         }
 
-        SendSSE(sse_sock, "finance_download", {
+        SendSSE(sse.get(), "finance_download", {
             {"status", "done"}, {"task_id", task_id},
             {"total_rows", std::to_string(total_rows)},
             {"failed", std::to_string(failed)},

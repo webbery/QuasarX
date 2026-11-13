@@ -517,12 +517,14 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 启动后台线程推送进度
     std::atomic<bool> pushRunning{true};
-    std::thread pushThread([this, exchangeMgr, &strategyName, &sse_sock, &lastProgress, &pushRunning, runId]() {
+    std::thread pushThread([this, exchangeMgr, &strategyName, &lastProgress, &pushRunning, runId]() {
+        // 推送线程自己创建/关闭 SSE socket（GetSocket() 是 thread_local）
+        ScopedSocket pushSock(Server::GetSocket());
         while (pushRunning && !_server->IsExit()) {
             double progress = exchangeMgr->GetProgress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
-                SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", std::to_string(0.1 + progress * 0.5)}, {"message", msg}});
+                SendSSE(pushSock.get(), "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", std::to_string(0.1 + progress * 0.5)}, {"message", msg}});
                 lastProgress = progress;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));

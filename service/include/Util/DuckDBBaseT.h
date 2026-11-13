@@ -26,7 +26,12 @@ template <typename Derived>
 class DuckDBBaseT {
 public:
     // 初始化 db 文件（自动建目录）
-    bool init(const std::string& db_dir, const std::string& db_filename) {
+    //
+    // max_memory_mb / threads 默认沿用 100MB×2（防止多个库叠加吃满内存）；
+    // 但像 finance.db 这种会被两融明细撑到几百 MB 的库，100MB 连全表扫描都会
+    // OOM（DuckDB 报 "failed to pin block of size ..."），派生类可以传更大的上限。
+    bool init(const std::string& db_dir, const std::string& db_filename,
+              int max_memory_mb = 100, int threads = 2) {
         if (initialized_) return true;
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         if (initialized_) return true;
@@ -34,7 +39,7 @@ public:
         std::filesystem::create_directories(db_dir);
         std::string db_path = db_dir + "/" + db_filename;
 
-        if (!DuckDBOpenWithLimits(db_path, &db_)) {
+        if (!DuckDBOpenWithLimits(db_path, &db_, max_memory_mb, threads)) {
             return false;
         }
         if (duckdb_connect(db_, &conn_) != DuckDBSuccess) {
@@ -92,6 +97,28 @@ public:
         bool ok = row_handler ? row_handler(result) : true;
         duckdb_destroy_result(&result);
         return ok;
+    }
+
+    // 执行 SQL 并返回 DuckDB 错误文本（成功返回空字符串）。
+    // exec() / query() 只返回 bool，会把 DuckDB 的错误文本丢掉，导致
+    // 「DB 已失效」和「确实没有数据」在日志与接口上完全无法区分，故补此版本。
+    std::string execWithError(const std::string& sql) {
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        duckdb_result result;
+        if (duckdb_query(conn_, sql.c_str(), &result) == DuckDBSuccess) {
+            duckdb_destroy_result(&result);
+            return {};
+        }
+        const char* err = duckdb_result_error(&result);
+        std::string msg = err ? std::string(err) : std::string("unknown error");
+        duckdb_destroy_result(&result);
+        return msg;
+    }
+
+    // DuckDB 发生 FATAL 后整个连接会被 invalidate，之后所有查询都返回
+    // "database has been invalidated because of a previous fatal error"。
+    static bool isInvalidatedError(const std::string& err) {
+        return err.find("has been invalidated") != std::string::npos;
     }
 
     bool isInitialized() const { return initialized_; }

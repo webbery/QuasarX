@@ -1,5 +1,6 @@
 #include "MarketTiming/ImmediateTiming.h"
 #include "DataContext.h"
+#include "Util/system.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
@@ -66,14 +67,14 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
             }
         }
         broker->Buy(run_id, strategy, symbol, order, [symbol, this, signalTime](const TradeReport& report) {
-            auto sock = Server::GetSocket();
+            ScopedSocket sock(Server::GetSocket());
             // 回测模式下使用信号触发时间覆盖 TradeReport._time
             TradeReport fixedReport = report;
             if (signalTime > 0) {
                 fixedReport._time = signalTime;
             }
             auto info = to_sse_string(symbol, fixedReport);
-            nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
+            nng_send(sock.get(), info.data(), info.size(), NNG_FLAG_NONBLOCK);
             _reports.emplace_back(std::make_pair(symbol, fixedReport));
             });
     break;
@@ -93,14 +94,14 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
                                                          : CreditOrderType::None;
         }
         broker->Sell(run_id, strategy, symbol, order, [symbol, this, signalTime](const TradeReport& report) {
-            auto sock = Server::GetSocket();
+            ScopedSocket sock(Server::GetSocket());
             // 回测模式下使用信号触发时间覆盖 TradeReport._time
             TradeReport fixedReport = report;
             if (signalTime > 0) {
                 fixedReport._time = signalTime;
             }
             auto info = to_sse_string(symbol, fixedReport);
-            nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
+            nng_send(sock.get(), info.data(), info.size(), NNG_FLAG_NONBLOCK);
             _reports.emplace_back(std::make_pair(symbol, fixedReport));
             });
     break;

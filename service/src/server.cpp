@@ -59,6 +59,7 @@
 #include "Handler/FinanceHandler.h"
 #include "Handler/FinanceDataHandler.h"
 #include "Handler/DividendHandler.h"
+#include "Handler/MarginHandler.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"
 #include "Nodes/PortfolioNode.h"
@@ -231,6 +232,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_FINANCE         "/finance"
 #define API_FINANCE_DATA    "/finance/data"
 #define API_DIVIDEND        "/dividend"
+#define API_MARGIN          "/margin"
 #define API_ML              "/ml"
 #define API_HMM             "/hmm"
 #define API_STABILITY       "/analysis/stability"
@@ -457,6 +459,9 @@ void Server::Regist() {
     REGIST_POST(API_DIVIDEND);
     REGIST_GET(API_DIVIDEND);
     REGIST_DEL(API_DIVIDEND);
+    REGIST_POST(API_MARGIN);
+    REGIST_GET(API_MARGIN);
+    REGIST_DEL(API_MARGIN);
     REGIST_POST(API_OPTION_DATA);
     REGIST_GET(API_OPTION_DATA);
     REGIST_DEL(API_OPTION_DATA);
@@ -1280,13 +1285,14 @@ void Server::Schedules(time_t t) {
                 // 随后的复权重算按这些错误事件算因子，原始价被放大成
                 // 累计复权倍数，行情特征随之失真。
                 int imported = 0;
+                int failedFiles = 0;
                 if (!ok) {
                     WARN("[Schedules] fetch_dividend_data.py 执行失败，跳过分红导入与复权重算");
                 } else {
                     // 只导入名单内的标的：目录里可能躺着别的任务留下的 CSV
-                    imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend", allSymbols);
-                    if (imported < 0) {
-                        WARN("[Schedules] 分红导入有 {} 个文件失败，事件表不完整", -imported);
+                    imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend", allSymbols, &failedFiles);
+                    if (failedFiles > 0) {
+                        WARN("[Schedules] 分红导入有 {} 个文件失败，事件表不完整", failedFiles);
                     }
                 }
 
@@ -1349,6 +1355,10 @@ void Server::Schedules(time_t t) {
         }
         // 清理 90 天前的策略日志
         DuckDBLogger::instance().cleanup_old_logs(90);
+
+        // 两融明细（逐标的融资/融券余额）：每交易日更新。
+        // 放在最后：抓取要联网、耗时 1~3 分钟，失败只记日志不影响上面的日终流程。
+        RefreshMarginData(sseSock);
     }
 }
 
@@ -1399,6 +1409,179 @@ void Server::RefreshMarginStockList(nng_socket sseSock) {
     }
 
     INFO("[RefreshMarginStock] 已刷新 {} 只可做空标的", imported);
+}
+
+// 定义在文件下方（与邮件发送共用）
+static String ShellQuote(const String& s);
+
+// 从脚本输出里抠出 JSON manifest。
+// 脚本 stdout 只有 JSON，但 RunCommand 把 stderr 也重定向到同一管道，
+// 所以 JSON 前后可能夹着诊断行 —— 取第一个 '{' 到最后一个 '}' 之间的内容。
+static bool ExtractJsonManifest(const String& output, nlohmann::json& out) {
+    auto begin = output.find('{');
+    auto end = output.rfind('}');
+    if (begin == String::npos || end == String::npos || end <= begin) {
+        return false;
+    }
+    try {
+        out = nlohmann::json::parse(output.substr(begin, end - begin + 1));
+        return true;
+    } catch (const std::exception& e) {
+        WARN("[ExtractJsonManifest] parse failed: {}", e.what());
+        return false;
+    }
+}
+
+int Server::ImportMarginDetailCsvs(const nlohmann::json& manifest, String& error) {
+    auto& financeDB = FinanceDB::instance();
+
+    // manifest["files"] 是本次要导入的 CSV 列表（每个交易所一个文件）。
+    // 老版本脚本只给 "file" 单数，兼容一下。
+    Vector<String> csvPaths;
+    if (manifest.contains("files") && manifest["files"].is_array()) {
+        for (const auto& f : manifest["files"]) {
+            if (f.is_string()) {
+                String p = f.get<String>();
+                if (!p.empty()) csvPaths.push_back(p);
+            }
+        }
+    }
+    if (csvPaths.empty()) {
+        String p = manifest.value("file", "");
+        if (!p.empty()) csvPaths.push_back(p);
+    }
+    if (csvPaths.empty()) {
+        error = "manifest 里没有 CSV 文件路径";
+        return -1;
+    }
+
+    int imported = 0;
+    for (const auto& p : csvPaths) {
+        std::error_code fs_ec;
+        if (!std::filesystem::exists(p, fs_ec)) {
+            WARN("[ImportMarginDetailCsvs] CSV 不存在，跳过: {}", p);
+            continue;
+        }
+        int n = financeDB.importCsv(p, "margin_daily");
+        if (n < 0) {
+            error = fmt::format("导入失败: {}", p);
+            return -1;
+        }
+        imported += n;
+        // 文件名带交易所后缀（detail_<date>.sh.csv），日志里一眼能看出这批是哪个所
+        INFO("[ImportMarginDetailCsvs] 已导入 {} 行两融明细（{}）",
+             n, std::filesystem::path(p).filename().string());
+    }
+    INFO("[ImportMarginDetailCsvs] 交易日 {} 合计导入 {} 行，{} 个文件",
+         manifest.value("date", "?"), imported, csvPaths.size());
+    return imported;
+}
+
+int Server::DownloadMarginData(const String& date, const String& env, String& error) {
+    auto& financeDB = FinanceDB::instance();
+
+    // FinanceDB 是懒初始化的（各消费方自己 init），这里必须自己确保打开过
+    if (!financeDB.isInitialized() &&
+        !financeDB.init(_config->GetDatabasePath() + "/finance", "finance.db")) {
+        error = "FinanceDB init failed";
+        return -1;
+    }
+
+    // CSV 目录用绝对路径：脚本写入与服务端导入必须落在同一个目录
+    // （db_path 是相对路径，脚本被 cd 到 ../tools 执行，相对路径会跑偏）
+    String marginDir =
+        std::filesystem::absolute(_config->GetDatabasePath() + "/margin").string();
+    std::error_code mk_ec;
+    std::filesystem::create_directories(marginDir, mk_ec);
+
+    // 解释器走配置里的 python 段（与 DividendHandler / MLHandler 同一套解析）
+    auto pyEnv = PythonEnv::fromConfig(_config->GetRawConfig());
+    String interpreter = pyEnv.resolve(env);
+
+    String cmd = "cd ../tools && " + interpreter + " fetch_margin_data.py";
+    if (!date.empty()) {
+        cmd += " --date " + ShellQuote(date);
+    }
+    cmd += " --out-dir " + ShellQuote(marginDir);
+
+    INFO("[DownloadMarginData] 拉取两融明细（全市场，交易所接口没有逐标的查询的口子）: {}",
+         cmd);
+
+    String output;
+    bool runOk = RunCommand(cmd, output);
+
+    nlohmann::json manifest;
+    bool parsed = ExtractJsonManifest(output, manifest);
+    int rows = manifest.value("rows", 0);
+
+    if (!parsed || rows <= 0) {
+        error = fmt::format("抓取失败（runOk={} parsed={} rows={}）：{}",
+                            runOk, parsed, rows,
+                            manifest.value("error", output.substr(0, 200)));
+        return -1;
+    }
+
+    // 部分数据源失败：CSV 里只有成功部分的数据，照常入库，缺口在日志里说明
+    if (!manifest.value("fetch_ok", true)) {
+        WARN("[DownloadMarginData] 部分数据源失败，本次仅入库 {} 行：{}",
+             rows, manifest.value("error", ""));
+    }
+
+    // 走通用类目通道：类目决定表结构，ON CONFLICT 保证重跑幂等
+    int imported = ImportMarginDetailCsvs(manifest, error);
+    if (imported < 0) return -1;
+
+    // 滚动清理 30 天前的 CSV（约 450KB/日，留一个月足够排查）
+    //
+    // 判据用**文件修改时间**，不是文件名里的交易日。回补历史时文件名里的日期
+    // 可能是一两年前（detail_20220104.csv），但文件是刚写出来的，还得留着给
+    // 补齐脚本复用 —— 少一个交易所时只重下那一个即可，不必把另一家也重拉一遍。
+    // 按文件名日期删会把刚写好的文件立刻删掉，导致每次补齐都变成全量重下。
+    const int kKeepDays = 30;
+    int removed = 0;
+    std::error_code it_ec;
+    for (auto& entry : std::filesystem::directory_iterator(marginDir, it_ec)) {
+        if (it_ec) break;
+        if (!entry.is_regular_file()) continue;
+        String filename = entry.path().filename().string();
+        if (filename.rfind("detail_", 0) != 0) continue;
+        if (filename.size() < 12 + 4) continue;
+        if (filename.compare(filename.size() - 4, 4, ".csv") != 0) continue;
+
+        std::error_code lmt_ec;
+        auto mtime = std::filesystem::last_write_time(entry.path(), lmt_ec);
+        if (lmt_ec) continue;
+        int64_t ageDays = std::chrono::duration_cast<std::chrono::hours>(
+                              std::filesystem::file_time_type::clock::now() - mtime)
+                              .count() / 24;
+        if (ageDays <= kKeepDays) continue;
+
+        std::error_code rm_ec;
+        if (std::filesystem::remove(entry.path(), rm_ec)) {
+            removed++;
+        }
+    }
+    if (removed > 0) {
+        INFO("[DownloadMarginData] 清理 {} 天未修改的两融 CSV: {} 个", kKeepDays, removed);
+    }
+
+    return imported;
+}
+
+void Server::RefreshMarginData(nng_socket sseSock) {
+    String error;
+    int imported = DownloadMarginData("", "", error);
+    if (imported < 0) {
+        String msg = "两融明细更新失败：" + error;
+        WARN("[RefreshMarginData] {}", msg);
+        SendSSE(sseSock, "schedule_error", {
+            {"task", "fetch_margin_data.py"},
+            {"message", msg}
+        });
+        // 按当前策略：失败只记日志，不发邮件
+        return;
+    }
+    INFO("[RefreshMarginData] 两融明细更新完成，{} 行", imported);
 }
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {
@@ -1506,7 +1689,6 @@ void Server::updateActiveStrategiesQuote(bool overwrite) {
 
     // 3. 对每个 (asset_type, freq) 表 → 增量下载
     int totalGroups = 0, skippedEmpty = 0;
-    nng_socket sseSock = GetSocket();
     auto pyEnv = PythonEnv::fromConfig(_config->GetRawConfig());
     std::string interpreter = pyEnv.resolve("");
     for (auto& [assetType, symbols] : buckets) {
@@ -1566,7 +1748,7 @@ void Server::updateActiveStrategiesQuote(bool overwrite) {
                 g.symbols = std::vector<std::string>(syms.begin(), syms.end());
                 dgroups.push_back(std::move(g));
 
-                QuoteDownloadHandler::runDownloadJob(sseSock, dgroups, freqStr,
+                QuoteDownloadHandler::runDownloadJob(dgroups, freqStr,
                                                     start, today, interpreter, quoteDir, overwrite);
                 ++totalGroups;
             }
@@ -1701,6 +1883,7 @@ void Server::InitHandlers() {
     RegistHandler(API_FINANCE, FinanceHandler);
     RegistHandler(API_FINANCE_DATA, FinanceDataHandler);
     RegistHandler(API_DIVIDEND, DividendHandler);
+    RegistHandler(API_MARGIN, MarginHandler);
     RegistHandler(API_OPTION_DATA, OptionDataHandler);
     RegistHandler(API_OPTION_PRICING, OptionPricingHandler);
     RegistHandler(API_OPTION_PRICING_MULTI, OptionPricingHandler);

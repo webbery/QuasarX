@@ -339,10 +339,16 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
     // ---- 并行计算：只写各自的 outs[idx] 槽位，不碰 context ----
     Vector<SymbolOutput> outs(N);
     Vector<NodeProcessResult> statuses(N, NodeProcessResult::Success);
+    EMD_PERF_SPLIT(auto emdParallelStart = PerfClock::now();)
     #pragma omp parallel for schedule(dynamic, 1)
     for (int idx = 0; idx < N; ++idx) {
         statuses[idx] = processSymbol(inputKeys[idx], context, outs[idx]);
     }
+    EMD_PERF_SPLIT(
+        auto emdPublishStart = PerfClock::now();
+        _tParallelMs += ms_since(emdParallelStart);
+        for (const auto& o : outs) _tDerivedMs += o._derivedMs;
+    )
 
     // ---- 串行发布：写入顺序与旧实现逐 key 一致 ----
     NodeProcessResult finalResult = NodeProcessResult::Success;
@@ -439,6 +445,15 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
                         std::move(out._volume_regime));
         }
     }
+
+    // 每 500 epoch 打一行内部耗时拆分，用来定位 EMD 的耗时花在哪一段
+    EMD_PERF_SPLIT(
+        _tPublishMs += ms_since(emdPublishStart);
+        if (context.GetEpoch() > 0 && context.GetEpoch() % 500 == 0) {
+            INFO("[EMDNode] epoch={} parallel={:.1f}ms derived={:.1f}ms publish={:.1f}ms",
+                 context.GetEpoch(), _tParallelMs, _tDerivedMs, _tPublishMs);
+        }
+    )
     return finalResult;
 }
 
@@ -582,6 +597,7 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
     const Vector<Vector<double>>& imfs = *out._imfs_view;
 
     // 计算衍生特征（如果启用）：返回值是现算的新序列，发布时直接 move 进 context
+    EMD_PERF_SPLIT(auto derivedStart = PerfClock::now();)
     if (_computeEnergyVelocity) {
         out._energy_velocity =
             computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
@@ -598,6 +614,7 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
             WARN("EMDNode: volume_regime requested but no volume input found for {}", prefix);
         }
     }
+    EMD_PERF_SPLIT(out._derivedMs = ms_since(derivedStart);)
 
     out._publish = true;
     return NodeProcessResult::Success;

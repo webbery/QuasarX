@@ -1,6 +1,17 @@
 #pragma once
 #include "StrategyNode.h"
 
+// ── EMD 内部耗时拆分（诊断用，非正式指标）──
+// 只回答一个问题：EMD 节点的总耗时里，OMP 并行段 / 派生特征计算 / 串行发布
+// 各占多少。与 GRAPH_PERF 共用一个编译开关：Release + ENABLE_GRAPH_PERF 时保留，
+// 其它情况编译为空、零开销。诊断期结束后这三块代码连同成员整段删掉即可，
+// 不影响任何业务逻辑。
+#if defined(_DEBUG) || defined(ENABLE_GRAPH_PERF)
+    #define EMD_PERF_SPLIT(...) __VA_ARGS__
+#else
+    #define EMD_PERF_SPLIT(...)
+#endif
+
 /**
  * EMD 经验模态分解节点（信号处理）
  *
@@ -66,6 +77,9 @@ private:
         Vector<double> _energy_velocity;      // 本 epoch 现算的派生特征，发布后不再需要 -> move
         Vector<double> _volume_regime;
         bool _has_volume_regime = false;      // false = 没算（无 volume 输入），保持空 key
+
+        // 本 symbol 派生特征计算耗时。并行区内只写自己的槽位，无竞争。
+        EMD_PERF_SPLIT(double _derivedMs = 0.0;)
     };
 
     // 对单个输入序列执行 EMD（全局或滚动）
@@ -115,4 +129,12 @@ private:
     // 滚动模式持久状态：避免每个 epoch 重复计算全部历史
     // key = inputKey, value = 累积的 IMF 输出向量
     Map<String, Vector<Vector<double>>> _rollingIMFs;
+
+    // EMD 内部耗时累计（诊断用，见文件头的 EMD_PERF_SPLIT）。
+    // Process 由单个策略 worker 线程调用，累计无需原子。
+    EMD_PERF_SPLIT(
+        double _tParallelMs = 0.0;   // OMP 并行段（含派生特征计算）
+        double _tDerivedMs = 0.0;    // 其中派生特征计算的累计
+        double _tPublishMs = 0.0;    // 串行发布段
+    )
 };

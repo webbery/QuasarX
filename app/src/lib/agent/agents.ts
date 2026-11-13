@@ -31,8 +31,10 @@ import { riskMonitorTool } from "../tools/riskMonitor";
 import { orderQueryTool } from "../tools/orderQuery";
 import { performanceTool } from "../tools/performanceTool";
 import { mathTool } from "../tools/mathTool";
+import { chartTool } from "../tools/chart";
 
 import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent } from "./types";
+import { isToolArtifactResult, type ArtifactEnvelope } from "./artifacts";
 
 /** Tool 名称到 Tool 实例的映射 */
 const TOOL_REGISTRY: Record<string, StructuredToolInterface> = {
@@ -56,6 +58,7 @@ const TOOL_REGISTRY: Record<string, StructuredToolInterface> = {
   order_query: orderQueryTool,
   performance: performanceTool,
   math_tool: mathTool,
+  chart: chartTool,
 };
 
 /**
@@ -199,8 +202,25 @@ async function runAgentLoop(
       }
 
       try {
-        const result = await tool.invoke(tc.args);
-        const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+        const rawResult = await tool.invoke(tc.args);
+
+        // === 双通道 ===
+        // 工具可返回 { text, artifact }：text 回灌给 LLM，artifact 走事件通道进 UI。
+        // LLM 完全不接触产物结构，避免它编造图表数据。
+        let resultStr: string;
+        let artifact: ArtifactEnvelope | undefined;
+
+        if (rawResult instanceof ToolMessage) {
+          resultStr = typeof rawResult.content === "string"
+            ? rawResult.content
+            : JSON.stringify(rawResult.content);
+          artifact = (rawResult as unknown as { artifact?: ArtifactEnvelope }).artifact;
+        } else if (isToolArtifactResult(rawResult)) {
+          resultStr = rawResult.text;
+          artifact = rawResult.artifact;
+        } else {
+          resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+        }
 
         onEvent?.({
           agent: agentType,
@@ -208,6 +228,16 @@ async function runAgentLoop(
           eventType: "tool_result",
           timestamp: Date.now(),
         });
+
+        if (artifact) {
+          onEvent?.({
+            agent: agentType,
+            content: `生成产物: ${artifact.title} (${artifact.kind})`,
+            eventType: "artifact",
+            timestamp: Date.now(),
+            payload: artifact,
+          });
+        }
 
         currentMessages.push(
           new ToolMessage({

@@ -14,6 +14,10 @@
       </div>
 
       <div class="tabs-content">
+         <!-- Agent 分析面板 Tab：整屏工作台，去掉外层内边距 -->
+        <div v-show="activeTab === 'agent'" class="tab-content tab-content-flush">
+          <AgentPanel />
+        </div>
          <!-- 波动率分析 Tab -->
         <div v-show="activeTab === 'volatility'" class="tab-content">
           <VolatilityTab />
@@ -276,11 +280,13 @@ import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
 import CointegrationTab from './cointegration/CointegrationTab.vue'
 import NonlinearTab from './nonlinear/NonlinearTab.vue'
+import AgentPanel from './agent/AgentPanel.vue'
 
 const unit = 100000000 // 单位:亿
 
 // Tab 配置
 const allTabs = [
+  { label: '🤖 Agent 分析面板', name: 'agent' },
   { label: '波动率分析', name: 'volatility' },
   { label: '信号分析', name: 'signal' },
   { label: 'PCA 主成分', name: 'pca' },
@@ -297,15 +303,18 @@ const allTabs = [
 ]
 
 const { panels } = useAnalysisPanelConfig()
+// Tab 切换（提前声明：下面的 watch 需要 immediate 访问）
+const activeTab = ref('volatility')
 const visibleTabs = computed(() =>
   allTabs.filter(t => panels.value.find(p => p.id === t.name)?.enabled)
 )
 
+// 默认落在第一个启用的 Tab（默认即 Agent 分析面板）
 watch(visibleTabs, (tabs) => {
   if (tabs.length > 0 && !tabs.find(t => t.name === activeTab.value)) {
     activeTab.value = tabs[0].name
   }
-})
+}, { immediate: true })
 
 // === 策略数据 Tab 状态 ===
 const availableDebugNodes = ref([])
@@ -421,9 +430,6 @@ const renderCheckedCharts = () => {
     }
   })
 }
-
-// Tab 切换
-const activeTab = ref('volatility')
 
 // 响应式数据
 const selectedAssetType = ref('stocks')

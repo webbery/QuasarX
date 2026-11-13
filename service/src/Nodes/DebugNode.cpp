@@ -52,6 +52,13 @@ bool DebugNode::Init(const nlohmann::json& config) {
 }
 
 void DebugNode::Prepare(const String& strategy, DataContext& context) {
+    // _context 指向本轮运行的 DataContext —— 它是 worker 线程栈上的对象，
+    // 线程返回即销毁。上一轮留下的指针在本轮必须重新绑定：
+    // 若本轮图在到达本节点前就中断了（例如行情窗口为空导致 QuoteInputNode
+    // 返回 Finished），Process() 不会被调用，_context 仍指向上一次那已经
+    // 释放的 DataContext，Done() 里解引用它会 use-after-free 直接崩掉整个服务。
+    _context = &context;
+
     if (_mode == "import") {
         if (!importFromCsv(context)) {
             WARN("[DebugNode] import 模式初始化失败: file_path='{}'", _filePath);
@@ -232,6 +239,11 @@ void DebugNode::Done(const String& strategy) {
     } else {
         WARN("[DebugNode] CSV NOT written: suffix='{}', ts.empty()={}", _suffix, ts.empty());
     }
+
+    // 本轮结束：解除对 DataContext 的引用。Done() 由 worker 线程退出时的
+    // DoneGuard 触发，此时 context 仍然存活；但用完之后必须置空，
+    // 否则下一次 Done()（例如图提前中断的那一轮）会解引用已释放的内存。
+    _context = nullptr;
 }
 
 Map<String, ArgType> DebugNode::out_elements() {

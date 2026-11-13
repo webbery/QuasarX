@@ -25,12 +25,11 @@ public:
      *   1. RunCommand 下载脚本（同时下 HFQ + 不复权 CSV 到 quote/{asset_type}_{hfq,org}/{freq}）
      *   2. 扫描落盘 CSV 并调 QuoteDB::importCsv 入库
      *   3. 对 stock_1d 调用 validateAndReconcileAdj 校验下载 vs 重算
-     *   4. 推送 SSE 进度到 sseSock
+     *   4. 推送 SSE 进度（socket 由工作线程自己创建和关闭）
      *
      * 单 symbol 失败由脚本内部 try/except 捕获，整体 RunCommand 返回 ok=false 才视为组级失败。
      */
-    static void runDownloadJob(nng_socket sseSock,
-                               std::vector<DownloadGroup> groups,
+    static void runDownloadJob(std::vector<DownloadGroup> groups,
                                const std::string& freq,
                                const std::string& start,
                                const std::string& end,
