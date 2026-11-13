@@ -384,7 +384,8 @@ def api_get_decisions(token: str, strategy: str = None, date: str = None) -> lis
         params=params,
         headers=headers,
         verify=VERIFY_SSL,
-        timeout=10,
+        # 并发日终回放期间服务端在密集读 DuckDB，10s 会偶发超时
+        timeout=15,
     )
     if resp.ok:
         return resp.json() or []

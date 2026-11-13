@@ -157,6 +157,20 @@ protected:
     /// 而不是继续按 index 硬对齐。
     bool ValidateSeriesAlignment(symbol_t symbol) const;
 
+    /// @brief 把指定标的从行情缓存里删掉
+    ///
+    /// Login 重新加载前先删：LoadData 失败时不能留下旧条目冒充新数据。
+    void DropCachedSymbols(const Set<String>& codes);
+
+    /// @brief 回收无人使用的行情缓存条目，控制共享缓存体积
+    ///
+    /// 缓存不能整表清空（会连带抹掉并发跑的另一个策略的标的），
+    /// 所以靠"保留当前 filter + 活跃回测上下文在用的标的、其余淘汰"来控制增长。
+    void EvictUnusedSymbols();
+
+    /// @brief 按当前 filter 逐个加载标的到 _csvs / _org_csvs
+    void LoadFilteredSymbols();
+
     void matchOrders(BacktestContext* context, symbol_t symbol);
     bool OrderReport(BacktestContext* context, order_id id, const TradeReport& report);
     TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);

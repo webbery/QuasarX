@@ -22,6 +22,7 @@
         "test_node_unit",
         "test_formula_math",
         "test_multi_freq",
+        "test_multi_strategy",
         "test_position_events",
         "test_protection_node",
         "test_xgboost",
