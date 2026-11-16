@@ -153,10 +153,10 @@ jobs:
           name: linux-build
           # defaults.run.working-directory 只影响 run 步骤，upload-artifact 的 path 仍按
           # 仓库根解析；产物实际在 app/dist/ 下，所以 path 必须从仓库根写
+          # 注：rpm 目标已临时关闭（app/electron-builder.yml），故不再收集 *.rpm
           path: |
             app/dist/*.AppImage
             app/dist/*.deb
-            app/dist/*.rpm
             app/dist/latest-linux.yml
           if-no-files-found: error
 

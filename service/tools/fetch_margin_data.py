@@ -175,32 +175,67 @@ def parse_date_arg(value):
 # ============================================================
 
 def fetch_sse_detail(date_compact, ak):
-    """上交所个股明细。"""
+    """上交所个股明细。
+
+    ⚠️ 不能直接用 ak.stock_margin_detail_sse：它只取第 1 页，而 SSE 明细接口
+    单页硬上限 2000 行 —— 沪市两融标的 2026 年已超过 2000 只，akshare 拿到的
+    是【前 2000 行】，且缺失的恰好是权重最大的标的（明细求和比交易所汇总少 3%）。
+    正确翻页参数是 pageHelp.beginPage（pageNo 会被接口忽略）。这里自己翻页取全量。
+    """
     try:
-        df = ak.stock_margin_detail_sse(date=date_compact)
-        if df is None or df.empty:
-            return [], None
-        rows = []
-        for _, row in df.iterrows():
-            code = norm_code(row.get("标的证券代码"))
-            if not code:
+        import requests
+    except ImportError as e:
+        return [], f"missing dependency: {e}"
+
+    url = "https://query.sse.com.cn/marketdata/tradedata/queryMargin.do"
+    headers = {
+        "Referer": "https://www.sse.com.cn/",
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36"),
+    }
+    rows = []
+    seen = set()
+    begin_page = 1
+    while True:
+        params = {
+            "isPagination": "true", "tabType": "mxtype", "detailsDate": date_compact,
+            "stockCode": "", "beginDate": "", "endDate": "",
+            "pageHelp.pageSize": "2000", "pageHelp.pageCount": "50",
+            "pageHelp.pageNo": str(begin_page), "pageHelp.beginPage": str(begin_page),
+            "pageHelp.cacheSize": "1", "pageHelp.endPage": str(begin_page),
+        }
+        r = requests.get(url, params=params, headers=headers, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        page_help = data.get("pageHelp") or {}
+        result = data.get("result") or []
+        if not result:
+            break
+        for row in result:
+            code = norm_code(row.get("stockCode"))
+            if not code or code in seen:
                 continue
-            stat = norm_date(row.get("信用交易日期")) or date_compact
+            seen.add(code)
+            stat = norm_date(row.get("opDate")) or date_compact
             rows.append({
                 "code": PREFIX[EXCHANGE_SSE] + code,
                 "statDate": dash_date(stat),
-                "rzBalance": get_val(row, df, ["融资余额"]),
-                "rzBuy": get_val(row, df, ["融资买入额"]),
-                "rzRepay": get_val(row, df, ["融资偿还额"]),
-                "rqVolume": get_val(row, df, ["融券余量"]),
-                "rqSell": get_val(row, df, ["融券卖出量"]),
-                "rqRepay": get_val(row, df, ["融券偿还量"]),
+                "rzBalance": to_float(row.get("rzye")),
+                "rzBuy": to_float(row.get("rzmre")),
+                "rzRepay": to_float(row.get("rzche")),
+                "rqVolume": to_float(row.get("rqyl")),
+                "rqSell": to_float(row.get("rqmcl")),
+                "rqRepay": to_float(row.get("rqchl")),
                 "rqBalance": None,          # 沪市明细不给融券余额（只有汇总给）
                 "totalBalance": None,
             })
-        return rows, None
-    except Exception as e:
-        return [], f"{type(e).__name__}: {e}"
+        total = page_help.get("total") or 0
+        if len(seen) >= total or len(result) < 2000:
+            break
+        begin_page += 1
+        if begin_page > 30:
+            break
+    return rows, None
 
 
 def fetch_szse_detail(date_compact, ak):
@@ -233,15 +268,25 @@ def fetch_szse_detail(date_compact, ak):
 
 def resolve_latest_trade_date(ak):
     """探测最近一个已有两融数据的交易日（YYYYMMDD）。
-    目前只能用上交所汇总（区间接口，返回最后一行即最新日）。"""
+
+    ⚠️ 上交所汇总接口（stock_margin_sse）有两个坑：
+      1) 单次区间查询最多返回 2000 条，且按日期【倒序】排列。
+         用 start=20100101 查全历史时，拿到的是「最近 2000 个交易日」，
+         iloc[-1] 是其中【最旧】的一天（2018-08-14），不是最新一天。
+      2) 因此这里只查最近 90 天的窄窗口（<2000 条，不会被截断），
+         再对所有日期取 max()，与接口的排序方向解耦。
+    """
+    end = datetime.now().strftime("%Y%m%d")
+    start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
     try:
-        df = ak.stock_margin_sse(start_date="20100101", end_date="20991231")
+        df = ak.stock_margin_sse(start_date=start, end_date=end)
         if df is not None and not df.empty:
             col = pick_col(df, ["信用交易日期"])
             if col:
-                last = norm_date(df[col].iloc[-1])
-                if last:
-                    return last
+                dates = [norm_date(v) for v in df[col]]
+                dates = [d for d in dates if d]
+                if dates:
+                    return max(dates)
     except Exception as e:
         log(f"[warn] 上交所汇总探测交易日失败: {e}")
     return ""
