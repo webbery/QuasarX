@@ -71,7 +71,7 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
             strategySys->EnsureDailyReady();
             // 从 bar datetime 提取日期，日期变化时 ResetDaily 使策略可重新执行；
             // 同一标的在同一仿真日被重复推送时同样要重置 —— 数据被改写后如果还
-            // 保留 _dailyExecutedStrategies，MarkSymbolReady 会直接跳过，接口返回
+            // 保留 _strategyStatusMap 中的 Executed 状态，MarkSymbolReady 会直接跳过，接口返回
             // "Bar written ..." 却什么决策都不产生。
             // 同一仿真日推不同标的（多标的逐标的灌数据）不重置，等全部就绪后统一执行。
             String simDate = bar.datetime.substr(0, 10);
@@ -98,9 +98,9 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
                 _pushedSymbols.insert(symbol);
             }
             for (const auto& s : reMark) {
-                strategySys->MarkSymbolReady(s, simDate);
+                strategySys->MarkSymbolReady(to_symbol(s), simDate);
             }
-            strategySys->MarkSymbolReady(symbol, simDate);
+            strategySys->MarkSymbolReady(to_symbol(symbol), simDate);
         } else {
             WARN("[SimulateBar] StrategySubSystem is null!");
         }

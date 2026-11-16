@@ -589,7 +589,7 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
     }
 
     // 运行
-    StrategyInitResult initResult;
+    StrategyStatus initResult;
     try {
         initResult = strategySys->InitStrategy(name, scriptJson);
     } catch (const std::exception& e) {
@@ -664,7 +664,7 @@ void StrategyHandler::load(const nlohmann::json& param, httplib::Response& res) 
     String name = param.value("name", "");
     nlohmann::json scriptJson = param.value("script", nlohmann::json());
     auto strategySys = _server->GetStrategySystem();
-    StrategyInitResult initResult;
+    StrategyStatus initResult;
     try {
         initResult = strategySys->InitStrategy(name, scriptJson);
     } catch (const std::exception& e) {

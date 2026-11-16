@@ -629,7 +629,7 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     if (_server) {
         auto* strategySys = _server->GetStrategySystem();
         if (strategySys) {
-            strategySys->MarkSymbolReady(bar.symbol);
+            strategySys->MarkSymbolReady(to_symbol(bar.symbol));
         }
     }
 }

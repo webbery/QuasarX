@@ -240,14 +240,15 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
     String path(SCRIPTS_DIR);
     ifs.open(path + "/" + strategyName);
     if (!ifs) {
-        StrategyInitResult result;
+        StrategyStatus result;
         result._errorMessage = "Failed to open strategy file";
+        result._state = StrategyState::Failed;
         std::lock_guard<std::mutex> lock(_failureMtx);
-        _failedStrategies[strategyName] = result;
+        _strategyStatusMap[strategyName] = result;
         return false;
     }
 
-    StrategyInitResult result;
+    StrategyStatus result;
     try {
         nlohmann::json script;
         ifs >> script;
@@ -257,8 +258,9 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
             WARN("[StrategySubSystem] Strategy '{}' rejected: missing 'version' field", strategyName);
             ifs.close();
             result._errorMessage = "missing 'version' field";
+            result._state = StrategyState::Failed;
             std::lock_guard<std::mutex> lock(_failureMtx);
-            _failedStrategies[strategyName] = result;
+            _strategyStatusMap[strategyName] = result;
             return false;
         }
 
@@ -269,8 +271,9 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
             ifs.close();
             result._errorMessage = fmt::format("version {} is below minimum required ({})",
                                                version, MIN_STRATEGY_VERSION);
+            result._state = StrategyState::Failed;
             std::lock_guard<std::mutex> lock(_failureMtx);
-            _failedStrategies[strategyName] = result;
+            _strategyStatusMap[strategyName] = result;
             return false;
         }
 
@@ -287,8 +290,9 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
     }
 
     if (!result._success) {
+        result._state = StrategyState::Failed;
         std::lock_guard<std::mutex> lock(_failureMtx);
-        _failedStrategies[strategyName] = result;
+        _strategyStatusMap[strategyName] = result;
         return false;
     }
 
@@ -305,10 +309,21 @@ bool StrategySubSystem::UninstallStrategy(const String& strategy) {
 
 void StrategySubSystem::Stop(const String& strategy) {
     _agentSystem->Stop(strategy);
+    // 标记为 Stopped，避免 EnsureDailyReady 重新注册
+    {
+        std::lock_guard<std::mutex> lock(_failureMtx);
+        auto it = _strategyStatusMap.find(strategy);
+        if (it != _strategyStatusMap.end()) {
+            it->second._state = StrategyState::Stopped;
+        } else {
+            StrategyStatus status;
+            status._state = StrategyState::Stopped;
+            _strategyStatusMap[strategy] = status;
+        }
+    }
     // 从日终管线中移除，避免 Stop 后仍被 MarkSymbolReady 触发 StartDaily
     std::lock_guard<std::mutex> lock(_dailyMtx);
     _dailyStrategySymbols.erase(strategy);
-    _dailyExecutedStrategies.erase(strategy);
 }
 
 void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq) {
@@ -318,11 +333,15 @@ void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& histor
 void StrategySubSystem::DeleteStrategy(const String& name) {
     _strategies.erase(name);
     _strategyWarmupEpochs.erase(name);
+    // 清理策略状态
+    {
+        std::lock_guard<std::mutex> lock(_failureMtx);
+        _strategyStatusMap.erase(name);
+    }
     // 清理日级执行状态，避免同一进程内重新加载策略时残留已执行标记
     {
         std::lock_guard<std::mutex> lock(_dailyMtx);
         _dailyStrategySymbols.erase(name);
-        _dailyExecutedStrategies.erase(name);
     }
     // 回收策略资金
     if (_handle) {
@@ -340,8 +359,8 @@ void StrategySubSystem::InitStrategy(const String& strategy, const List<QNode*>&
     _agentSystem->LoadFlow(strategy, flow);
 }
 
-StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann::json& script) {
-    StrategyInitResult result;
+StrategyStatus StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann::json& script) {
+    StrategyStatus result;
 
     // 版本检查
     if (!script.contains("version") || !script["version"].is_number()) {
@@ -551,22 +570,27 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
 
     _strategies.insert(strategyName);
 
-    // 成功加载：清除之前的失败记录
-    ClearStrategyFailure(strategyName);
+    // 成功加载：清除之前的失败记录，设置状态为 Active
+    {
+        std::lock_guard<std::mutex> lock(_failureMtx);
+        _strategyStatusMap.erase(strategyName);
+    }
 
     INFO("[StrategySubSystem] Strategy '{}'(version {}) initialized: warmup={} epochs, nodes={}",
         to_utf8(strategyName), version, warmup, sorted_nodes.size());
 
     result._success = true;
+    result._state = StrategyState::Active;
     return result;
 }
 
-// ── 失败策略记录访问接口 ──
+// ── 策略状态访问接口 ──
 
-List<StrategyInitResult> StrategySubSystem::GetFailedStrategies() const {
+List<StrategyStatus> StrategySubSystem::GetFailedStrategies() const {
     std::lock_guard<std::mutex> lock(_failureMtx);
-    List<StrategyInitResult> result;
-    for (auto& kv : _failedStrategies) {
+    List<StrategyStatus> result;
+    for (auto& kv : _strategyStatusMap) {
+        if (kv.second._state != StrategyState::Failed) continue;
         auto item = kv.second;
         item._name = kv.first;
         result.push_back(std::move(item));
@@ -576,8 +600,8 @@ List<StrategyInitResult> StrategySubSystem::GetFailedStrategies() const {
 
 std::optional<String> StrategySubSystem::GetStrategyFailureReason(const String& name) const {
     std::lock_guard<std::mutex> lock(_failureMtx);
-    auto it = _failedStrategies.find(name);
-    if (it == _failedStrategies.end()) {
+    auto it = _strategyStatusMap.find(name);
+    if (it == _strategyStatusMap.end()) {
         return std::nullopt;
     }
     return std::optional<String>(it->second._errorMessage);
@@ -585,7 +609,13 @@ std::optional<String> StrategySubSystem::GetStrategyFailureReason(const String& 
 
 void StrategySubSystem::ClearStrategyFailure(const String& name) {
     std::lock_guard<std::mutex> lock(_failureMtx);
-    _failedStrategies.erase(name);
+    _strategyStatusMap.erase(name);
+}
+
+bool StrategySubSystem::IsStrategyStopped(const String& name) const {
+    std::lock_guard<std::mutex> lock(_failureMtx);
+    auto it = _strategyStatusMap.find(name);
+    return it != _strategyStatusMap.end() && it->second._state == StrategyState::Stopped;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -598,7 +628,15 @@ void StrategySubSystem::EnsureDailyReady() {
     String today = ToString(Now(), "%Y-%m-%d");
     if (today != _lastDailyDate) {
         _dailyReadySymbols.clear();
-        _dailyExecutedStrategies.clear();
+        // 重置所有策略的 Executed 状态（跨天）
+        {
+            std::lock_guard<std::mutex> statusLock(_failureMtx);
+            for (auto& [name, status] : _strategyStatusMap) {
+                if (status._state == StrategyState::Executed) {
+                    status._state = StrategyState::Active;
+                }
+            }
+        }
         _dailyErrors.clear();
         _lastDailyDate = today;
         _dailyInitialized = true;
@@ -615,15 +653,20 @@ void StrategySubSystem::EnsureDailyReady() {
     for (auto& name : _strategies) {
         if (_dailyStrategySymbols.count(name)) continue;  // 已注册
         if (!_agentSystem->HasManualExecuteNode(name)) continue;
+        // 跳过已停止的策略
+        if (IsStrategyStopped(name)) {
+            INFO("[DailyExecution] Skipping stopped strategy '{}'", name);
+            continue;
+        }
         auto pools = GetPools(name);
-        Set<String> symbols;
+        Set<symbol_t> symbols;
         for (auto sym : pools) {
-            symbols.insert(get_symbol(sym));
+            symbols.insert(sym);
         }
         if (!symbols.empty()) {
             _dailyStrategySymbols[name] = symbols;
             String symList;
-            for (auto& s : symbols) { if (!symList.empty()) symList += ","; symList += s; }
+            for (auto& s : symbols) { if (!symList.empty()) symList += ","; symList += get_symbol(s); }
             INFO("[DailyExecution] Registered strategy '{}': [{}]", name, symList);
             toSubscribe.emplace_back(name, pools);
         }
@@ -655,10 +698,12 @@ void StrategySubSystem::InitDailyExecution() {
     // 从所有已加载策略中提取依赖标的（只注册日终策略，含 Manual ExecuteNode）
     for (auto& name : _strategies) {
         if (!_agentSystem->HasManualExecuteNode(name)) continue;
+        // 跳过已停止的策略
+        if (IsStrategyStopped(name)) continue;
         auto pools = GetPools(name);
-        Set<String> symbols;
+        Set<symbol_t> symbols;
         for (auto sym : pools) {
-            symbols.insert(get_symbol(sym));
+            symbols.insert(sym);
         }
         if (!symbols.empty()) {
             _dailyStrategySymbols[name] = symbols;
@@ -671,7 +716,7 @@ void StrategySubSystem::InitDailyExecution() {
         String symList;
         for (auto& s : symbols) {
             if (!symList.empty()) symList += ",";
-            symList += s;
+            symList += get_symbol(s);
         }
         INFO("[DailyExecution]   {} → [{}]", strategy, symList);
     }
@@ -680,49 +725,65 @@ void StrategySubSystem::InitDailyExecution() {
 void StrategySubSystem::ResetDaily() {
     std::lock_guard<std::mutex> lock(_dailyMtx);
     _dailyReadySymbols.clear();
-    _dailyExecutedStrategies.clear();
+    // 重置所有策略的 Executed 状态
+    {
+        std::lock_guard<std::mutex> statusLock(_failureMtx);
+        for (auto& [name, status] : _strategyStatusMap) {
+            if (status._state == StrategyState::Executed) {
+                status._state = StrategyState::Active;
+            }
+        }
+    }
     _dailyErrors.clear();
     INFO("[DailyExecution] Reset daily state");
 }
 
-void StrategySubSystem::MarkSymbolReady(const String& symbol, const String& simDate) {
+void StrategySubSystem::MarkSymbolReady(const symbol_t& symbol, const String& simDate) {
     std::unique_lock<std::mutex> lock(_dailyMtx);
 
     if (!_dailyInitialized) {
-        WARN("[DailyExecution] MarkSymbolReady: not initialized, ignoring {}", symbol);
+        WARN("[DailyExecution] MarkSymbolReady: not initialized, ignoring {}", get_symbol(symbol));
         return;
     }
 
     _dailyReadySymbols.insert(symbol);
-    // INFO("[DailyExecution] Symbol ready: {} ({}/{} ready symbols)",
-    //      symbol, _dailyReadySymbols.size(), _dailyStrategySymbols.size());
-
-    // 诊断：打印所有已注册策略及其 symbol 列表
-    // for (auto& [strat, syms] : _dailyStrategySymbols) {
-    //     String symList;
-    //     for (auto& s : syms) { if (!symList.empty()) symList += ","; symList += s; }
-    //     bool executed = _dailyExecutedStrategies.count(strat) > 0;
-    //     INFO("[DailyExecution]   registered strategy '{}': symbols=[{}], already_executed={}", strat, symList, executed);
-    // }
 
     Vector<std::pair<String, String>> strategiesToRun;
 
     // 检查是否有策略的所有依赖已就绪
     for (auto& [strategy, symbols] : _dailyStrategySymbols) {
-        if (_dailyExecutedStrategies.count(strategy)) continue;
+        // 检查策略状态：跳过已执行或已停止的策略
+        {
+            std::lock_guard<std::mutex> statusLock(_failureMtx);
+            auto it = _strategyStatusMap.find(strategy);
+            if (it != _strategyStatusMap.end()) {
+                if (it->second._state == StrategyState::Executed || it->second._state == StrategyState::Stopped) continue;
+            }
+        }
 
         bool allReady = true;
         for (auto& sym : symbols) {
             if (!_dailyReadySymbols.count(sym)) {
                 allReady = false;
-                INFO("[DailyExecution]   strategy '{}': symbol '{}' not ready yet", strategy, sym);
+                INFO("[DailyExecution]   strategy '{}': symbol '{}' not ready yet", strategy, get_symbol(sym));
                 break;
             }
         }
 
         if (allReady) {
             INFO("[DailyExecution] All symbols ready for strategy '{}', executing", strategy);
-            _dailyExecutedStrategies.insert(strategy);
+            // 标记为已执行
+            {
+                std::lock_guard<std::mutex> statusLock(_failureMtx);
+                auto it = _strategyStatusMap.find(strategy);
+                if (it != _strategyStatusMap.end()) {
+                    it->second._state = StrategyState::Executed;
+                } else {
+                    StrategyStatus status;
+                    status._state = StrategyState::Executed;
+                    _strategyStatusMap[strategy] = status;
+                }
+            }
 
             // 收集需要执行的策略，在锁外异步启动（StartDaily 是重量级同步操作）
             strategiesToRun.push_back({strategy, simDate});
@@ -773,13 +834,24 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
             // 若注册确由本次执行的临时上下文建立，BacktestContext 析构时会自动归还。
 
             // 收集错误 + 检查是否全部完成，统一发送通知
-            std::lock_guard<std::mutex> lock(_dailyMtx);
+            std::lock_guard<std::mutex> dailyLock(_dailyMtx);
             if (set._status == DecisionStatus::Error) {
                 String errMsg = strategy + ": " + set._error;
                 _dailyErrors.push_back(errMsg);
             }
 
-            if (_dailyExecutedStrategies.size() >= _dailyStrategySymbols.size() && !_dailyErrors.empty()) {
+            // 统计已执行的策略数量
+            size_t executedCount = 0;
+            {
+                std::lock_guard<std::mutex> statusLock(_failureMtx);
+                for (auto& [name, s] : _strategyStatusMap) {
+                    if (s._state == StrategyState::Executed) {
+                        executedCount++;
+                    }
+                }
+            }
+
+            if (executedCount >= _dailyStrategySymbols.size() && !_dailyErrors.empty()) {
                 String body = "[日终策略执行异常]\n\n";
                 for (auto& e : _dailyErrors) {
                     body += "  - " + e + "\n";
@@ -797,10 +869,29 @@ void StrategySubSystem::ForceExecuteAllDaily() {
     if (!_dailyInitialized) return;
 
     for (auto& [strategy, symbols] : _dailyStrategySymbols) {
-        if (_dailyExecutedStrategies.count(strategy)) continue;
+        // 检查策略状态：跳过已执行或已停止的策略
+        {
+            std::lock_guard<std::mutex> statusLock(_failureMtx);
+            auto it = _strategyStatusMap.find(strategy);
+            if (it != _strategyStatusMap.end()) {
+                if (it->second._state == StrategyState::Executed) continue;
+                if (it->second._state == StrategyState::Stopped) continue;
+            }
+        }
 
         WARN("[DailyExecution] Force executing strategy '{}' (not all symbols ready)", strategy);
-        _dailyExecutedStrategies.insert(strategy);
+        // 标记为已执行
+        {
+            std::lock_guard<std::mutex> statusLock(_failureMtx);
+            auto it = _strategyStatusMap.find(strategy);
+            if (it != _strategyStatusMap.end()) {
+                it->second._state = StrategyState::Executed;
+            } else {
+                StrategyStatus status;
+                status._state = StrategyState::Executed;
+                _strategyStatusMap[strategy] = status;
+            }
+        }
 
         // StartDaily 内部异步执行
         ExecuteDailyStrategy(strategy);
@@ -817,19 +908,34 @@ nlohmann::json StrategySubSystem::GetDailyStatus() const {
     status["pending_strategies"] = nlohmann::json::array();
 
     for (auto& sym : _dailyReadySymbols) {
-        status["ready_symbols"].push_back(sym);
+        status["ready_symbols"].push_back(get_symbol(sym));
     }
-    for (auto& s : _dailyExecutedStrategies) {
-        status["executed_strategies"].push_back(s);
+    // 从 _strategyStatusMap 获取已执行的策略
+    {
+        std::lock_guard<std::mutex> statusLock(_failureMtx);
+        for (auto& [name, s] : _strategyStatusMap) {
+            if (s._state == StrategyState::Executed) {
+                status["executed_strategies"].push_back(name);
+            }
+        }
     }
     for (auto& [strategy, symbols] : _dailyStrategySymbols) {
-        if (!_dailyExecutedStrategies.count(strategy)) {
+        // 检查是否已执行
+        bool executed = false;
+        {
+            std::lock_guard<std::mutex> statusLock(_failureMtx);
+            auto it = _strategyStatusMap.find(strategy);
+            if (it != _strategyStatusMap.end() && it->second._state == StrategyState::Executed) {
+                executed = true;
+            }
+        }
+        if (!executed) {
             nlohmann::json pending;
             pending["strategy"] = strategy;
             pending["required_symbols"] = nlohmann::json::array();
             pending["ready_count"] = 0;
             for (auto& sym : symbols) {
-                pending["required_symbols"].push_back(sym);
+                pending["required_symbols"].push_back(get_symbol(sym));
                 if (_dailyReadySymbols.count(sym)) {
                     pending["ready_count"] = pending["ready_count"].get<int>() + 1;
                 }

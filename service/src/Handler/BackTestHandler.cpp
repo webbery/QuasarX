@@ -455,7 +455,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         strategySys->DeleteStrategy(strategyName);
     }
 
-    StrategyInitResult initResult;
+    StrategyStatus initResult;
     try {
         initResult = strategySys->InitStrategy(strategyName, script);
     } catch (const std::exception& e) {

@@ -21,20 +21,32 @@ enum class StrategyType: char;
 enum class StatisticIndicator: char;
 
 /**
- * @brief 策略初始化结果（替代抛出异常）
+ * @brief 策略运行状态
+ */
+enum class StrategyState : char {
+    Active,    // 正常运行中（日终策略由日终管线驱动）
+    Stopped,   // 用户主动停止
+    Failed,    // 初始化/加载失败
+    Executed,  // 日终策略当日已执行
+};
+
+/**
+ * @brief 策略状态（替代抛出异常）
  *
  * 失败时不抛异常，避免单个策略加载失败导致服务崩溃。
  * 调用方根据 _success 判断；失败时 _errorMessage 可直接透传给前端。
+ * 同时记录策略运行状态（停止/失败/已执行等），合并原 _failedStrategies 与 _dailyExecutedStrategies。
  */
-struct StrategyInitResult {
+struct StrategyStatus {
     bool _success = false;
     String _errorMessage;     // 用户可读错误
     String _failedNodeLabel;  // 失败节点 label（如 "CTA_v16"）
     String _failedNodeType;   // 失败节点类型（如 "xgboost"）
     uint32_t _failedNodeId = 0;  // 失败节点 ID（0 表示无具体失败节点，如 JSON 解析失败）
     String _name;             // 策略名（失败时由存储方填入）
+    StrategyState _state = StrategyState::Active;
 
-    static StrategyInitResult ok() { return StrategyInitResult{true, "", "", "", 0, ""}; }
+    static StrategyStatus ok() { return StrategyStatus{true, "", "", "", 0, "", StrategyState::Active}; }
 };
 
 /**
@@ -49,7 +61,7 @@ public:
     ~StrategySubSystem();
 
     void Init();
-    StrategyInitResult InitStrategy(const String& strategy, const nlohmann::json& script);
+    StrategyStatus InitStrategy(const String& strategy, const nlohmann::json& script);
     void InitStrategy(const String& strategy, const List<QNode*>& flow);
 
     void Release();
@@ -131,9 +143,9 @@ public:
      * 内部检查：是否有策略的所有依赖已就绪
      * 如果有，异步执行该策略（不阻塞调用线程）
      * 
-     * @param symbol 标的代码（如 "sz.000001"）
+     * @param symbol 标的代码（symbol_t 类型）
      */
-    void MarkSymbolReady(const String& symbol, const String& simDate = "");
+    void MarkSymbolReady(const symbol_t& symbol, const String& simDate = "");
 
     /**
      * @brief 强制执行所有未执行的策略（超时兜底）
@@ -150,7 +162,7 @@ public:
     /**
      * @brief 获取所有加载失败的策略及其原因（供 /strategy/list 暴露给前端）
      */
-    List<StrategyInitResult> GetFailedStrategies() const;
+    List<StrategyStatus> GetFailedStrategies() const;
 
     /**
      * @brief 获取指定策略的失败原因
@@ -161,6 +173,11 @@ public:
      * @brief 清除指定策略的失败记录（重试成功后调用）
      */
     void ClearStrategyFailure(const String& name);
+
+    /**
+     * @brief 检查策略是否被用户主动停止
+     */
+    bool IsStrategyStopped(const String& name) const;
 
 private:
     // 执行单个日级策略并保存决策
@@ -181,17 +198,16 @@ private:
     // 策略预热期配置（strategy -> warmup epochs）
     Map<String, int> _strategyWarmupEpochs;
 
-    // 策略加载失败记录（name → 失败原因）
+    // 策略状态记录（name → 状态）
     mutable std::mutex _failureMtx;
-    Map<String, StrategyInitResult> _failedStrategies;
+    Map<String, StrategyStatus> _strategyStatusMap;
 
     // ── 日级执行状态 ──
-    Map<String, Set<String>> _dailyStrategySymbols;  // 策略→依赖标的
-    Set<String> _dailyReadySymbols;                   // 已就绪标的
-    Set<String> _dailyExecutedStrategies;             // 已执行策略
-    Vector<String> _dailyErrors;                      // 日终执行失败信息
+    Map<String, Set<symbol_t>> _dailyStrategySymbols;  // 策略→依赖标的
+    Set<symbol_t> _dailyReadySymbols;                   // 已就绪标的
+    Vector<String> _dailyErrors;                        // 日终执行失败信息
     bool _dailyInitialized = false;
-    String _lastDailyDate;                          // 上次初始化日期，用于跨天重置
+    String _lastDailyDate;                              // 上次初始化日期，用于跨天重置
     mutable std::mutex _dailyMtx;
 
     // ── 日终持仓追踪（策略名 → (symbol → 当前持仓股数)） ──
