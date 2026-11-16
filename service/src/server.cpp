@@ -87,7 +87,7 @@
 #include "Handler/ShiborHandler.h"
 #include "Handler/MacroHandler.h"
 #include "Handler/HMMHandler.h"
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
 #include "Handler/SimulateBarHandler.h"
 #endif
 #include "StrategySubSystem.h"
