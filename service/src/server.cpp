@@ -218,7 +218,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_CUSUM           "/analysis/cusum"
 #define API_SIGNAL          "/analysis/signal"
 #define API_NONLINEAR       "/analysis/nonlinear"
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
 #define API_SIMULATE_BAR    "/strategy/simulate/bar"
 #endif
 #define API_PCA             "/analysis/pca"
