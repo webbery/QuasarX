@@ -175,6 +175,9 @@ def _push_bar(auth_token, bar, timeout=120):
     )
     assert resp.status_code == 200, (
         f"推送 bar 失败: HTTP {resp.status_code} {resp.text[:300]}"
+        + ("（HTTP 404 = 路由未注册：该端点仅在 Debug 构建或 "
+           "-DENABLE_SIMULATE_BAR=ON 的构建中可用）"
+           if resp.status_code == 404 else "")
     )
     body = resp.json()
     assert body.get("status") == "ok", f"推送 bar 未成功: {body}"

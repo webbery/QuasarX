@@ -3,6 +3,11 @@ project(QuantService)
 
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 
+# 注册 POST /v0/strategy/simulate/bar（仿真 bar 注入端点）。
+# 默认关闭：Debug 构建天然可用（_DEBUG）；Release 构建需要显式开启，
+# 例如 CI 的 AVX2 构建：cmake -DENABLE_SIMULATE_BAR=ON
+option(ENABLE_SIMULATE_BAR "Register POST /v0/strategy/simulate/bar route" OFF)
+
 set(CMAKE_CXX_STANDARD 23)
 # add_compile_definitions(USE_PMR)
 
@@ -147,6 +152,11 @@ add_compile_options(-g1 -fno-omit-frame-pointer)
 # rpath 在 add_executable 之后通过 set_target_properties 设置 ($ORIGIN)
 endif()
 add_compile_definitions(JWT_DISABLE_PICOJSON)
+
+if(ENABLE_SIMULATE_BAR)
+    add_compile_definitions(ENABLE_SIMULATE_BAR)
+    message(STATUS "ENABLE_SIMULATE_BAR: ON — /v0/strategy/simulate/bar will be registered")
+endif()
 
 set(OPENSSL_ROOT_DIR "/usr/local/openssl") 
 set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT_DIR}/include")

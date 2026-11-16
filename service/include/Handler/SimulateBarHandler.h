@@ -1,12 +1,12 @@
 #pragma once
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
 #include <mutex>
 #include "HttpHandler.h"
 
 class Server;
 
 /**
- * 模拟 Bar 注入 Handler（仅 Debug 构建生效）
+ * 模拟 Bar 注入 Handler（Debug 构建或 ENABLE_SIMULATE_BAR=ON 时生效）
  *
  * POST /v0/strategy/simulate/bar
  * Body: {

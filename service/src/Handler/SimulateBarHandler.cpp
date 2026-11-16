@@ -1,4 +1,4 @@
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
 
 #include "Handler/SimulateBarHandler.h"
 #include "server.h"
@@ -126,4 +126,4 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
     }
 }
 
-#endif // _DEBUG
+#endif // _DEBUG || ENABLE_SIMULATE_BAR

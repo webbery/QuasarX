@@ -397,7 +397,7 @@ void Server::Regist() {
     REGIST_GET(API_STOCK_HISTORY);
     REGIST_GET(API_TRADE_HISTORY);
 
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
     REGIST_POST(API_SIMULATE_BAR);
 #endif
 
@@ -1892,7 +1892,7 @@ void Server::InitHandlers() {
     RegistHandler(API_HMM, HMMHandler);
     RegistHandler(API_STABILITY, StabilityHandler);
 
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
     RegistHandler(API_SIMULATE_BAR, SimulateBarHandler);
 #endif
 

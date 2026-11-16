@@ -290,10 +290,14 @@ jobs:
           git checkout 12.0.0
 
       # ── 构建 AVX2 版本（用于 CI 测试 + 发布）──
+      # ENABLE_SIMULATE_BAR=ON：注册 POST /v0/strategy/simulate/bar。
+      # CI 集成测试（test_decision.py / test_multi_strategy.py）依赖该端点驱动日终管线，
+      # Release 下不开启会导致路由缺失 → HTTP 404。
       - name: Build AVX2
         run: |
           mkdir -p service/build_avx2 && cd service/build_avx2
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON -DSIMD_LEVEL=AVX2
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON \
+                    -DSIMD_LEVEL=AVX2 -DENABLE_SIMULATE_BAR=ON
           cmake --build . --config Release -j$(nproc)
 
       # ── 构建 AVX-512 版本（仅用于发布）──
@@ -748,13 +752,11 @@ jobs:
           python testcases/node_test_data/generate_portfolio_data.py
           python testcases/ai_test_data/generate_xgb_trivial.py
 
-          # 说明：当前 CI 构建为 Release 模式（cmake -DCMAKE_BUILD_TYPE=Release），
-          # `_DEBUG` 宏未定义 → `/strategy/simulate/bar` 路由和 SimulateBarHandler 未注册。
-          # test_decision.py 中调用 simulate_bar() 的用例在 Release 下会被 pytest.skip
-          # （simulate_bar 工具函数返回 {"status": "error", "error": "HTTP 404: ..."}，
-          #  调用方的 skip 判断会触发），这是预期行为。
-          # 若需在 CI 验证 ManualTiming 决策 / 日终绩效指标，需改用 Debug 构建或为
-          # test_decision.py 注入测试数据（绕过 simulate/bar 端点）。
+          # 说明：CI 使用的 AVX2 构建已带 -DENABLE_SIMULATE_BAR=ON，
+          # `/strategy/simulate/bar` 路由和 SimulateBarHandler 均已注册，
+          # test_decision.py / test_multi_strategy.py 的 simulate_bar 用例会真正执行
+          # （ManualTiming 决策、日终绩效指标、并发决策一致性都能在 CI 里验证）。
+          # 仅 AVX512（仅发布、不跑测试）保持默认关闭。
           # 运行测试（--maxfail=1 让 pytest 在首个失败时停止，节省 CI 时间）
           python run_tests.py --mode stock_hist_sim --no-service --maxfail 1
           TEST_EXIT_CODE=$?
