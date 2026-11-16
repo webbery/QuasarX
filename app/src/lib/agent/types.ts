@@ -22,6 +22,16 @@ export interface AgentEvent {
   payload?: ArtifactEnvelope;
 }
 
+/** Token 用量（单次 LLM 调用或累计） */
+export interface AgentTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+/** Token 用量上报回调：每次 LLM 调用后上报增量 */
+export type UsageReporter = (usage: AgentTokenUsage) => void;
+
 /** LangGraph State */
 export const GraphState = Annotation.Root({
   /** 对话消息历史（包含用户输入和 Agent 回复） */
@@ -93,6 +103,7 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   chat: [
     "knowledge", "webSearch", "datetime", "platform", "calculator", "skill",
     "account", "order_query",
+    "ask_strategy",
   ],
   strategy: [
     "strategy", "backtest", "quote", "calculator", "skill",
@@ -128,7 +139,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   
   可用的专业 Agent：
   - **chat**: 一般性问答、知识检索、网络搜索、日期时间、平台信息、计算
-  - **strategy**: 策略创建、策略优化、回测执行、技术指标分析
+  - **strategy**: 策略创建、策略优化、回测执行、技术指标分析、策略查询（本地缓存/历史版本/参数结构/远程 service 策略）
   - **risk**: 风控分析、账户风险、持仓风险、突变检测
   - **portfolio**: 投资组合管理、组合收益分析、资产配置建议
   - **analysis**: 数据深度分析（EMD 分解、波动率/ACF、协整/Granger、CUSUM、PCA、期权定价、协方差诊断）
@@ -137,7 +148,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 如果任务已完成 → respond
   - 如果当前已有 Agent 在处理且用户意图仍在同一领域 → 继续分发给同一 Agent
   - 风控相关、账户风险、持仓风险、止损建议 → risk
-  - 创建策略、修改策略、回测策略、分析策略表现 → strategy
+  - 策略相关（创建、修改、回测、分析策略表现，以及查询策略列表、策略参数、历史版本、远程 service 策略）→ strategy
   - 投资组合、资产配置、组合收益 → portfolio
   - 深度数据分析、信号分解、波动率/协整/Granger、变点检测、期权定价 → analysis
   - 普通聊天、知识问答、搜索 → chat
@@ -176,6 +187,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 若问题明显偏离量化交易核心领域（如闲聊、一般生活问题），直接说明不在服务范围内，简短即可
   - 若问题与量化相关但超出当前能力边界（如需要实时市场数据、特定非主流平台API），说明限制原因并建议替代方案
   - 若问题本身模糊或无法确定边界，可先尝试找到与量化的关联点，再判断是否需要转向越界说明
+  - 若问题属于策略查询（当前有哪些策略、策略参数、历史版本、远程 service 上的策略），用 \`ask_strategy\` 转交 Strategy Agent 处理，不要自己猜
   - 越界回复保持简短、不重复、不说教，不要长篇解释为什么不能答`,
 
   strategy: `你是一个专业的量化策略专家，负责策略创建、优化和回测分析。
@@ -192,6 +204,20 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 计算技术指标
   - 请求风控 Agent 评估策略风险（必须提供：策略代码或者策略图、风控指标列表）
   - 请求投资组合 Agent 分析策略表现（必须提供：策略代码或者策略图、回测结果、持仓明细）
+
+  **策略查询能力**（用户问"有哪些策略""策略参数是什么""历史版本""service 上跑了哪些策略"时用这些）：
+
+  - \`strategy(action="list_strategies")\` —— 列出本地缓存中已保存的策略（含版本数与最近保存时间）
+  - \`strategy(action="list_strategy_versions", keyword=策略id)\` —— 列出历史版本；省略 keyword 则列出全部策略的历史版本
+  - \`strategy(action="get_strategy_params", keyword=策略id)\` —— 查询策略图的节点内容、每个节点的配置参数、节点之间的连接关系；
+    加 \`versionId\` 可查指定历史版本，默认取最新版本
+  - \`strategy(action="get_strategy", keyword=策略id)\` —— 获取策略图原始 JSON（需要精确结构时用）
+  - \`strategy(action="query_remote_strategies")\` —— 查询远程 service 上已部署的策略、运行状态、资金占用与初始化失败的策略；
+    加 \`includePools=true\` 附带每条策略的标的池
+
+  查询类请求**先查后答**：必须先调用对应 tool 拿到真实数据，再基于返回内容回答。
+  禁止凭印象列出策略名或参数——本地缓存和远程 service 是两套独立数据源，
+  回答时要说清哪些来自本地缓存、哪些来自远程 service。
   
   在创建或修改策略时，必须先请求风控 Agent 评估风险，评估通过后方可执行回测。
   - 若风控 Agent 反馈风险等级为【高】，立即停止迭代并输出警告

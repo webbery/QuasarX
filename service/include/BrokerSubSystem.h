@@ -239,8 +239,15 @@ public:
     int AddDecision(const String& strategy, symbol_t symbol, DecisionAction action,
                     int64_t quantity, double price, int epoch,
                     const String& asOf = "");
-    // 查询当日决策列表（date 格式 "YYYY-MM-DD"）
+    // 查询指定归属日的决策列表（date 格式 "YYYY-MM-DD"）
     Vector<DecisionRecord> GetDecisions(const String& date);
+    // 查询最新归属日的一批决策（不指定日期时的默认口径）。
+    // 决策按归属日（被回放的交易日）落库，与墙钟日期差一天是常态，
+    // 按"今天"查会把上一交易日的待下单决策整批漏掉。
+    // outDate 可选：回填实际使用的归属日（"YYYY-MM-DD"）。
+    Vector<DecisionRecord> GetLatestDecisions(String* outDate = nullptr);
+    // 把进程内已执行/已确认的状态合并进 DuckDB 查询结果
+    Vector<DecisionRecord> MergeDecisionState(Vector<DecisionRecord> records);
     // 标记决策已执行
     bool MarkDecisionExecuted(int id, int64_t exec_qty, double exec_price);
     // 标记决策已确认（关闭，不执行）

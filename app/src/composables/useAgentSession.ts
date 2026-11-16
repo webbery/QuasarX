@@ -16,7 +16,7 @@ import { computed, ref } from 'vue'
 import { AIMessage, HumanMessage } from '@langchain/core/messages'
 import { useChatStore, type ChatMessage } from '@/stores/chatStore'
 import { runSupervisorGraph } from '@/lib/agent'
-import type { AgentEvent, AgentType } from '@/lib/agent/types'
+import type { AgentEvent, AgentType, UsageReporter } from '@/lib/agent/types'
 
 export interface RunTurnOptions {
   /** 本轮对应的 user 消息 id（用于切片历史，避免 userInput 与历史重复） */
@@ -100,6 +100,15 @@ export function useAgentSession() {
     tokenUsage.value = undefined
     currentAgent.value = 'supervisor'
 
+    const onUsage: UsageReporter = (u) => {
+      const cur = tokenUsage.value
+      tokenUsage.value = {
+        promptTokens: (cur?.promptTokens ?? 0) + u.promptTokens,
+        completionTokens: (cur?.completionTokens ?? 0) + u.completionTokens,
+        totalTokens: (cur?.totalTokens ?? 0) + u.totalTokens,
+      }
+    }
+
     const onEvent = (evt: AgentEvent) => {
       events.value.push(evt)
 
@@ -132,6 +141,7 @@ export function useAgentSession() {
         undefined, // 历史走手动注入，不用 checkpoint 恢复
         onEvent,
         history,
+        onUsage,
       )
 
       const finalAnswer = extractFinalAnswer(result) || 'Agent 未返回回复'

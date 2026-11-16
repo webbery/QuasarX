@@ -523,22 +523,18 @@ void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& re
 
 void DecisionHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto date = req.get_param_value("date");
-    if (date.empty()) {
-        // 默认当日
-        time_t now = time(nullptr);
-        struct tm tm_val;
-#ifdef _WIN32
-        localtime_s(&tm_val, &now);
-#else
-        localtime_r(&now, &tm_val);
-#endif
-        char buf[16];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
-        date = buf;
-    }
-
     auto* broker = _server->GetBrokerSubSystem();
-    auto decisions = broker->GetDecisions(date);
+
+    Vector<DecisionRecord> decisions;
+    String attributionDate = date;
+    if (date.empty()) {
+        // 不带日期 → 返回最新归属日的一批决策。
+        // 决策按归属日（被回放的交易日）落库，与墙钟日期差一天是常态，
+        // 按"今天"查会把上一交易日的待下单决策整批漏掉，操作员点不到单。
+        decisions = broker->GetLatestDecisions(&attributionDate);
+    } else {
+        decisions = broker->GetDecisions(date);
+    }
 
     nlohmann::json result = nlohmann::json::array();
     for (const auto& rec : decisions) {
@@ -552,6 +548,7 @@ void DecisionHandler::get(const httplib::Request& req, httplib::Response& res) {
         item["price"] = rec._price;
         item["epoch"] = rec._epoch;
         item["timestamp"] = rec._timestamp;
+        item["date"] = attributionDate;
         item["executed"] = rec._executed;
         item["executedQuantity"] = rec._executed_quantity;
         item["executedPrice"] = rec._executed_price;

@@ -33,6 +33,8 @@ export interface DecisionItem {
   price: number
   epoch: number
   timestamp: number
+  /** 归属日 "YYYY-MM-DD"：这批决策对应的交易日（旧版后端不返回） */
+  date?: string
   executed: boolean
   executedQuantity: number
   executedPrice: number
@@ -42,6 +44,8 @@ export interface DecisionItem {
 export function useDecision() {
   const decisions = ref<DecisionItem[]>([])
   const selectedId = ref<number | null>(null)
+  /** 当前决策批次的归属日（后端回传，"YYYY-MM-DD"） */
+  const decisionDate = ref<string>('')
 
   const selectedDecision = computed(() =>
     decisions.value.find(d => d.id === selectedId.value) ?? null
@@ -51,19 +55,18 @@ export function useDecision() {
     decisions.value.filter(d => !d.executed && !d.closed)
   )
 
-  const formatDate = (date: Date): string => {
-    const y = date.getFullYear()
-    const m = String(date.getMonth() + 1).padStart(2, '0')
-    const d = String(date.getDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-
-  const fetchDecisions = async () => {
+  /**
+   * 拉取决策列表。
+   * 不传 date → 后端返回最新归属日的一批决策。日终决策按归属日（被回放的交易日）
+   * 落库，与今天差一天是常态，固定查今天会把上一交易日的待下单决策整批漏掉。
+   * 传 date → 查指定归属日（历史查询用）。
+   */
+  const fetchDecisions = async (date?: string) => {
     try {
-      const res = await axios.get('/v0/trade/decisions', {
-        params: { date: formatDate(new Date()) }
-      })
-      decisions.value = res.data
+      const res = await axios.get('/v0/trade/decisions', date ? { params: { date } } : {})
+      const list: DecisionItem[] = Array.isArray(res.data) ? res.data : []
+      decisions.value = list
+      decisionDate.value = list[0]?.date ?? ''
     } catch (error) {
       console.error('[Decision] fetch failed:', error)
     }
@@ -112,6 +115,10 @@ export function useDecision() {
   const onManualDecision = (messageData: any) => {
     try {
       const payload = JSON.parse(messageData.payload || messageData.data)
+      // SSE 带的是归属日（as_of），与 REST 返回的 date 同一口径
+      if (payload.as_of) {
+        decisionDate.value = payload.as_of
+      }
       if (payload.decisions && Array.isArray(payload.decisions)) {
         for (const d of payload.decisions) {
           const exists = decisions.value.find(item => item.id === d.id)
@@ -126,6 +133,7 @@ export function useDecision() {
               price: d.price,
               epoch: d.epoch,
               timestamp: Math.floor(Date.now() / 1000),
+              date: payload.as_of || undefined,
               executed: false,
               executedQuantity: 0,
               executedPrice: 0,
@@ -152,6 +160,7 @@ export function useDecision() {
     selectedId,
     selectedDecision,
     pendingDecisions,
+    decisionDate,
     fetchDecisions,
     executeDecision,
     closeDecision,

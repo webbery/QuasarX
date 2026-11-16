@@ -17,9 +17,9 @@ import { tool } from "@langchain/core/tools";
 /** ask_chat: 请求 Chat Agent 进行通用问答 */
 export const askChatTool = tool(
   async (input: { query: string }) => {
-    // 这个 Tool 在 LangGraph 图中会被 Supervisor 拦截并路由到 Chat Agent
-    // 返回值只是一个 fallback，实际不会直接调用到这里
-    return `[Chat Agent 回复]: ${input.query}`;
+    // 这个 Tool 在 LangGraph 图中会被 Supervisor 拦截并路由到 Chat Agent，
+    // 目标 Agent 的回复不会作为本 Tool 的返回值出现，这里只回一个转交标记。
+    return `已转交 Chat Agent 处理：${input.query}`;
   },
   {
     name: "ask_chat",
@@ -33,11 +33,11 @@ export const askChatTool = tool(
 /** ask_strategy: 请求 Strategy Agent 处理策略相关任务 */
 export const askStrategyTool = tool(
   async (input: { query: string }) => {
-    return `[Strategy Agent 回复]: ${input.query}`;
+    return `已转交 Strategy Agent 处理：${input.query}`;
   },
   {
     name: "ask_strategy",
-    description: "请求 Strategy Agent 处理策略创建、优化、回测等任务。当需要创建策略、执行回测或分析策略表现时使用此工具。",
+    description: "请求 Strategy Agent 处理策略相关任务。当需要创建策略、执行回测、分析策略表现，或查询策略列表、策略参数、历史版本、远程 service 策略时使用此工具。",
     schema: z.object({
       query: z.string().describe("要问 Strategy Agent 的问题"),
     }),
@@ -47,7 +47,7 @@ export const askStrategyTool = tool(
 /** ask_risk: 请求 Risk Agent 进行风控分析 */
 export const askRiskTool = tool(
   async (input: { query: string }) => {
-    return `[Risk Agent 回复]: ${input.query}`;
+    return `已转交 Risk Agent 处理：${input.query}`;
   },
   {
     name: "ask_risk",
@@ -61,7 +61,7 @@ export const askRiskTool = tool(
 /** ask_portfolio: 请求 Portfolio Agent 分析投资组合 */
 export const askPortfolioTool = tool(
   async (input: { query: string }) => {
-    return `[Portfolio Agent 回复]: ${input.query}`;
+    return `已转交 Portfolio Agent 处理：${input.query}`;
   },
   {
     name: "ask_portfolio",

@@ -3,21 +3,7 @@
 
 import * as echarts from 'echarts'
 import { ref, shallowRef, onMounted, onUnmounted, type Ref, nextTick } from 'vue'
-
-// 暗色主题配置
-const DARK_THEME = {
-  backgroundColor: 'transparent',
-  textStyle: { color: '#e0e0e0' },
-  title: { textStyle: { color: '#e0e0e0' } },
-  line: {
-    itemStyle: { borderWidth: 1 },
-    lineStyle: { width: 2 },
-    symbolSize: 4,
-    symbol: 'emptyCircle',
-    smooth: false
-  },
-  color: ['#2962ff', '#ff9800', '#00c853', '#ff6d00', '#a0aec0']
-}
+import { registerDarkTheme, DARK_THEME_NAME } from '@/lib/echartsTheme'
 
 export interface UseEChartsReturn {
   /** ECharts 实例 */
@@ -58,13 +44,9 @@ export function useECharts(autoInit = true): UseEChartsReturn {
     }
 
     // 注册暗色主题
-    try {
-      echarts.registerTheme('quasarx-dark', DARK_THEME)
-    } catch {
-      // 主题可能已注册，忽略错误
-    }
+    registerDarkTheme()
 
-    chart.value = echarts.init(chartRef.value, 'quasarx-dark')
+    chart.value = echarts.init(chartRef.value, DARK_THEME_NAME)
 
     // 监听容器大小变化
     resizeObserver = new ResizeObserver(() => {

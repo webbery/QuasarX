@@ -15,7 +15,7 @@ import { StateGraph } from "@langchain/langgraph";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { createLLM, getAgentConfig } from ".";
 
-import { GraphState, GraphStateType, AgentType, RouterDecision, AGENT_SYSTEM_PROMPTS } from "./types";
+import { GraphState, GraphStateType, AgentType, RouterDecision, AGENT_SYSTEM_PROMPTS, UsageReporter } from "./types";
 import { createAgentNode } from "./agents";
 import { internalTools, INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { AgentEvent } from "./types";
@@ -38,7 +38,7 @@ function createSupervisorLLM() {
  * Supervisor 路由决策 Node
  * 分析当前状态，决定下一步交给哪个 Agent，或直接回复
  */
-async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEvent) => void): Promise<Partial<GraphStateType>> {
+async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEvent) => void, onUsage?: UsageReporter): Promise<Partial<GraphStateType>> {
   const { messages, userInput, iterationCount, maxIterations, shouldEnd } = state;
 
   // ★ 调试日志：打印收到的 state
@@ -146,6 +146,15 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
       activeAgent: null,
       finalResponse: "",
     };
+  }
+
+  // 上报 Supervisor 本次 LLM 调用的 token 用量
+  const supervisorUsage = (response as any)?.usage_metadata;
+  if (supervisorUsage) {
+    const promptTokens = supervisorUsage.input_tokens ?? 0;
+    const completionTokens = supervisorUsage.output_tokens ?? 0;
+    const totalTokens = supervisorUsage.total_tokens ?? promptTokens + completionTokens;
+    if (totalTokens) onUsage?.({ promptTokens, completionTokens, totalTokens });
   }
 
   // 解析路由决策
@@ -285,6 +294,7 @@ function checkInternalToolRouting(state: GraphStateType): string {
 export function buildSupervisorGraph(
   emitEvent?: (event: AgentEvent) => void,
   checkpointer?: IndexedDBSaver,
+  onUsage?: UsageReporter,
 ) {
   const workflow = new StateGraph(GraphState);
 
@@ -292,36 +302,36 @@ export function buildSupervisorGraph(
 
   // Supervisor Node
   workflow.addNode("supervisor", async (state: GraphStateType) => {
-    return supervisorNode(state, emitEvent);
+    return supervisorNode(state, emitEvent, onUsage);
   });
 
   // Chat Agent Node
   workflow.addNode("chatAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("chat", emitEvent, internalTools);
+    const node = createAgentNode("chat", emitEvent, internalTools, onUsage);
     return node(state);
   });
 
   // Strategy Agent Node
   workflow.addNode("strategyAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("strategy", emitEvent, internalTools);
+    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage);
     return node(state);
   });
 
   // Risk Agent Node
   workflow.addNode("riskAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("risk", emitEvent, internalTools);
+    const node = createAgentNode("risk", emitEvent, internalTools, onUsage);
     return node(state);
   });
 
   // Portfolio Agent Node
   workflow.addNode("portfolioAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("portfolio", emitEvent, internalTools);
+    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage);
     return node(state);
   });
 
   // Analysis Agent Node
   workflow.addNode("analysisAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("analysis", emitEvent, internalTools);
+    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage);
     return node(state);
   });
 
@@ -418,8 +428,9 @@ export async function runSupervisorGraph(
   checkpointer?: IndexedDBSaver,
   emitEvent?: (event: AgentEvent) => void,
   historyMessages?: Array<HumanMessage | AIMessage>,
+  onUsage?: UsageReporter,
 ) {
-  const graph = buildSupervisorGraph(emitEvent, checkpointer);
+  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage);
 
   // 调试：尝试从 checkpoint 恢复历史
   if (checkpointer) {

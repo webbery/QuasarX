@@ -48,54 +48,76 @@
     />
     <AgentWorkflowTimeline v-show="pane === 'workflow'" />
 
-    <!-- 输入区 -->
+    <!-- 输入区：三列布局 —— 状态信息 | 输入框 | 占位（保持输入框居中） -->
     <div class="composer">
-      <div class="composer-inner">
-        <div v-if="forkParentId" class="fork-chip">
-          <i class="fas fa-code-branch"></i>
-          从「{{ forkPreview }}」继续，将创建新分支
-          <button type="button" class="chip-x" data-tooltip="取消分支" @click="forkParentId = null">
-            <i class="fas fa-xmark"></i>
-          </button>
-        </div>
-
-        <div class="input-wrap">
-          <textarea
-            ref="inputRef"
-            v-model="inputText"
-            class="agent-input"
-            :placeholder="placeholder"
-            rows="2"
-            @keydown.enter.exact.prevent="submit"
-          ></textarea>
-          <div class="row">
-            <span class="hint">Enter 发送 · Shift+Enter 换行</span>
-            <button
-              type="button"
-              class="send-btn"
-              :disabled="!canSend"
-              data-tooltip="发送"
-              @click="submit"
+      <div class="composer-grid">
+        <!-- 第一列：状态信息 -->
+        <div class="status-side">
+          <div class="status-line">
+            <span class="status-item">
+              <span class="dot" :class="{ busy: isLoading }"></span>{{ currentAgent }}
+            </span>
+            <span class="sep"></span>
+            <span class="status-item">{{ chatStore.messages.length }} 条消息</span>
+            <span class="sep"></span>
+            <span class="status-item">{{ artifactTotal }} 个产物</span>
+          </div>
+          <div v-if="tokenStats.totalTokens > 0" class="status-line">
+            <span
+              class="status-item"
+              :data-tooltip="`Prompt ${tokenStats.promptTokens} / Completion ${tokenStats.completionTokens} / Total ${tokenStats.totalTokens}`"
             >
-              <i class="fas fa-arrow-up"></i>
-            </button>
+              <i class="fas fa-coins"></i>
+              {{ formatTokens(tokenStats.totalTokens) }} tok
+            </span>
+            <span class="sep"></span>
+            <span class="status-item">入 {{ inputPct }} · 出 {{ outputPct }}</span>
+          </div>
+          <div v-if="branchNodes > 1 || lastError" class="status-line">
+            <span v-if="branchNodes > 1">{{ branchNodes }} 个分支点</span>
+            <span v-if="lastError" class="status-error" :data-tooltip="lastError">
+              <i class="fas fa-circle-exclamation"></i> 最近一次出错
+            </span>
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- 状态栏 -->
-    <div class="status-bar">
-      <span><span class="dot" :class="{ busy: isLoading }"></span>{{ currentAgent }}</span>
-      <span class="sep"></span>
-      <span>{{ chatStore.messages.length }} 条消息</span>
-      <span class="sep"></span>
-      <span>{{ artifactTotal }} 个产物</span>
-      <span class="grow"></span>
-      <span v-if="branchNodes > 1">{{ branchNodes }} 个分支点</span>
-      <span v-if="lastError" class="status-error" :data-tooltip="lastError">
-        <i class="fas fa-circle-exclamation"></i> 最近一次出错
-      </span>
+        <!-- 第二列：输入框 -->
+        <div class="composer-col">
+          <div v-if="forkParentId" class="fork-chip">
+            <i class="fas fa-code-branch"></i>
+            从「{{ forkPreview }}」继续，将创建新分支
+            <button type="button" class="chip-x" data-tooltip="取消分支" @click="forkParentId = null">
+              <i class="fas fa-xmark"></i>
+            </button>
+          </div>
+
+          <div class="input-wrap">
+            <textarea
+              ref="inputRef"
+              v-model="inputText"
+              class="agent-input"
+              :placeholder="placeholder"
+              rows="2"
+              @keydown.enter.exact.prevent="submit"
+            ></textarea>
+            <div class="row">
+              <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+              <button
+                type="button"
+                class="send-btn"
+                :disabled="!canSend"
+                data-tooltip="发送"
+                @click="submit"
+              >
+                <i class="fas fa-arrow-up"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 第三列：占位列，使输入框保持居中 -->
+        <div class="grid-spacer" aria-hidden="true"></div>
+      </div>
     </div>
 
     <!-- 分支/会话浮层 -->
@@ -118,7 +140,7 @@ const chatStore = useChatStore()
 const session = useAgentSession()
 
 // 解构出来才能在模板里自动解包 ref
-const { loading: isLoading, currentAgent, lastError, events } = session
+const { loading: isLoading, currentAgent, lastError, events, tokenUsage } = session
 
 provide(AGENT_SESSION_KEY, session)
 
@@ -146,6 +168,48 @@ const branchNodes = computed(() => {
 const artifactTotal = computed(() =>
   chatStore.messages.reduce((sum, m) => sum + (m.artifactIds?.length ?? 0), 0),
 )
+
+/**
+ * 当前路径的累计 token 用量。
+ * 本轮进行中时用量还没写回消息，需要补上会话里的实时值；
+ * 回合结束后实时值已随消息落库，这里不再重复累加。
+ */
+const tokenStats = computed(() => {
+  const acc = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  for (const m of chatStore.messages) {
+    if (!m.tokenUsage) continue
+    acc.promptTokens += m.tokenUsage.promptTokens
+    acc.completionTokens += m.tokenUsage.completionTokens
+    acc.totalTokens += m.tokenUsage.totalTokens
+  }
+
+  const leaf = chatStore.messages[chatStore.messages.length - 1]
+  const live = tokenUsage.value
+  if (live && !(leaf?.role === 'assistant' && leaf.tokenUsage)) {
+    acc.promptTokens += live.promptTokens
+    acc.completionTokens += live.completionTokens
+    acc.totalTokens += live.totalTokens
+  }
+  return acc
+})
+
+/** token 数量的紧凑写法 */
+function formatTokens(n: number): string {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}
+
+/** 输入 / 输出 token 的占比 */
+const inputPct = computed(() => {
+  const total = tokenStats.value.totalTokens
+  return total ? `${Math.round((tokenStats.value.promptTokens / total) * 100)}%` : '0%'
+})
+
+const outputPct = computed(() => {
+  const total = tokenStats.value.totalTokens
+  return total ? `${Math.round((tokenStats.value.completionTokens / total) * 100)}%` : '0%'
+})
 
 const forkPreview = computed(() => {
   if (!forkParentId.value) return ''
@@ -343,9 +407,37 @@ onMounted(() => {
   padding: 10px 14px 12px;
 }
 
-.composer-inner {
-  max-width: 812px;
-  margin: 0 auto;
+/* 三列网格：状态信息 | 输入框 | 占位 */
+.composer-grid {
+  display: grid;
+  grid-template-columns: 1fr 812px 1fr;
+  align-items: start;
+  gap: 16px;
+}
+
+.composer-col {
+  min-width: 0;
+}
+
+.grid-spacer {
+  min-width: 0;
+}
+
+/* 面板过窄时改为单列：状态信息移到输入框上方 */
+@media (max-width: 1180px) {
+  .composer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .grid-spacer {
+    display: none;
+  }
+
+  .status-side {
+    order: -1;
+    padding-top: 0;
+    padding-bottom: 6px;
+  }
 }
 
 .fork-chip {
@@ -376,6 +468,35 @@ onMounted(() => {
   background: var(--darker-bg, #0d111c);
   padding: 8px 9px 7px 12px;
   transition: border-color 0.15s;
+}
+
+/* 第一列：状态信息 */
+.status-side {
+  justify-self: start;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 3px;
+  font-size: 11px;
+  color: #6f7b8a;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-item i {
+  margin-right: 4px;
+  color: #6f7b8a;
 }
 
 .input-wrap:focus-within {
@@ -431,18 +552,7 @@ onMounted(() => {
   cursor: default;
 }
 
-/* 状态栏 */
-.status-bar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 5px 14px;
-  border-top: 1px solid var(--border, #2a3449);
-  background: var(--dark-bg, #121826);
-  font-size: 11px;
-  color: #6f7b8a;
-}
-
+/* 状态指示点 */
 .dot {
   width: 6px;
   height: 6px;
