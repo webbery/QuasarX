@@ -33,8 +33,20 @@ import { performanceTool } from "../tools/performanceTool";
 import { mathTool } from "../tools/mathTool";
 import { chartTool } from "../tools/chart";
 
-import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent } from "./types";
+import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent, UsageReporter } from "./types";
+import { INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { isToolArtifactResult, type ArtifactEnvelope } from "./artifacts";
+
+/** 从 LangChain 响应中提取 token 用量（无用量信息时返回 undefined） */
+function extractUsage(response: any): { promptTokens: number; completionTokens: number; totalTokens: number } | undefined {
+  const u = response?.usage_metadata;
+  if (!u) return undefined;
+  const promptTokens = u.input_tokens ?? 0;
+  const completionTokens = u.output_tokens ?? 0;
+  const totalTokens = u.total_tokens ?? promptTokens + completionTokens;
+  if (!totalTokens) return undefined;
+  return { promptTokens, completionTokens, totalTokens };
+}
 
 /** Tool 名称到 Tool 实例的映射 */
 const TOOL_REGISTRY: Record<string, StructuredToolInterface> = {
@@ -99,6 +111,18 @@ function createAgentLLM(agentType: AgentType, tools: StructuredToolInterface[]) 
 }
 
 /**
+ * Agent 执行结果
+ *
+ * - content：Agent 给出的最终回复文本
+ * - delegation：若本轮调用了内部 Tool（ask_xxx），携带含 tool_calls 的 AIMessage，
+ *   由上层交回 Supervisor 路由到目标 Agent
+ */
+interface AgentRunResult {
+  content: string;
+  delegation?: AIMessage;
+}
+
+/**
  * Agent 执行函数：LLM → Tool Calling 循环 → 返回最终消息
  */
 async function runAgentLoop(
@@ -106,8 +130,9 @@ async function runAgentLoop(
   messages: Array<SystemMessage | HumanMessage | AIMessage | ToolMessage>,
   tools: StructuredToolInterface[],
   onEvent?: (event: AgentEvent) => void,
+  onUsage?: UsageReporter,
   maxToolCalls = 30,
-): Promise<string> {
+): Promise<AgentRunResult> {
   let llm: any;
   try {
     llm = createAgentLLM(agentType, tools);
@@ -119,7 +144,7 @@ async function runAgentLoop(
       eventType: "error",
       timestamp: Date.now(),
     });
-    return "AI 服务不可用，请检查 LLM 配置。";
+    return { content: "AI 服务不可用，请检查 LLM 配置。" };
   }
 
   let currentMessages = [...messages];
@@ -137,8 +162,12 @@ async function runAgentLoop(
         eventType: "error",
         timestamp: Date.now(),
       });
-      return "AI 服务暂时不可用，请稍后重试。";
+      return { content: "AI 服务暂时不可用，请稍后重试。" };
     }
+
+    // 上报本次 LLM 调用的 token 用量
+    const usage = extractUsage(response);
+    if (usage) onUsage?.(usage);
 
     // 收集 thinking 内容
     // Anthropic 格式: thinking 在 content 数组中
@@ -168,19 +197,22 @@ async function runAgentLoop(
     const toolCalls = response.tool_calls;
     if (!toolCalls || toolCalls.length === 0) {
       // 无 Tool 调用，返回最终回复
-      const content = typeof response.content === "string" ? response.content : response.content.map((c: any) => (c as any).text || "").join("");
+      const content = typeof response.content === "string" ? response.content : response.content.map((c: any) => c._getType?.() === "text" ? c.text : "").join("");
       onEvent?.({
         agent: agentType,
         content,
         eventType: "response",
         timestamp: Date.now(),
       });
-      return content;
+      return { content };
     }
 
     // 执行 Tool 调用
     toolCallCount += toolCalls.length;
     currentMessages.push(response as AIMessage);
+
+    // 本轮是否触发了内部 Tool（ask_xxx）——触发则交回控制权，由 Supervisor 路由
+    let internalTarget: string | undefined;
 
     for (const tc of toolCalls) {
       onEvent?.({
@@ -191,6 +223,10 @@ async function runAgentLoop(
       });
 
       const tool = tools.find((t) => t.name === tc.name);
+      if (INTERNAL_TOOL_AGENT_MAP[tc.name]) {
+        // 内部 Tool：目标 Agent 由 Supervisor 决定，本 Agent 不再继续自问自答
+        internalTarget = INTERNAL_TOOL_AGENT_MAP[tc.name];
+      }
       if (!tool) {
         currentMessages.push(
           new ToolMessage({
@@ -262,6 +298,17 @@ async function runAgentLoop(
         );
       }
     }
+
+    // 内部 Tool 转交：把带 tool_calls 的 AIMessage 交回 Supervisor，由它路由到目标 Agent
+    if (internalTarget) {
+      onEvent?.({
+        agent: agentType,
+        content: `转交 ${internalTarget} Agent 处理`,
+        eventType: "thought",
+        timestamp: Date.now(),
+      });
+      return { content: "", delegation: response as AIMessage };
+    }
   }
 
   // 超过最大 Tool 调用次数
@@ -272,7 +319,7 @@ async function runAgentLoop(
     eventType: "response",
     timestamp: Date.now(),
   });
-  return fallback;
+  return { content: fallback };
 }
 
 /**
@@ -282,6 +329,7 @@ export function createAgentNode(
   agentType: Exclude<AgentType, "supervisor">,
   onEvent?: (event: AgentEvent) => void,
   internalTools: StructuredToolInterface[] = [],
+  onUsage?: UsageReporter,
 ) {
   return async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
     const { messages, userInput } = state;
@@ -292,7 +340,20 @@ export function createAgentNode(
 
     const agentMessages: Array<SystemMessage | HumanMessage | AIMessage | ToolMessage> = [
       new SystemMessage(systemPrompt),
-      ...messages.filter((m) => m instanceof HumanMessage || m instanceof AIMessage || m instanceof ToolMessage),
+      ...messages
+        .filter((m) => m instanceof HumanMessage || m instanceof AIMessage || m instanceof ToolMessage)
+        .map((m) => {
+          // 内部 Tool 的 AIMessage 带 tool_calls，但对应的 ToolMessage 不在图状态里。
+          // 直接透传会被 Anthropic/OpenAI 拒绝（tool_use 缺少 tool_result），
+          // 因此剥掉 tool_calls，只保留文本转交说明。
+          if (!(m instanceof AIMessage) || !m.tool_calls?.length) return m;
+          const summary = m.tool_calls.map((tc) => `${tc.name}(${JSON.stringify(tc.args)})`).join(", ");
+          const text = typeof m.content === "string" ? m.content.trim() : "";
+          return new AIMessage({
+            content: text || `[转交 ${agentType} → 目标 Agent] ${summary}`,
+            additional_kwargs: m.additional_kwargs,
+          });
+        }),
     ];
 
     // 如果有新的用户输入，追加到最后
@@ -300,10 +361,19 @@ export function createAgentNode(
       agentMessages.push(new HumanMessage(userInput));
     }
 
-    const response = await runAgentLoop(agentType, agentMessages, tools, onEvent);
+    const { content, delegation } = await runAgentLoop(agentType, agentMessages, tools, onEvent, onUsage);
+
+    // 内部 Tool 转交：不结束图，把带 tool_calls 的 AIMessage 交回 Supervisor 路由到目标 Agent
+    if (delegation) {
+      return {
+        messages: [delegation],
+        shouldEnd: false,
+        iterationCount: state.iterationCount + 1,
+      };
+    }
 
     return {
-      messages: [new AIMessage({ content: response, additional_kwargs: { agent: agentType } })],
+      messages: [new AIMessage({ content, additional_kwargs: { agent: agentType } })],
       shouldEnd: true,
       iterationCount: state.iterationCount + 1,
     };

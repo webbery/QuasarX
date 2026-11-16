@@ -136,27 +136,164 @@ function normalizeStrategyGraphNodes(data: any): any {
 function listStrategies(): string {
   const historyStore = useHistoryStore()
   if (historyStore.strategies.length === 0) return "当前没有已保存的策略图"
-  const lines = historyStore.strategies.map(s =>
-    `- **${s.name}** (id: \`${s.id}\`，更新于 ${new Date(s.updatedAt).toLocaleString('zh-CN')})`
-  )
+  const lines = historyStore.strategies.map(s => {
+    const versions = historyStore.getVersionsByStrategy(s.id)
+    let verInfo = "，无历史版本"
+    if (versions.length > 0) {
+      const latest = versions.reduce((acc, v) =>
+        new Date(v.saveTime).getTime() > new Date(acc.saveTime).getTime() ? v : acc
+      )
+      verInfo = `，${versions.length} 个历史版本，最近保存于 ${new Date(latest.saveTime).toLocaleString('zh-CN')}`
+    }
+    return `- **${s.name}** (id: \`${s.id}\`，更新于 ${new Date(s.updatedAt).toLocaleString('zh-CN')}${verInfo})`
+  })
   return `已保存的策略图（共 ${historyStore.strategies.length} 个）：\n${lines.join('\n')}`
 }
 
-/** 获取单个策略 */
-async function getStrategy(id: string): Promise<string> {
+/** 列出本地缓存的历史版本（keyword 为空时列出全部策略的历史版本） */
+function listStrategyVersions(strategyId?: string): string {
+  const historyStore = useHistoryStore()
+  const all = historyStore.versions
+  if (all.length === 0) return "当前没有已保存的策略历史版本"
+
+  const scoped = strategyId ? all.filter(v => v.strategyId === strategyId) : all
+  if (scoped.length === 0) {
+    return strategyId
+      ? `策略 "${strategyId}" 没有历史版本`
+      : "当前没有已保存的策略历史版本"
+  }
+
+  const sorted = [...scoped].sort(
+    (a, b) => new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+  )
+  const lines = sorted.map(v => {
+    const strategy = historyStore.strategies.find(s => s.id === v.strategyId)
+    const name = strategy?.name ?? v.strategyId
+    const bt = v.backtestResult ? "含回测结果" : "无回测结果"
+    const remark = v.remark ? `，备注: ${v.remark}` : ""
+    return `- **${name}**（strategyId: \`${v.strategyId}\`）版本 \`${v.id}\` — 保存于 ${new Date(v.saveTime).toLocaleString('zh-CN')}，${bt}${remark}`
+  })
+  const header = strategyId
+    ? `策略 "${strategyId}" 的历史版本（共 ${scoped.length} 个）：`
+    : `全部策略历史版本（共 ${scoped.length} 个）：`
+  return `${header}\n${lines.join('\n')}`
+}
+
+/** 获取单个策略（versionId 为空时取最新版本） */
+async function getStrategy(id: string, versionId?: string): Promise<string> {
   const historyStore = useHistoryStore()
   const strategy = historyStore.strategies.find(s => s.id === id)
   if (!strategy) return `未找到策略图 "${id}"`
 
-  // 获取最新版本
-  const latestVersion = historyStore.getLatestVersion(id)
-  if (!latestVersion) return `策略图 "${strategy.name}" (${id}) 没有已保存的版本`
+  // 取指定版本，未指定则取最新版本
+  const target = versionId
+    ? historyStore.versions.find(v => v.id === versionId && v.strategyId === id)
+    : historyStore.getLatestVersion(id)
+  if (versionId && !target) {
+    return `策略图 "${strategy.name}" (${id}) 没有版本 "${versionId}"`
+  }
+  if (!target) return `策略图 "${strategy.name}" (${id}) 没有已保存的版本`
 
   // 加载流程图数据
-  const flowData = await historyStore.loadVersionFlowData(latestVersion.id)
+  const flowData = await historyStore.loadVersionFlowData(target.id)
   if (!flowData) return `策略图 "${strategy.name}" (${id}) 的流程图数据加载失败`
 
-  return `\`\`\`json\n${JSON.stringify(flowData, null, 2)}\n\`\`\``
+  const prefix = versionId ? `（版本 ${versionId}）` : ""
+  return `\`\`\`json\n${JSON.stringify(flowData, null, 2)}\n\`\`\`\n\n_策略: ${strategy.name}${prefix}_`
+}
+
+/** 解析节点参数值：兼容 ParamConfig 包装（{value,...}）与裸值两种形态 */
+function resolveParamValue(p: any): any {
+  if (p && typeof p === "object" && !Array.isArray(p) && "value" in p) return p.value
+  return p
+}
+
+/** 参数值的可读化输出 */
+function formatParamValue(v: any): string {
+  if (v === undefined) return "undefined"
+  if (v === null) return "null"
+  if (typeof v === "string") return v
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : String(v)
+  if (typeof v === "boolean") return v ? "true" : "false"
+  try {
+    return JSON.stringify(v)
+  } catch {
+    return String(v)
+  }
+}
+
+/** 提取策略图的节点内容、配置参数与连接关系 */
+function formatStrategyGraph(
+  strategyName: string,
+  strategyId: string,
+  versionLabel: string,
+  flowData: any,
+): string {
+  const nodes = Array.isArray(flowData?.nodes) ? flowData.nodes : []
+  const edges = Array.isArray(flowData?.edges) ? flowData.edges : []
+  const nodeById = new Map<string, any>()
+  for (const n of nodes) nodeById.set(String(n?.id ?? ""), n)
+
+  const lines: string[] = []
+  lines.push(`**策略图结构** — ${strategyName}（id: \`${strategyId}\`）${versionLabel}`)
+  lines.push("")
+  lines.push(`**节点内容与配置参数**（共 ${nodes.length} 个节点）:`)
+  if (nodes.length === 0) lines.push("  （空）")
+  for (const n of nodes) {
+    const id = String(n?.id ?? "")
+    const label = n?.data?.label ?? `节点${id}`
+    const nodeType = n?.data?.nodeType ?? n?.type ?? "unknown"
+    lines.push(`- [${id}] ${label}（类型: ${nodeType}）`)
+    const params = n?.data?.params
+    if (params && typeof params === "object") {
+      const entries = Object.entries(params)
+      if (entries.length === 0) {
+        lines.push("    （无参数）")
+      }
+      for (const [key, raw] of entries) {
+        const conf = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as any) : undefined
+        const pLabel = conf?.label || PARAM_LABELS[key] || key
+        lines.push(`    ${pLabel}（${key}）: ${formatParamValue(resolveParamValue(raw))}`)
+      }
+    }
+  }
+
+  lines.push("")
+  lines.push(`**连接关系**（共 ${edges.length} 条边）:`)
+  if (edges.length === 0) lines.push("  （空）")
+  for (const e of edges) {
+    const source = String(e?.source ?? "")
+    const target = String(e?.target ?? "")
+    const sLabel = nodeById.get(source)?.data?.label ?? source
+    const tLabel = nodeById.get(target)?.data?.label ?? target
+    const srcHandle = e?.sourceHandle ? `，出口 \`${e.sourceHandle}\`` : ""
+    const tgtHandle = e?.targetHandle ? `，入口 \`${e.targetHandle}\`` : ""
+    lines.push(`- ${sLabel}（${source}） → ${tLabel}（${target}）${srcHandle}${tgtHandle}`)
+  }
+
+  return lines.join("\n")
+}
+
+/** 查询策略图的节点内容、配置参数与连接关系（keyword=策略 id，versionId 可选） */
+async function getStrategyParams(strategyId: string, versionId?: string): Promise<string> {
+  const historyStore = useHistoryStore()
+  const strategy = historyStore.strategies.find(s => s.id === strategyId)
+  if (!strategy) return `未找到策略图 "${strategyId}"`
+
+  let version = versionId
+    ? historyStore.versions.find(v => v.id === versionId && v.strategyId === strategyId)
+    : historyStore.getLatestVersion(strategyId)
+
+  if (versionId && !version) {
+    return `策略图 "${strategy.name}" (${strategyId}) 没有版本 "${versionId}"`
+  }
+  if (!version) return `策略图 "${strategy.name}" (${strategyId}) 没有已保存的版本`
+
+  const flowData = await historyStore.loadVersionFlowData(version.id)
+  if (!flowData) return `策略图 "${strategy.name}" (${strategyId}) 的流程图数据加载失败`
+
+  const versionLabel = `，版本 \`${version.id}\`（${new Date(version.saveTime).toLocaleString('zh-CN')}）`
+  return formatStrategyGraph(strategy.name, strategyId, versionLabel, flowData)
 }
 
 /* === 策略图差异比对（生成修改提案用） === */
@@ -1075,11 +1212,72 @@ function getFlowConstraints(): string {
 \`\`\``
 }
 
+// === 远程 service 策略查询 ===
+
+/**
+ * 查询远程 service 上已部署的策略（GET /v0/strategy）
+ *
+ * 返回体：{ strategies: StrategyStatus[], failed: StrategyInitFailure[] }
+ * includePools=true 时附带每条策略的 symbols 标的池。
+ */
+async function queryRemoteStrategies(includePools: boolean): Promise<string> {
+  const axios = await import("axios")
+  if (!applyAuthHeader(axios.default)) {
+    return "错误：查询远程 service 策略需要先登录（本地没有 token）"
+  }
+
+  const response = await axios.default.get("/v0/strategy", {
+    params: includePools ? { include: "pools" } : undefined,
+  })
+
+  const d = response.data
+  const strategies = Array.isArray(d) ? d : (d?.strategies ?? [])
+  const failed = Array.isArray(d?.failed) ? d.failed : []
+
+  if (strategies.length === 0 && failed.length === 0) {
+    return "远程 service 上没有已部署的策略"
+  }
+
+  const lines: string[] = [
+    `**远程 service 策略** — 已部署 ${strategies.length} 个` +
+      (failed.length > 0 ? `，初始化失败 ${failed.length} 个` : ""),
+  ]
+
+  for (const s of strategies.slice(0, 50)) {
+    const parts: string[] = [s.running ? "运行中" : "已停止"]
+    if (s.executionMode) parts.push(`执行模式=${s.executionMode}`)
+    if (s.epochCount !== undefined) parts.push(`运行轮数=${s.epochCount}`)
+    if (s.allocatedCapital !== undefined) parts.push(`分配资金=${s.allocatedCapital}`)
+    if (s.usedCapital !== undefined) parts.push(`占用资金=${s.usedCapital}`)
+    if (s.availableCapital !== undefined) parts.push(`可用资金=${s.availableCapital}`)
+    if (s.lastHeartbeat) {
+      parts.push(`最后心跳=${new Date(s.lastHeartbeat).toLocaleString("zh-CN")}`)
+    }
+    if (Array.isArray(s.symbols) && s.symbols.length > 0) {
+      parts.push(`标的池=[${s.symbols.join(", ")}]`)
+    }
+    lines.push(`- **${s.name}** — ${parts.join("，")}`)
+  }
+  if (strategies.length > 50) {
+    lines.push(`- ... 共 ${strategies.length} 个，仅显示前 50 个`)
+  }
+
+  for (const f of failed) {
+    const node = f?.failed_node
+    const nodeDesc = node
+      ? `失败节点 [${node.id}] ${node.label}（type=${node.type}）`
+      : "失败节点信息缺失"
+    lines.push(`- ⚠️ **${f?.name ?? "未命名"}** 初始化失败 — ${nodeDesc}；原因: ${f?.error ?? "未提供"}`)
+  }
+
+  return lines.join("\n")
+}
+
 // === 主 Tool ===
 
 export const strategyTool = tool(
   async (params) => {
-    const { action, keyword, data, category, name, start, end, limit } = params
+    const { action, keyword, data, category, name, start, end, limit, versionId, includePools } = params
     switch (action) {
       // === 节点查询 ===
 
@@ -1166,9 +1364,18 @@ export const strategyTool = tool(
         return listStrategies()
       }
 
+      case "list_strategy_versions": {
+        return listStrategyVersions(keyword)
+      }
+
+      case "get_strategy_params": {
+        if (!keyword) return "错误：get_strategy_params 需要提供 keyword 参数（策略 id）"
+        return getStrategyParams(keyword, versionId)
+      }
+
       case "get_strategy": {
         if (!keyword) return "错误：get_strategy 需要提供 keyword 参数（策略 id）"
-        return await getStrategy(keyword)
+        return await getStrategy(keyword, versionId)
       }
 
       case "create_strategy": {
@@ -1225,6 +1432,10 @@ export const strategyTool = tool(
       }
 
       // === 策略绩效与风控（聚合查询） ===
+
+      case "query_remote_strategies": {
+        return queryRemoteStrategies(!!includePools)
+      }
 
       case "query_strategy_performance": {
         const { name } = params
@@ -1353,22 +1564,25 @@ export const strategyTool = tool(
       }
 
       default:
-        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, multi_freq_usage, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs`
+        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, list_strategy_versions, get_strategy_params, get_strategy, create_strategy, update_strategy, propose_update, delete_strategy, signal_syntax, formula_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, multi_freq_usage, query_remote_strategies, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs`
     }
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）—— 直接写入，无人工确认\\n- propose_update: 生成策略修改提案（keyword=id, data=JSON）—— 只生成 diff 提案不写入，用户确认后才落库。修改策略时优先用这个\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出本地缓存中已保存的策略（含版本数与最近保存时间）\n- list_strategy_versions: 列出历史版本（keyword=策略 id 时只看该策略，省略则列出全部策略的历史版本）\n- get_strategy_params: 查询策略图的节点内容、配置参数与连接关系（keyword=策略 id，versionId 可选，默认取最新版本）\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）—— 直接写入，无人工确认\\n- propose_update: 生成策略修改提案（keyword=id, data=JSON）—— 只生成 diff 提案不写入，用户确认后才落库。修改策略时优先用这个\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_remote_strategies: 查询远程 service 上已部署的策略与初始化失败的策略（includePools 可选是否附带标的池）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
-        "list_strategies", "get_strategy", "create_strategy", "update_strategy", "propose_update", "delete_strategy",
+        "list_strategies", "list_strategy_versions", "get_strategy_params",
+        "get_strategy", "create_strategy", "update_strategy", "propose_update", "delete_strategy",
         "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage",
         "multi_freq_usage",
-        "query_strategy_performance", "query_risk_aggregated", "query_capital_risk", "query_risk_status",
+        "query_remote_strategies", "query_strategy_performance", "query_risk_aggregated", "query_capital_risk", "query_risk_status",
         "query_strategy_logs"
       ]).describe("操作类型"),
-      keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/propose_update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
+      keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/propose_update/delete_strategy/get_strategy_params），或搜索关键词（list_nodes 时可选）"),
+      versionId: z.string().optional().describe("版本 id（get_strategy_params 时可选，默认取最新版本）"),
+      includePools: z.boolean().optional().describe("是否附带标的池（query_remote_strategies 时可选，默认 false）"),
       data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy / propose_update 时必填）"),
       category: z.string().optional().describe("节点分类过滤（list_nodes 时可选）: input/process/signal/execution/ml/risk/utility"),
       name: z.union([z.string(), z.number()]).optional().describe("策略名或 ID（query_strategy_performance/query_strategy_logs）"),
