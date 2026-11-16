@@ -219,7 +219,6 @@
 
 <script setup>
 import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
 import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
 import SignalMonitor from './SignalMonitor.vue'
@@ -227,6 +226,7 @@ import OrderDesk from './orderdesk/OrderDesk.vue'
 import StrategySelectPanel from './StrategySelectPanel.vue'
 import StrategyModelsPanel from './strategy/StrategyModelsPanel.vue'
 import { useStrategyModels } from './strategy/composables/useStrategyModels'
+import { useStrategyControl } from '../composables/useStrategyControl'
 
 const activeTab = ref('realtime')
 const selectedStrategy = ref('')
@@ -298,6 +298,9 @@ const reviewPanelRef = ref(null)
 // 操作中的策略名（防止重复点击）
 const operatingStrategies = ref(new Set())
 
+// 策略生命周期统一入口（启停 / 删除都走这里，URL 与鉴权逻辑只有一份）
+const strategyControl = useStrategyControl()
+
 /** 策略是否正在执行操作中 */
 const isOperating = (name) => operatingStrategies.value.has(name)
 
@@ -345,11 +348,13 @@ const formatMode = (s) => {
 const stopStrategy = async (name) => {
     operatingStrategies.value.add(name)
     try {
-        await axios.post('/v0/strategy', { mode: 2, name })
+        const result = await strategyControl.stop(name)
+        if (!result.success) {
+            message.error(result.message || '停止失败')
+            return
+        }
         message.success(`策略 "${name}" 已停止`)
         await fetchServerStrategies()
-    } catch (e) {
-        message.error('停止失败: ' + (e.response?.data?.message || e.message))
     } finally {
         operatingStrategies.value.delete(name)
     }
@@ -359,11 +364,13 @@ const stopStrategy = async (name) => {
 const startStrategy = async (name) => {
     operatingStrategies.value.add(name)
     try {
-        await axios.post('/v0/strategy', { mode: 1, name })
+        const result = await strategyControl.start(name)
+        if (!result.success) {
+            message.error(result.message || '启动失败')
+            return
+        }
         message.success(`策略 "${name}" 已启动`)
         await fetchServerStrategies()
-    } catch (e) {
-        message.error('启动失败: ' + (e.response?.data?.message || e.message))
     } finally {
         operatingStrategies.value.delete(name)
     }
@@ -380,15 +387,17 @@ const deleteStrategy = async (name) => {
 
     operatingStrategies.value.add(name)
     try {
-        await axios.delete('/v0/strategy', { data: { name } })
+        const result = await strategyControl.remove(name)
+        if (!result.success) {
+            message.error(result.message || '删除失败')
+            return
+        }
         message.success(`策略 "${name}" 已删除`)
         // 如果当前选中的策略被删除，清空选择
         if (selectedStrategy.value === name) {
             selectedStrategy.value = ''
         }
         await fetchServerStrategies()
-    } catch (e) {
-        message.error('删除失败: ' + (e.response?.data?.message || e.message))
     } finally {
         operatingStrategies.value.delete(name)
     }

@@ -13,7 +13,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(row, i) in payload.rows" :key="i">
+        <tr v-for="(row, i) in visibleRows" :key="i">
           <td
             v-for="col in payload.columns"
             :key="col.key"
@@ -25,16 +25,38 @@
         </tr>
       </tbody>
     </table>
-    <div v-if="payload.truncated" class="table-foot">
-      仅显示前 {{ payload.rows.length }} 行<template v-if="payload.total">，共 {{ payload.total }} 行</template>
+    <div v-if="payload.truncated || hiddenRowCount > 0" class="table-foot">
+      <template v-if="payload.truncated">
+        仅显示前 {{ payload.rows.length }} 行<template v-if="payload.total">，共 {{ payload.total }} 行</template>
+      </template>
+      <template v-else-if="hiddenRowCount > 0">
+        紧凑模式仅显示前 {{ visibleRows.length }} 行，共 {{ payload.rows.length }} 行
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { TableColumn, TablePayload } from '@/lib/agent/artifacts'
+import { computed } from 'vue'
+import type { ArtifactDensity, TableColumn, TablePayload } from '@/lib/agent/artifacts'
 
-const props = defineProps<{ payload: TablePayload }>()
+const props = withDefaults(
+  defineProps<{
+    payload: TablePayload
+    /** 呈现密度：紧凑态只显示前 5 行 */
+    density?: ArtifactDensity
+  }>(),
+  { density: 'full' },
+)
+
+/** 紧凑态只保留前 5 行 */
+const COMPACT_ROWS = 5
+
+const visibleRows = computed(() =>
+  props.density === 'compact' ? props.payload.rows.slice(0, COMPACT_ROWS) : props.payload.rows,
+)
+
+const hiddenRowCount = computed(() => props.payload.rows.length - visibleRows.value.length)
 
 function isNumeric(col: TableColumn): boolean {
   return col.format === 'number' || col.format === 'percent' || col.format === 'currency' || col.format === 'ratio'

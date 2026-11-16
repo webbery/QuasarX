@@ -14,7 +14,7 @@ import { z } from "zod"
 import { createStrategyNode, getAllNodes, getNode, searchNodes } from "../nodes"
 import { useHistoryStore } from "@/stores/history"
 import { applyAuthHeader } from "./common/auth"
-import { makeArtifact, type PatchOp, type ToolArtifactResult } from "@/lib/agent/artifacts"
+import { makeArtifact, type ArtifactAction, type PatchOp, type ToolArtifactResult } from "@/lib/agent/artifacts"
 
 // === 策略图 CRUD（使用 historyStore 管理）===
 
@@ -1220,10 +1220,10 @@ function getFlowConstraints(): string {
  * 返回体：{ strategies: StrategyStatus[], failed: StrategyInitFailure[] }
  * includePools=true 时附带每条策略的 symbols 标的池。
  */
-async function queryRemoteStrategies(includePools: boolean): Promise<string> {
+async function queryRemoteStrategies(includePools: boolean): Promise<ToolArtifactResult> {
   const axios = await import("axios")
   if (!applyAuthHeader(axios.default)) {
-    return "错误：查询远程 service 策略需要先登录（本地没有 token）"
+    return { text: "错误：查询远程 service 策略需要先登录（本地没有 token）" }
   }
 
   const response = await axios.default.get("/v0/strategy", {
@@ -1235,7 +1235,7 @@ async function queryRemoteStrategies(includePools: boolean): Promise<string> {
   const failed = Array.isArray(d?.failed) ? d.failed : []
 
   if (strategies.length === 0 && failed.length === 0) {
-    return "远程 service 上没有已部署的策略"
+    return { text: "远程 service 上没有已部署的策略" }
   }
 
   const lines: string[] = [
@@ -1270,7 +1270,71 @@ async function queryRemoteStrategies(includePools: boolean): Promise<string> {
     lines.push(`- ⚠️ **${f?.name ?? "未命名"}** 初始化失败 — ${nodeDesc}；原因: ${f?.error ?? "未提供"}`)
   }
 
-  return lines.join("\n")
+  // 顺带把「启停 / 部署」做成可点击的动作，产物卡上直接操作。
+  // P1-5 的 strategy 产物还没做，这里先用 action 产物承载。
+  const artifact = makeArtifact(
+    "action",
+    `远程策略操作 · ${strategies.length} 个已部署`,
+    {
+      context: "点击按钮可直接启动 / 停止远程策略，或把本地策略的最新版本部署到 service。",
+      actions: buildRemoteStrategyActions(strategies),
+    },
+    {
+      subtitle: `${strategies.length} 个已部署${failed.length ? ` · ${failed.length} 个初始化失败` : ""}`,
+      source: "strategy · query_remote_strategies",
+      ui: { collapsible: true, defaultCollapsed: strategies.length > 8 },
+    },
+  )
+
+  return { text: lines.join("\n"), artifact }
+}
+
+/**
+ * 为远程策略列表生成可执行动作：
+ * - 运行中的 → 「停止」
+ * - 已停止的 → 「启动」
+ * - 本地有版本的策略 → 「部署」（部署的是本地最新版本）
+ */
+function buildRemoteStrategyActions(strategies: any[]): ArtifactAction[] {
+  const actions: ArtifactAction[] = []
+
+  for (const s of strategies.slice(0, 20)) {
+    const name = s?.name
+    if (!name) continue
+    const running = !!s.running
+    actions.push({
+      id: running ? `stop-${name}` : `start-${name}`,
+      kind: running ? "stop_strategy" : "run_strategy",
+      label: running ? `停止 ${name}` : `启动 ${name}`,
+      icon: running ? "stop" : "play",
+      params: { name },
+      pendingLabel: running ? "停止中…" : "启动中…",
+      doneLabel: running ? "已停止" : "已启动",
+    })
+  }
+
+  // 本地策略的部署入口（部署本地最新版本）
+  const historyStore = useHistoryStore()
+  for (const strategy of historyStore.strategies.slice(0, 10)) {
+    const version = historyStore.getLatestVersion(strategy.id)
+    if (!version) continue
+    actions.push({
+      id: `deploy-${strategy.id}`,
+      kind: "deploy_strategy",
+      label: `部署 ${strategy.name}`,
+      icon: "upload",
+      params: { strategyId: strategy.id, name: strategy.name },
+      destructive: true,
+      confirm: {
+        title: `确认部署策略「${strategy.name}」？`,
+        body: `将本地最新版本（${version.remark || version.id}）部署到 service 并可能立即运行。`,
+      },
+      pendingLabel: "部署中…",
+      doneLabel: "已部署",
+    })
+  }
+
+  return actions
 }
 
 // === 主 Tool ===

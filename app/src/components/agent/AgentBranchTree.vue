@@ -25,7 +25,8 @@
           <i class="fas fa-xmark"></i>
         </button>
       </div>
-      <div v-if="sessions.length === 0" class="session-empty">暂无会话</div>
+      <div v-if="!chatStore.hydrated" class="session-empty">读取中…</div>
+      <div v-else-if="sessions.length === 0" class="session-empty">暂无会话</div>
     </div>
 
     <hr class="divider" />

@@ -18,9 +18,11 @@ const pinia = createPinia();
 app.config.globalProperties.$message = message
 app.use(pinia)
 
-// 启动时隐藏浮窗；会话与分支从 localStorage 恢复（不再清空历史）
+// 启动时隐藏浮窗；会话与分支从 IndexedDB 恢复（不再清空历史）
 const chatStore = useChatStore()
 chatStore.visible = false
+// 会话与产物走 IndexedDB 水合（异步）；UI 用 chatStore.hydrated 区分加载态与空态
+void chatStore.hydrate()
 
 app.mount('#app')
     .$nextTick(() => postMessage({ payload: 'removeLoading' }, '*'));

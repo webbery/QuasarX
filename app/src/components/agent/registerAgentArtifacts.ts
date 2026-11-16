@@ -31,6 +31,7 @@ export function registerAgentArtifacts(): void {
     label: '指标',
     icon: 'gauge',
     render: AgentMetricArtifact,
+    compact: true,
   })
 
   registerArtifact({
@@ -38,6 +39,7 @@ export function registerAgentArtifacts(): void {
     label: '表格',
     icon: 'table',
     render: AgentTableArtifact,
+    compact: true,
     exportable: true,
   })
 

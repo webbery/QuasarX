@@ -5,8 +5,28 @@
       <span class="artifact-title">{{ artifact.title }}</span>
       <span v-if="artifact.subtitle" class="artifact-subtitle">{{ artifact.subtitle }}</span>
       <span class="spacer"></span>
+
+      <!-- 密度切换：完整态给「紧凑」，紧凑态给醒目的「放大」 -->
       <button
-        v-if="renderer"
+        v-if="supportsDensity && density === 'full'"
+        class="icon-btn"
+        aria-label="紧凑显示"
+        data-tooltip="紧凑显示"
+        @click="toggleDensity"
+      >
+        <i class="fas fa-compress"></i>
+      </button>
+      <button
+        v-if="supportsDensity && density === 'compact'"
+        class="enlarge-btn"
+        @click="toggleDensity"
+      >
+        <i class="fas fa-expand"></i>
+        放大
+      </button>
+
+      <button
+        v-if="canCollapse"
         class="icon-btn"
         :aria-label="collapsed ? '展开产物' : '收起产物'"
         :data-tooltip="collapsed ? '展开产物' : '收起产物'"
@@ -52,17 +72,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { getArtifactSpec } from '@/lib/agent/artifactRegistry'
 import { runAction, type ActionContext } from '@/lib/agent/actionRegistry'
-import type { ArtifactAction, ArtifactEnvelope } from '@/lib/agent/artifacts'
+import type { ArtifactAction, ArtifactDensity, ArtifactEnvelope } from '@/lib/agent/artifacts'
 import { useChatStore } from '@/stores/chatStore'
 import AgentFallbackArtifact from './AgentFallbackArtifact.vue'
 
 const props = defineProps<{ artifact: ArtifactEnvelope }>()
 
 const chatStore = useChatStore()
-const collapsed = ref(false)
 
 const actionState = reactive<Record<string, 'idle' | 'pending' | 'done'>>({})
 const resultMessage = ref('')
@@ -71,12 +90,49 @@ const applied = ref(false)
 const spec = computed(() => getArtifactSpec(props.artifact.kind))
 const renderer = computed(() => spec.value?.render ?? null)
 
+/** 折叠态：初始值由产物的 ui.defaultCollapsed 决定 */
+const collapsed = ref(props.artifact.ui?.defaultCollapsed ?? false)
+
+/** 密度态：紧凑 ↔ 完整 */
+const density = ref<ArtifactDensity>(spec.value?.defaultDensity ?? 'full')
+
+/** 产物切换时重置折叠与密度 */
+watch(
+  () => props.artifact.id,
+  () => {
+    collapsed.value = props.artifact.ui?.defaultCollapsed ?? false
+    density.value = spec.value?.defaultDensity ?? 'full'
+  },
+)
+
+/** 是否允许折叠（产物自身的 ui 优先，其次注册表） */
+const canCollapse = computed(
+  () => !!renderer.value && (props.artifact.ui?.collapsible ?? spec.value?.collapsible ?? true),
+)
+
+/** 是否支持双密度 */
+const supportsDensity = computed(() => !!renderer.value && spec.value?.compact === true)
+
+function toggleDensity() {
+  density.value = density.value === 'compact' ? 'full' : 'compact'
+}
+
+/** 有效渲染高度：紧凑态用 compactHeight，完整态用 height */
+const effectiveHeight = computed<number | undefined>(() => {
+  const ui = props.artifact.ui
+  if (density.value === 'compact') {
+    return ui?.compactHeight ?? (ui?.height ? Math.round(ui.height * 0.55) : 160)
+  }
+  return ui?.height
+})
+
 /** 只传渲染器真正需要的 props，避免多余属性落到 DOM 上 */
 const rendererProps = computed<Record<string, unknown>>(() => {
   if (!spec.value) return {}
   const out: Record<string, unknown> = { payload: props.artifact.payload }
-  const height = props.artifact.ui?.height
+  const height = effectiveHeight.value
   if (height) out.height = height
+  if (supportsDensity.value) out.density = density.value
   if (props.artifact.kind === 'patch') out.applied = applied.value
   return out
 })
@@ -109,7 +165,12 @@ function actionIcon(action: ArtifactAction): string {
     case 'apply_patch':
       return 'fas fa-check'
     case 'run_backtest':
+    case 'run_strategy':
       return 'fas fa-play'
+    case 'stop_strategy':
+      return 'fas fa-stop'
+    case 'deploy_strategy':
+      return 'fas fa-upload'
     case 'query_data':
       return 'fas fa-database'
     case 'open_panel':
@@ -206,6 +267,27 @@ async function execute(action: ArtifactAction) {
 .icon-btn:hover {
   color: #e0e0e0;
   border-color: var(--border, #2a3449);
+}
+
+.enlarge-btn {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid rgba(41, 98, 255, 0.5);
+  background: rgba(41, 98, 255, 0.1);
+  color: #7ea6ff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.enlarge-btn:hover {
+  background: rgba(41, 98, 255, 0.2);
+  color: #a9c3ff;
 }
 
 .artifact-foot {

@@ -680,8 +680,6 @@ onMounted(() => {
 
   // 浮窗唤起 Agent 面板
   window.addEventListener('open-agent-panel', onOpenAgentPanel)
-  // Agent 产物上的「执行回测」动作
-  window.addEventListener('agent:run-backtest', onAgentRunBacktest)
 })
 
 onUnmounted(() => {
@@ -693,7 +691,6 @@ onUnmounted(() => {
   window.removeEventListener('datacenter-option-contract-selected', onDataCenterOptionSelected)
   window.removeEventListener('datacenter-option-cleared', onDataCenterOptionCleared)
   window.removeEventListener('open-agent-panel', onOpenAgentPanel)
-  window.removeEventListener('agent:run-backtest', onAgentRunBacktest)
   uninitServerEvent()
   if (_strategyTimer) {
     clearInterval(_strategyTimer)
@@ -889,23 +886,6 @@ const onOpenAgentPanel = () => {
   nextTick(() => {
     window.dispatchEvent(new CustomEvent('switch-analysis-tab', { detail: { tab: 'agent' } }))
   })
-}
-
-/**
- * Agent 产物上的「执行回测」动作。
- * 回测逻辑住在策略设计视图的组件里，所以先切过去再调用。
- */
-const onAgentRunBacktest = async () => {
-  if (currentView.value !== VIEWS.DESIGN_STATEGY) {
-    currentView.value = VIEWS.DESIGN_STATEGY
-    await nextTick()
-    await new Promise((resolve) => setTimeout(resolve, 150))
-  }
-  try {
-    await onHandleRunBacktest()
-  } catch (error) {
-    console.warn('[Agent] 触发回测失败，请手动点击「执行回测」', error)
-  }
 }
 
 // === 策略导入导出 ===

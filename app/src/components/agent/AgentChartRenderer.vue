@@ -17,8 +17,8 @@
     <!-- 图区 -->
     <div ref="chartRef" class="agent-chart__canvas" :style="{ height: chartHeight + 'px' }"></div>
 
-    <!-- 时刻条 -->
-    <div v-if="moments.length" class="agent-chart__moments">
+    <!-- 时刻条（紧凑态隐藏） -->
+    <div v-if="moments.length && density !== 'compact'" class="agent-chart__moments">
       <span class="moments-label">关键时刻</span>
       <button
         v-for="(m, i) in moments"
@@ -42,14 +42,16 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '@/components/report/composables/useECharts'
-import type { ChartPayload, ChartMoment } from '@/lib/agent/artifacts'
+import type { ChartPayload, ChartMoment, ArtifactDensity } from '@/lib/agent/artifacts'
 
 const props = withDefaults(
   defineProps<{
     payload: ChartPayload
     height?: number
+    /** 呈现密度：紧凑态隐藏时刻条，高度由卡片下发 */
+    density?: ArtifactDensity
   }>(),
-  { height: 300 },
+  { height: 300, density: 'full' },
 )
 
 /** 主题调色板（与 report 模块一致） */
@@ -65,10 +67,7 @@ const hidden = reactive<Record<number, boolean>>({})
 const moments = computed<ChartMoment[]>(() => props.payload.moments ?? [])
 const showLegend = computed(() => props.payload.legend?.show !== false && legendItems.value.length > 1)
 
-const chartHeight = computed(() => {
-  const base = props.height ?? 300
-  return moments.value.length ? base : base
-})
+const chartHeight = computed(() => props.height ?? 300)
 
 const legendItems = computed(() => {
   const ts = props.payload.timeSeries

@@ -1,8 +1,15 @@
 <template>
   <div ref="scrollRef" class="conversation">
     <div class="conversation-col">
+      <!-- 水合中（IndexedDB 读取） -->
+      <div v-if="!chatStore.hydrated" class="empty-state">
+        <div class="empty-icon"><i class="fas fa-spinner fa-spin"></i></div>
+        <p class="empty-title">正在恢复会话…</p>
+        <p class="empty-hint">会话与产物保存在本地 IndexedDB，正在读取。</p>
+      </div>
+
       <!-- 空态 -->
-      <div v-if="messages.length === 0 && !session.loading.value" class="empty-state">
+      <div v-else-if="messages.length === 0 && !session.loading.value" class="empty-state">
         <div class="empty-icon"><i class="fas fa-robot"></i></div>
         <p class="empty-title">Agent 分析面板</p>
         <p class="empty-hint">直接提问即可。Agent 会把图表、表格、策略修改提案作为「产物」直接画在对话里。</p>

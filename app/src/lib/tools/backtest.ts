@@ -15,6 +15,48 @@ import type { BacktestResult } from "@/stores/history"
 import { computeStatistics, calculateReturns } from "@/lib/statistics"
 import { buildChartData } from "@/lib/chartData"
 import { applyAuthHeader } from "./common/auth"
+import { makeArtifact, type ToolArtifactResult } from "@/lib/agent/artifacts"
+
+/**
+ * 解析要回测的目标策略。
+ *
+ * 优先用 strategyId 指定的那个；没指定就用最近更新的策略。
+ * 策略必须至少有一个版本，否则没有可回测的图。
+ */
+async function resolveBacktestTarget(
+  historyStore: ReturnType<typeof useHistoryStore>,
+  strategyId?: string,
+): Promise<{
+  strategyId: string
+  strategyName: string
+  versionId: string
+  versionRemark: string
+} | null> {
+  const strategies = historyStore.strategies
+  if (!strategies.length) return null
+
+  let strategy = strategyId
+    ? strategies.find((s) => s.id === strategyId || s.name === strategyId)
+    : undefined
+
+  if (!strategy) {
+    // 没指定 → 取最近更新的策略
+    strategy = [...strategies].sort(
+      (a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''),
+    )[0]
+  }
+  if (!strategy) return null
+
+  const version = historyStore.getLatestVersion(strategy.id)
+  if (!version) return null
+
+  return {
+    strategyId: strategy.id,
+    strategyName: strategy.name,
+    versionId: version.id,
+    versionRemark: version.remark || version.id,
+  }
+}
 
 /**
  * 格式化指标为易读文本
@@ -318,7 +360,7 @@ function formatBacktestSummary(result: BacktestResult): string {
 
 export const backtestTool = tool(
   async (params) => {
-    const { action, metric, strategyGraph } = params
+    const { action, metric, strategyGraph, strategyId } = params
     try {
       const historyStore = useHistoryStore()
 
@@ -329,26 +371,73 @@ export const backtestTool = tool(
         // === 执行回测 ===
 
         case "run_backtest": {
-          // D3-A Phase 5 决策：Agent 不直接触发后端回测。
-          // 回测耗时 30 秒-数分钟，且需 UI 监控；改为提示用户手动执行。
-          return [
-            `**回测请手动执行**`,
-            ``,
-            `为避免长任务阻塞对话（回测可能耗时 30 秒-数分钟），Agent 不直接调用 \`/v0/backtest\`。`,
-            ``,
-            `请按以下步骤操作：`,
-            `1. 在主界面打开策略流程图编辑器`,
-            `2. 点击工具栏的「回测」按钮手动触发回测`,
-            `3. 回测完成后，结果会自动保存到 historyStore`,
-            ``,
-            `完成后，Agent 可通过以下 action 读取回测结果进行分析：`,
-            `- \`get_summary\` 获取回测摘要（年化/Sharpe/MaxDD/胜率）`,
-            `- \`get_metrics\` 获取完整指标列表`,
-            `- \`get_metric_value\` 获取单个指标值（metric=指标名）`,
-            `- \`get_signals\` 获取交易信号明细`,
-            `- \`get_chart_data\` 获取图表数据（price/performance/drawdown/distribution）`,
-            `- \`query_performance\` 查询策略绩效（策略级，调 \`/v0/strategy/performance\`）`,
-          ].join('\n')
+          // D3-A Phase 5 决策：Agent 不在对话回合里直接调用 /v0/backtest
+          // （回测耗时 30 秒-数分钟，会阻塞 LLM 回合）。
+          // 改为产出一个「执行回测」按钮，由用户点击后才真正跑 ——
+          // 人工确认这一步与「策略写入走提案」是同一个原则。
+          const target = await resolveBacktestTarget(historyStore, strategyId)
+          if (!target) {
+            return [
+              `**回测请手动执行**`,
+              ``,
+              `本地没有找到可回测的策略（historyStore 里没有带版本的策略）。`,
+              ``,
+              `请按以下步骤操作：`,
+              `1. 在主界面打开策略流程图编辑器`,
+              `2. 点击工具栏的「回测」按钮手动触发回测`,
+              `3. 回测完成后，结果会自动保存到 historyStore`,
+              ``,
+              `完成后，Agent 可通过以下 action 读取回测结果进行分析：`,
+              `- \`get_summary\` 获取回测摘要（年化/Sharpe/MaxDD/胜率）`,
+              `- \`get_metrics\` 获取完整指标列表`,
+              `- \`get_metric_value\` 获取单个指标值（metric=指标名）`,
+              `- \`get_signals\` 获取交易信号明细`,
+              `- \`get_chart_data\` 获取图表数据（price/performance/drawdown/distribution）`,
+              `- \`query_performance\` 查询策略绩效（策略级，调 \`/v0/strategy/performance\`）`,
+            ].join('\n')
+          }
+
+          const artifact = makeArtifact(
+            'action',
+            `执行回测 · ${target.strategyName}`,
+            {
+              context: '回测是长任务（30 秒~数分钟）。点击后由后台执行，完成后结果自动存入 historyStore，Agent 随后可读取分析。',
+              actions: [
+                {
+                  id: `run-backtest-${target.versionId}`,
+                  kind: 'run_backtest',
+                  label: '执行回测',
+                  icon: 'play',
+                  params: {
+                    strategyId: target.strategyId,
+                    versionId: target.versionId,
+                    strategyName: target.strategyName,
+                  },
+                  destructive: true,
+                  confirm: {
+                    title: `确认执行「${target.strategyName}」的回测？`,
+                    body: '回测会请求后端跑一遍策略图，耗时 30 秒~数分钟。',
+                  },
+                  pendingLabel: '回测中…',
+                  doneLabel: '回测完成',
+                },
+              ],
+            },
+            {
+              subtitle: `版本 ${target.versionRemark}`,
+              source: `backtest · run_backtest · ${target.strategyId}`,
+              ui: { collapsible: false },
+            },
+          )
+
+          return {
+            text: [
+              `已准备好回测：**${target.strategyName}**（版本 ${target.versionRemark}）。`,
+              ``,
+              `点击下方「执行回测」按钮开始。回测耗时 30 秒~数分钟，完成后结果会自动存入 historyStore。`,
+            ].join('\n'),
+            artifact,
+          }
         }
 
         // === 查询指标 ===
@@ -523,7 +612,8 @@ export const backtestTool = tool(
         "query_performance",
       ]).describe("操作类型"),
       metric: z.string().optional().describe("指标名称（get_metric_value 时需要），或图表类型（get_chart_data 时需要：price/performance/drawdown/distribution/dailyReturns/all）"),
-      strategyGraph: z.any().optional().describe("策略图 JSON 数据（已废弃：run_backtest 不再调用后端，保留仅为向后兼容）"),
+      strategyId: z.string().optional().describe("要回测的策略 id 或名称（run_backtest 时可选，省略则取最近更新的策略）"),
+      strategyGraph: z.any().optional().describe("策略图 JSON 数据（已废弃：run_backtest 不再直接调用后端，保留仅为向后兼容）"),
       strategy: z.union([z.string(), z.number()]).optional().describe("策略名（query_performance）或策略图 JSON（run_capacity_scan）"),
       capital_min: z.number().optional().describe("容量扫描最小资金量（默认 100000）"),
       capital_max: z.number().optional().describe("容量扫描最大资金量（默认 10000000）"),

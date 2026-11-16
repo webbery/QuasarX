@@ -18,6 +18,17 @@ import { useQuoteStore } from './quoteStore'
 import { useAccountStore } from './account'
 import { fetchSectorQuotes, calculateTotalAdvanceDecline } from '@/lib/sectorApi'
 import type { ArtifactEnvelope } from '@/lib/agent/artifacts'
+import {
+  META_KEYS,
+  deleteArtifacts,
+  deleteSession as dbDeleteSession,
+  getAllArtifacts,
+  getAllSessions,
+  getMeta,
+  putArtifact,
+  putSession,
+  setMeta,
+} from '@/lib/agent/chatDb'
 
 /* ============================================================================
  * 类型
@@ -75,8 +86,16 @@ const LEGACY_KEY = 'quasarx_chat'
 const MAX_SESSIONS = 20
 /** 单个会话最多保留的消息数（超出时裁剪最老的根分支） */
 const MAX_MESSAGES = 800
-/** 最多保留的产物数 */
-const MAX_ARTIFACTS = 40
+/**
+ * 无引用（孤儿）产物上限。
+ * 被消息引用的产物永久保留；孤儿按创建时间保留最近这么多个。
+ */
+const MAX_ORPHAN_ARTIFACTS = 200
+
+/** 会话落盘防抖（ms） */
+const SESSION_FLUSH_DEBOUNCE = 200
+/** 孤儿回收防抖（ms）—— 给消息写 artifactIds 留出时间窗 */
+const ARTIFACT_GC_DEBOUNCE = 5000
 
 let idSeq = 0
 function uid(prefix: string): string {
@@ -127,6 +146,8 @@ export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
   const marketContext = ref('')
   const useLangGraph = ref(true)
+  /** IndexedDB 水合是否完成（false 时 UI 应显示加载态而非空态） */
+  const hydrated = ref(false)
 
   /* ---------- 会话树 ---------- */
   const sessions = ref<ChatSession[]>([])
@@ -152,58 +173,124 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content)),
   )
 
-  /* ---------- 持久化 ---------- */
+  /* ---------- 持久化（IndexedDB） ---------- */
 
-  function persistSessions() {
-    try {
-      const trimmed = sessions.value.slice(-MAX_SESSIONS).map((s) => ({
-        ...s,
-        messages: s.messages.slice(-MAX_MESSAGES),
-      }))
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed))
-    } catch (e) {
-      console.warn('[Chat] 保存会话失败', e)
+  /** 已标记为需要落盘的会话 id */
+  const dirtySessions = new Set<string>()
+  let sessionFlushTimer: ReturnType<typeof setTimeout> | null = null
+  let artifactGcTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 裁剪会话消息，并修正 currentLeafId，避免指向已被裁掉的节点 */
+  function trimSession(session: ChatSession): ChatSession {
+    if (session.messages.length <= MAX_MESSAGES) return session
+    const keep = session.messages.slice(-MAX_MESSAGES)
+    const kept = new Set(keep.map((m) => m.id))
+    return {
+      ...session,
+      messages: keep,
+      currentLeafId:
+        session.currentLeafId && kept.has(session.currentLeafId)
+          ? session.currentLeafId
+          : (keep[keep.length - 1]?.id ?? null),
     }
   }
 
-  function persistArtifacts() {
-    try {
-      const entries = Object.values(artifacts.value)
-      if (entries.length > MAX_ARTIFACTS) {
-        entries.sort((a, b) => a.createdAt - b.createdAt)
-        const keep = new Set(entries.slice(-MAX_ARTIFACTS).map((a) => a.id))
-        const next: Record<string, ArtifactEnvelope> = {}
-        for (const key of Object.keys(artifacts.value)) {
-          if (keep.has(key)) next[key] = artifacts.value[key]
+  /** 标记某个会话需要落盘（防抖合并写） */
+  function markSessionDirty(id: string) {
+    dirtySessions.add(id)
+    if (sessionFlushTimer !== null) return
+    sessionFlushTimer = setTimeout(() => {
+      sessionFlushTimer = null
+      void flushSessions()
+    }, SESSION_FLUSH_DEBOUNCE)
+  }
+
+  /** 把脏会话写入 IndexedDB */
+  async function flushSessions() {
+    const ids = [...dirtySessions]
+    dirtySessions.clear()
+    for (const id of ids) {
+      const session = sessions.value.find((s) => s.id === id)
+      try {
+        if (!session) {
+          await dbDeleteSession(id)
+        } else {
+          await putSession(trimSession(session))
         }
-        artifacts.value = next
+      } catch (e) {
+        console.warn('[Chat] 保存会话失败', id, e)
       }
-      localStorage.setItem(ARTIFACTS_KEY, JSON.stringify(artifacts.value))
-    } catch (e) {
-      // 产物可能很大（含时间序列），写不下时降级为不持久化
-      console.warn('[Chat] 保存产物失败（可能超出存储配额），本次产物仅保留在内存', e)
     }
   }
 
-  function loadFromStorage() {
+  /** 写入单个产物（产物不可变，put 幂等） */
+  async function persistArtifact(artifact: ArtifactEnvelope) {
     try {
+      await putArtifact(artifact)
+    } catch (e) {
+      console.warn('[Chat] 保存产物失败', artifact.id, e)
+    }
+  }
+
+  /** 孤儿产物回收：删掉没被任何消息引用的老产物 */
+  function scheduleArtifactGC() {
+    if (artifactGcTimer !== null) clearTimeout(artifactGcTimer)
+    artifactGcTimer = setTimeout(() => {
+      artifactGcTimer = null
+      void gcArtifacts()
+    }, ARTIFACT_GC_DEBOUNCE)
+  }
+
+  async function gcArtifacts() {
+    const referenced = new Set<string>()
+    for (const session of sessions.value) {
+      for (const msg of session.messages) {
+        for (const id of msg.artifactIds ?? []) referenced.add(id)
+      }
+    }
+    const orphans = Object.values(artifacts.value)
+      .filter((a) => !referenced.has(a.id))
+      .sort((a, b) => a.createdAt - b.createdAt)
+    if (orphans.length <= MAX_ORPHAN_ARTIFACTS) return
+    const excess = orphans.slice(0, orphans.length - MAX_ORPHAN_ARTIFACTS)
+    for (const a of excess) delete artifacts.value[a.id]
+    try {
+      await deleteArtifacts(excess.map((a) => a.id))
+    } catch (e) {
+      console.warn('[Chat] 回收孤儿产物失败', e)
+    }
+  }
+
+  /** 记住当前会话 id */
+  async function rememberCurrentSession() {
+    if (!currentSessionId.value) return
+    try {
+      await setMeta('currentSessionId', currentSessionId.value)
+    } catch (e) {
+      console.warn('[Chat] 记录当前会话失败', e)
+    }
+  }
+
+  /** 从旧版 localStorage 导入（仅首次启动时执行一次） */
+  async function importLegacyFromLocalStorage() {
+    const alreadyMigrated = await getMeta<boolean>(META_KEYS.MIGRATED_FROM_LOCAL_STORAGE)
+    if (alreadyMigrated) return
+
+    try {
+      const rawSessions = localStorage.getItem(SESSIONS_KEY)
       const rawArtifacts = localStorage.getItem(ARTIFACTS_KEY)
-      if (rawArtifacts) artifacts.value = JSON.parse(rawArtifacts)
+      const legacyRaw = localStorage.getItem(LEGACY_KEY)
 
-      const raw = localStorage.getItem(SESSIONS_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as ChatSession[]
-        if (Array.isArray(parsed) && parsed.length) {
-          sessions.value = parsed
-          currentSessionId.value = parsed[parsed.length - 1].id
-          return
-        }
-      }
+      const parsedSessions: ChatSession[] = rawSessions
+        ? (JSON.parse(rawSessions) as ChatSession[])
+        : []
+      const parsedArtifacts: ArtifactEnvelope[] = rawArtifacts
+        ? (JSON.parse(rawArtifacts) as ArtifactEnvelope[])
+        : []
 
-      // 旧版数据迁移：平铺消息 → 单会话链式树
-      const legacy = localStorage.getItem(LEGACY_KEY)
-      if (legacy) {
-        const parsedLegacy = JSON.parse(legacy)
+      // 更老的版本：平铺消息 → 单会话链式树
+      if (!parsedSessions.length && legacyRaw) {
+        const parsedLegacy = JSON.parse(legacyRaw)
         if (Array.isArray(parsedLegacy?.messages) && parsedLegacy.messages.length) {
           const branchId = uid('br')
           let parentId: string | null = null
@@ -221,23 +308,109 @@ export const useChatStore = defineStore('chat', () => {
             parentId = msg.id
             return msg
           })
-          const session: ChatSession = {
+          parsedSessions.push({
             id: uid('sess'),
             title: '历史对话（已迁移）',
             messages: migrated,
             currentLeafId: migrated[migrated.length - 1].id,
             createdAt: migrated[0]?.timestamp || Date.now(),
             updatedAt: Date.now(),
-          }
-          sessions.value = [session]
-          currentSessionId.value = session.id
-          persistSessions()
-          return
+          })
         }
       }
+
+      if (parsedSessions.length || parsedArtifacts.length) {
+        for (const s of parsedSessions) await putSession(trimSession(s))
+        for (const a of parsedArtifacts) await putArtifact(a)
+        sessions.value = parsedSessions
+        const map: Record<string, ArtifactEnvelope> = {}
+        for (const a of parsedArtifacts) map[a.id] = a
+        artifacts.value = map
+        console.info(
+          `[Chat] 已从 localStorage 迁移到 IndexedDB：${parsedSessions.length} 个会话 / ${parsedArtifacts.length} 个产物`,
+        )
+      }
+
+      await setMeta(META_KEYS.MIGRATED_FROM_LOCAL_STORAGE, true)
     } catch (e) {
-      console.warn('[Chat] 加载本地会话失败', e)
+      console.warn('[Chat] 迁移 localStorage 数据失败', e)
     }
+  }
+
+  /** 水合：从 IndexedDB 读取会话与产物（幂等，可重复 await） */
+  let hydratePromise: Promise<void> | null = null
+  function hydrate(): Promise<void> {
+    if (hydratePromise) return hydratePromise
+    hydratePromise = (async () => {
+      // 水合期间用户可能已经新建了会话 / 产生产物，先留一份快照，
+      // 读完之后要合并回去，否则会把他刚发的那条消息冲掉。
+      const pendingSessions = [...sessions.value]
+      const pendingArtifacts = { ...artifacts.value }
+      const pendingCurrentId = currentSessionId.value
+
+      try {
+        const [storedSessions, storedArtifacts] = await Promise.all([
+          getAllSessions(),
+          getAllArtifacts(),
+        ])
+
+        if (storedSessions.length) {
+          sessions.value = mergeById(storedSessions, pendingSessions)
+          const remembered = await getMeta<string>('currentSessionId')
+          const valid = remembered && sessions.value.some((s) => s.id === remembered)
+          currentSessionId.value = valid
+            ? (remembered as string)
+            : pendingCurrentId && sessions.value.some((s) => s.id === pendingCurrentId)
+              ? pendingCurrentId
+              : pickLatestSessionId(sessions.value)
+        }
+
+        if (storedArtifacts.length) {
+          const map: Record<string, ArtifactEnvelope> = {}
+          for (const a of storedArtifacts) map[a.id] = a
+          // 同样把水合期间新产生的产物合并回来
+          artifacts.value = { ...map, ...pendingArtifacts }
+        }
+
+        // IndexedDB 里没数据 → 首次启动，从 localStorage 导入
+        if (!storedSessions.length) {
+          await importLegacyFromLocalStorage()
+          sessions.value = mergeById(sessions.value, pendingSessions)
+          if (sessions.value.length) {
+            currentSessionId.value = pickLatestSessionId(sessions.value)
+          }
+        }
+      } catch (e) {
+        console.warn('[Chat] 加载本地会话失败', e)
+      } finally {
+        hydrated.value = true
+      }
+    })()
+    return hydratePromise
+  }
+
+  /** 合并两个列表：base 在前，extra 里 base 没有的追加在后（按 id 去重） */
+  function mergeById(base: ChatSession[], extra: ChatSession[]): ChatSession[] {
+    if (!extra.length) return base
+    const seen = new Set(base.map((s) => s.id))
+    const merged = [...base]
+    for (const s of extra) {
+      if (!seen.has(s.id)) {
+        seen.add(s.id)
+        merged.push(s)
+      }
+    }
+    return merged
+  }
+
+  /** 取最近更新的会话 id */
+  function pickLatestSessionId(list: ChatSession[]): string {
+    if (!list.length) return ''
+    let best = list[0]
+    for (const s of list) {
+      if ((s.updatedAt ?? 0) > (best.updatedAt ?? 0)) best = s
+    }
+    return best.id
   }
 
   /* ---------- 会话管理 ---------- */
@@ -253,7 +426,9 @@ export const useChatStore = defineStore('chat', () => {
     }
     sessions.value.push(session)
     currentSessionId.value = session.id
-    persistSessions()
+    markSessionDirty(session.id)
+    void rememberCurrentSession()
+    void enforceSessionLimit()
     return session
   }
 
@@ -266,7 +441,7 @@ export const useChatStore = defineStore('chat', () => {
   function switchSession(id: string) {
     if (sessions.value.some((s) => s.id === id)) {
       currentSessionId.value = id
-      persistSessions()
+      void rememberCurrentSession()
     }
   }
 
@@ -276,8 +451,12 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value.splice(idx, 1)
     if (currentSessionId.value === id) {
       currentSessionId.value = sessions.value[sessions.value.length - 1]?.id ?? ''
+      void rememberCurrentSession()
     }
-    persistSessions()
+    // 会话没了，产物也就没人引用了 —— 让 GC 回收
+    dirtySessions.delete(id)
+    void dbDeleteSession(id).catch((e) => console.warn('[Chat] 删除会话失败', id, e))
+    scheduleArtifactGC()
   }
 
   function setSessionTitle(id: string, title: string) {
@@ -285,8 +464,26 @@ export const useChatStore = defineStore('chat', () => {
     if (s) {
       s.title = title
       s.updatedAt = Date.now()
-      persistSessions()
+      markSessionDirty(id)
     }
+  }
+
+  /** 会话数超限时删掉最旧的一个 */
+  async function enforceSessionLimit() {
+    if (sessions.value.length <= MAX_SESSIONS) return
+    const sorted = [...sessions.value].sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    const excess = sorted.slice(0, sessions.value.length - MAX_SESSIONS)
+    for (const s of excess) {
+      const idx = sessions.value.findIndex((x) => x.id === s.id)
+      if (idx >= 0) sessions.value.splice(idx, 1)
+      dirtySessions.delete(s.id)
+      try {
+        await dbDeleteSession(s.id)
+      } catch (e) {
+        console.warn('[Chat] 清理超限会话失败', s.id, e)
+      }
+    }
+    scheduleArtifactGC()
   }
 
   /** 用首条用户消息自动命名会话 */
@@ -333,7 +530,7 @@ export const useChatStore = defineStore('chat', () => {
     session.currentLeafId = message.id
     session.updatedAt = Date.now()
     autoTitle(session)
-    persistSessions()
+    markSessionDirty(session.id)
     return message
   }
 
@@ -342,7 +539,8 @@ export const useChatStore = defineStore('chat', () => {
     const m = findMessage(messageId)
     if (!m) return
     Object.assign(m, patch)
-    persistSessions()
+    const session = currentSession.value
+    if (session) markSessionDirty(session.id)
   }
 
   /**
@@ -434,7 +632,7 @@ export const useChatStore = defineStore('chat', () => {
 
     session.currentLeafId = deepestLeaf(session, target.id)
     session.updatedAt = Date.now()
-    persistSessions()
+    markSessionDirty(session.id)
   }
 
   /** 直接跳到某个叶子（分支树里点节点用） */
@@ -444,7 +642,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!session.messages.some((m) => m.id === leafId)) return
     session.currentLeafId = leafId
     session.updatedAt = Date.now()
-    persistSessions()
+    markSessionDirty(session.id)
   }
 
   /* ---------- 产物 ---------- */
@@ -455,9 +653,12 @@ export const useChatStore = defineStore('chat', () => {
     if (m) {
       const ids = m.artifactIds ?? []
       if (!ids.includes(artifact.id)) m.artifactIds = [...ids, artifact.id]
+      const session = currentSession.value
+      if (session) markSessionDirty(session.id)
     }
-    persistArtifacts()
-    persistSessions()
+    // 先落产物，再排队 GC —— GC 会看 artifactIds 引用，顺序不能反
+    void persistArtifact(artifact)
+    scheduleArtifactGC()
   }
 
   function getArtifact(id: string): ArtifactEnvelope | undefined {
@@ -480,7 +681,9 @@ export const useChatStore = defineStore('chat', () => {
     session.messages = []
     session.currentLeafId = null
     session.updatedAt = Date.now()
-    persistSessions()
+    markSessionDirty(session.id)
+    // 消息清空后原产物无人引用，交给 GC
+    scheduleArtifactGC()
   }
 
   function getConversationHistory(count: number = 20): ChatMessage[] {
@@ -577,7 +780,8 @@ ${accountRiskText}
 
   /* ---------- 初始化 ---------- */
 
-  loadFromStorage()
+  // 从 IndexedDB 水合（异步，UI 用 hydrated 区分加载态与空态）
+  void hydrate()
 
   return {
     // 状态
@@ -585,6 +789,8 @@ ${accountRiskText}
     isLoading,
     marketContext,
     useLangGraph,
+    hydrated,
+    hydrate,
 
     // 会话
     sessions,

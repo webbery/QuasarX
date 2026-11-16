@@ -1,5 +1,9 @@
 <template>
-  <div class="agent-metrics" :style="{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }">
+  <div
+    class="agent-metrics"
+    :class="{ 'is-compact': density === 'compact' }"
+    :style="density === 'compact' ? undefined : { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }"
+  >
     <div v-for="item in payload.items" :key="item.key" class="metric">
       <div class="metric-label">{{ item.label }}</div>
       <div class="metric-value" :class="toneClass(item)">{{ formatValue(item) }}</div>
@@ -16,9 +20,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MetricItem, MetricPayload } from '@/lib/agent/artifacts'
+import type { ArtifactDensity, MetricItem, MetricPayload } from '@/lib/agent/artifacts'
 
-const props = defineProps<{ payload: MetricPayload }>()
+const props = withDefaults(
+  defineProps<{
+    payload: MetricPayload
+    /** 呈现密度：紧凑态改为单行 chip 布局 */
+    density?: ArtifactDensity
+  }>(),
+  { density: 'full' },
+)
 
 /** 每行最多 5 列，指标少时自适应 */
 const columns = computed(() => Math.min(Math.max(props.payload.items.length, 1), 5))
@@ -77,6 +88,37 @@ function deltaClass(item: MetricItem): string {
 <style scoped>
 .agent-metrics {
   display: grid;
+}
+
+/* 紧凑态：单行 chip 布局，label 与 value 横排 */
+.agent-metrics.is-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-metrics.is-compact .metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 14px;
+  border: 1px solid rgba(74, 85, 104, 0.35);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.agent-metrics.is-compact .metric-label {
+  margin-bottom: 0;
+  font-size: 10.5px;
+}
+
+.agent-metrics.is-compact .metric-value {
+  font-size: 13px;
+}
+
+.agent-metrics.is-compact .metric-delta {
+  margin-top: 0;
+  font-size: 10px;
 }
 
 .metric {

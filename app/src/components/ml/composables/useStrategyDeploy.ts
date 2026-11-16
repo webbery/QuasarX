@@ -1,23 +1,18 @@
 // app/src/components/ml/composables/useStrategyDeploy.ts
 // 策略部署（含模型文件 multipart 上传）
 //
-// 流程：
-//   1. 预检：策略 JSON 中每个 XGBoostNode 的 modelFile 必须匹配 production/{inst}-{label}.json
-//      且 data.models 中每个 label 必须在本地 appData/models/{inst}/ 存在对应文件
-//   2. 构建 multipart FormData:
-//      - "script" part: 策略 JSON 字符串
-//      - "model_{label}" part: .json 字节
-//      - "model_{label}_meta" part: .meta.json 字节
-//   3. POST /v0/strategy (multipart) 部署
+// 实现已收敛到 app/src/composables/useStrategyControl.ts（统一 URL / 鉴权 / 错误处理）。
+// 本文件保留原有的 ElMessage 交互与 { deploying, lastError, deployStrategy } 形状，
+// 让 App.vue 等既有调用点零改动。
 
 import { ref } from 'vue'
-import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { ipcRenderer } from 'electron'
+import { useStrategyControl } from '@/composables/useStrategyControl'
 
 export function useStrategyDeploy() {
   const deploying = ref(false)
   const lastError = ref<string | null>(null)
+  const control = useStrategyControl()
 
   /**
    * 部署策略到 service（multipart + 模型文件）。
@@ -36,102 +31,28 @@ export function useStrategyDeploy() {
       return { success: false, message: 'empty strategyName' }
     }
 
-    // 1. 预检：收集所有 XGBoostNode 的 modelFile 引用
-    // 注意：StrategyFactory.getStrategyGraph() 返回的 nodes 是顶层字段，不是 graph.nodes
-    const xgbNodes: Array<{ id: string; label: string; modelFile: string }> = []
-    const nodes = strategyJson?.nodes ?? strategyJson?.graph?.nodes
-    if (Array.isArray(nodes)) {
-      for (const n of nodes) {
-        if (n?.data?.nodeType === 'xgboost') {
-          const label = n.data.label
-          const modelFile = n.data?.params?.modelFile?.value || n.data?.params?.modelFile || ''
-          xgbNodes.push({ id: n.id, label, modelFile })
-        }
-      }
-    }
-
-    // 校验 1：modelFile 必须匹配 production/{strategyName}-{label}.json（禁止跨策略）
-    for (const xn of xgbNodes) {
-      const expected = `production/${strategyName}-${xn.label}.json`
-      if (xn.modelFile !== expected) {
-        const msg = `XGBoostNode「${xn.label}」modelFile='${xn.modelFile}' 与策略「${strategyName}」不匹配，禁止跨策略引用（应为 '${expected}'）`
-        ElMessage.error(msg)
-        lastError.value = msg
-        return { success: false, message: msg }
-      }
-    }
-
-    // 校验 2：data.models 中的每个 label 都必须有本地文件
-    const bindings: Array<{ label: string; version: string }> = Array.isArray(strategyJson?.data?.models)
-      ? strategyJson.data.models.filter((m: any) => m?.label)
-      : []
-    const labels = new Set(xgbNodes.map(x => x.label))
-    // data.models 里的 label 必须与 XGBoostNode label 一致
-    for (const b of bindings) {
-      if (!labels.has(b.label)) {
-        const msg = `data.models 中的 label '${b.label}' 与任何 XGBoostNode 不匹配`
-        ElMessage.error(msg)
-        lastError.value = msg
-        return { success: false, message: msg }
-      }
-    }
-
-    // 2. 构建 multipart
     deploying.value = true
     try {
-      const form = new FormData()
-      form.append('script', JSON.stringify(strategyJson))
-      form.append('name', strategyName)
-      if (options?.force) {
-        form.append('force', 'true')
-      }
+      const result = await control.deploy(strategyName, strategyJson, options)
 
-      // 每个 XGBoostNode 都要附 model_{label} 和 model_{label}_meta parts
-      for (const xn of xgbNodes) {
-        const readRes = await ipcRenderer.invoke('model-read-for-deploy', {
-          strategyName,
-          label: xn.label,
-        })
-        if (!readRes?.success) {
-          const msg = `模型文件读取失败: ${readRes?.error || xn.label}`
-          ElMessage.error(msg)
-          lastError.value = msg
-          return { success: false, message: msg }
+      if (!result.success) {
+        lastError.value = result.message ?? null
+        // 冲突（同名策略在跑）不算错误，交给调用方决定是否强制覆盖
+        if (!result.conflict) {
+          ElMessage.error(result.message || '部署失败')
         }
-        // .json part
-        form.append(`model_${xn.label}`, new Blob([new Uint8Array(readRes.modelBytes)], { type: 'application/json' }), `${xn.label}.json`)
-        // .meta.json part
-        if (readRes.metaBytes && readRes.metaBytes.length > 0) {
-          form.append(`model_${xn.label}_meta`, new Blob([new Uint8Array(readRes.metaBytes)], { type: 'application/json' }), `${xn.label}.meta.json`)
+        return {
+          success: false,
+          message: result.message,
+          conflict: result.conflict,
+          running: result.running,
         }
       }
 
-      const server = localStorage.getItem('remote') || 'localhost:19107'
-      const token = localStorage.getItem('token') || ''
-
-      // 3. POST multipart
-      const resp = await axios.post(`https://${server}/v0/strategy`, form, {
-        headers: {
-          Authorization: token,
-          'Content-Type': 'multipart/form-data',
-        },
-      })
-
-      if (!resp.data?.message) {
-        ElMessage.warning(`部署响应缺少 message 字段: ${JSON.stringify(resp.data).slice(0, 200)}`)
-      }
-      ElMessage.success(`策略「${strategyName}」部署成功${resp.data?.running ? '（已运行）' : ''}`)
-      return { success: true, message: resp.data?.message, running: resp.data?.running }
-    } catch (err: any) {
-      const status = err.response?.status
-      const data = err.response?.data
-      if (status === 409 && data?.running) {
-        return { success: false, conflict: true, message: data?.message, running: true }
-      }
-      const msg = data?.message || err.message || '部署失败'
-      lastError.value = msg
-      ElMessage.error(`部署失败: ${msg}`)
-      return { success: false, message: msg }
+      ElMessage.success(
+        `策略「${strategyName}」部署成功${result.running ? '（已运行）' : ''}`,
+      )
+      return { success: true, message: result.message, running: result.running }
     } finally {
       deploying.value = false
     }

@@ -13,7 +13,7 @@
  */
 
 import type { Component } from 'vue'
-import type { ArtifactEnvelope, ArtifactKind } from './artifacts'
+import type { ArtifactDensity, ArtifactEnvelope, ArtifactKind } from './artifacts'
 
 export interface ArtifactSpec<TPayload = any> {
   kind: ArtifactKind
@@ -24,8 +24,12 @@ export interface ArtifactSpec<TPayload = any> {
   schema?: unknown
   /** 渲染组件 */
   render: Component
-  /** 是否支持紧凑形态 */
+  /** 是否支持紧凑形态（紧凑 ↔ 完整双密度） */
   compact?: boolean
+  /** 默认密度；不给则默认完整态 */
+  defaultDensity?: ArtifactDensity
+  /** 是否允许折叠（产物自身的 ui.collapsible 优先） */
+  collapsible?: boolean
   /** 是否支持导出 */
   exportable?: boolean
 }

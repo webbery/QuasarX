@@ -41,6 +41,8 @@ export type ArtifactKind = KnownArtifactKind | (string & {})
 export interface ArtifactUiHints {
   /** 建议渲染高度（px） */
   height?: number
+  /** 紧凑态的渲染高度（px）；不给则用渲染器默认值 */
+  compactHeight?: number
   /** 是否支持紧凑 ↔ 完整双密度 */
   collapsible?: boolean
   /** 默认是否折叠 */
@@ -48,6 +50,9 @@ export interface ArtifactUiHints {
   /** 是否可被钉住 */
   pin?: boolean
 }
+
+/** 产物呈现密度 */
+export type ArtifactDensity = 'compact' | 'full'
 
 /**
  * 所有产物共用的信封。
