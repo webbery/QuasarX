@@ -1465,8 +1465,11 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<Dividend
         b.low   = raw_bars[i].low;
         b.adj_factor = 1.0;
 
+        // 后复权：把「除权日及之后」的 bar 乘以该事件因子 prev_close/ex_ref (>1)，
+        // 使复权序列在除权日保持连续 —— 除权日 raw 价格按 1/factor 下跌，乘上因子后
+        // 与前一日的复权价衔接。
         for (size_t e = 0; e < events.size(); e++) {
-            if (events[e].ex_dividend_date > b.datetime && prev_closes[e] > 0) {
+            if (events[e].ex_dividend_date <= b.datetime && prev_closes[e] > 0) {
                 b.adj_factor *= calcEventAdjFactor(prev_closes[e], events[e]);
             }
         }

@@ -1938,18 +1938,36 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             Map<symbol_t, Vector<QuoteBar>> allBars;
             size_t maxBars = 0;
 
-            // 日终策略窗口化：只回溯最近 kDailyLookback 根日线即可覆盖
-            // 最长节点窗口（CTA_v16 EMD windowSize=120），同时避免全量历史回放开销。
-            constexpr size_t kDailyLookback = 160;
+            // 回溯根数必须覆盖 warmup,避免有效
+            // 特征不足直接跳过推理，整轮回放前段全部没有预测。
+            //
+            // 单位：**bar**。InferWarmupEpochsFromConfig 累计的是各节点的
+            // range / windowSize / warmup_period，本身就是 bar 口径、与频率无关。
+            constexpr size_t extraBars = 5;           // 预热后额外留几根供信号/组合/执行
+            constexpr size_t kFallbackLookback = 160; // warmup 推断失败时的兜底（bar）
+
+            int warmupEpochs = 0;
+            if (auto* strategySys = _handle->GetStrategySystem()) {
+                warmupEpochs = strategySys->GetWarmupEpochs(strategy);
+            }
+            // 纯 bar 口径：lookback = warmup + extraBars；推断失败才退回兜底值
+            const size_t lookback = warmupEpochs > 0
+                ? static_cast<size_t>(warmupEpochs) + extraBars
+                : kFallbackLookback;
+            if (warmupEpochs > 0 && lookback > kFallbackLookback) {
+                INFO("[StartDaily] Lookback = warmup({} bar) + {} extra = {} bar",
+                     warmupEpochs, extraBars, lookback);
+            }
+
             for (auto sym : symbolVec) {
                 String symStr = get_symbol(sym);
                 // 实盘输入由 WriteCloseData 保证最后一根即当日 bar，无需按 simDate 截断
                 auto bars = quoteDB.query("stock_1d", symStr, "", "", 0);
-                if (bars.size() > kDailyLookback) {
-                    bars.erase(bars.begin(), bars.end() - kDailyLookback);
+                if (bars.size() > lookback) {
+                    bars.erase(bars.begin(), bars.end() - lookback);
                 }
                 INFO("[StartDaily] Loaded {} bars (window {}) for symbol {}",
-                     bars.size(), kDailyLookback, symStr);
+                     bars.size(), lookback, symStr);
                 if (bars.empty()) {
                     WARN("[StartDaily] No historical data for {}", symStr);
                 }
@@ -1986,33 +2004,39 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
 
-                // 日终策略优化：数据已窗口化（最近 kDailyLookback 根），只需回放
+                // 日终策略优化：数据已窗口化（最近 lookback 根，见上），只需回放
                 // warmup + extraBars 根即可让状态型节点（EMD 滚动分解/CUSUM/MA）
                 // 在最后一根 bar 完成预热，无需全量回放历史。
                 //
                 // warmup 由 InferWarmupEpochsFromConfig 按 DAG 最长路径推断，已覆盖
                 // function(range) / emd(windowSize) / hmm(warmup_period) 三类节点。
-                // 早先这里恒为 startBar=0，是因为当时的推断只认 function 节点且对
-                // 数字型 range 硬转字符串会抛异常，导致 warmup 返回 0、跳跃退化成
-                // "只喂 extraBars 根"，EMD 永远出不了 NaN 占位分支。该推断已修复。
-                //
-                // 防御：推断失败（<=0）或数据窗不足时退回全量回放。宁可慢，
-                // 也不能让决策 bar 读到空状态。
-                int warmup = 0;
-                if (auto* strategySys = _handle->GetStrategySystem()) {
-                    warmup = strategySys->GetWarmupEpochs(strategy);
-                }
-                constexpr size_t extraBars = 5;
+                // 上一步已用同一个值决定 lookback，这里只做回放起点计算。
+                const int warmup = warmupEpochs;
                 size_t startBar = 0;
                 if (warmup > 0) {
                     size_t feedBars = static_cast<size_t>(warmup) + extraBars;
                     if (maxBars > feedBars) startBar = maxBars - feedBars;
                 }
+
+                // 预热门控：未预热完的 epoch 不产出 BUY/SELL（RunGraph 会跳过
+                // Signal/Portfolio/Execution 节点）。
+                //
+                // 这里此前一直漏调，导致 _warmupEpochs 恒为 0、IsInWarmup() 恒 false ——
+                // 日终回放在特征不足（xgb_probs = NaN）的前 139 个 epoch 照样产出决策，
+                // 与 StartBacktest / StartRealtime 的行为不一致。
+                // epoch 从 startBar+1 开始递增，因此 startBar == 0 时 epoch 1..warmup
+                // 正好落在预热期。
+                context.SetWarmupEpochs(warmup);
+
                 INFO("[StartDaily] warmup={} epochs, maxBars={}, startBar={}, replaying {} bar(s)",
                      warmup, maxBars, startBar, maxBars - startBar);
-                if (startBar == 0 && warmup <= 0) {
+                if (warmup <= 0) {
                     WARN("[StartDaily] warmup inference unavailable, falling back to full replay "
                          "of {} bars", maxBars);
+                } else if (maxBars <= static_cast<size_t>(warmup)) {
+                    WARN("[StartDaily] history too short for warmup: maxBars={} <= warmup={}; "
+                         "决策 bar 的特征可能不完整（stock_1d 至少需要 {} 根）",
+                         maxBars, warmup, warmup + extraBars);
                 }
 
                 uint64_t epoch = startBar;
@@ -2278,6 +2302,45 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     }
                     INFO("[StartDaily] Live mode: {} completed {} epochs, {} decisions",
                          strategy, epoch, set._items.size());
+
+                    // ── 日终自检：决策 bar 上的推理有效性 ──
+                    // 特征链断一环（历史不足 / 成交量单位错 / 基本面缺期）时，XGBoost 会
+                    // 因有效特征不足直接跳过推理，xgb_probs 保持 NaN，而下游信号节点照样
+                    // 可以基于 NaN 产出决策 —— 静默失败。这里在每轮收尾显式统计一次，
+                    // 有缺失就 WARN（并随邮件/Syslog 暴露），不再依赖人工翻日志。
+                    {
+                        int nPredicted = 0, nMissing = 0;
+                        String missingSyms;
+                        for (auto sym : symbolVec) {
+                            String prefix = get_symbol(sym) + ".";
+                            bool hasPrediction = false;
+                            for (int c = 0; c < 3; ++c) {
+                                String key = prefix + "xgb_probs_" + std::to_string(c);
+                                if (!context.exist(key)) continue;
+                                const auto& series = context.get<Vector<double>>(key);
+                                if (!series.empty() && std::isfinite(series.back())) {
+                                    hasPrediction = true;
+                                    break;
+                                }
+                            }
+                            if (hasPrediction) {
+                                ++nPredicted;
+                            } else {
+                                ++nMissing;
+                                missingSyms += get_symbol(sym) + " ";
+                            }
+                        }
+                        const int nTotal = nPredicted + nMissing;
+                        if (nMissing > 0) {
+                            WARN("[StartDaily][SelfCheck] {}: 决策 bar 上 {}/{} 个标的无有效预测"
+                                 "（特征不足），缺失: {}",
+                                 strategy, nMissing, nTotal, missingSyms.c_str());
+                        } else {
+                            INFO("[StartDaily][SelfCheck] {}: 全部 {} 个标的在决策 bar 上均有有效预测",
+                                 strategy, nTotal);
+                        }
+                    }
+
                     if (onComplete) onComplete(set);
                 } else {
                     String errDetail = flow._lastError.empty() ? "graph execution failed" : String(flow._lastError);
