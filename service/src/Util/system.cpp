@@ -1013,9 +1013,14 @@ int getProcessThreadCount() {
     fclose(f);
     return threads;
 #elif defined(_WIN32)
-    DWORD n = 0;
-    if (GetProcessAffinityMask(GetCurrentProcess(), &n)) {
-        // GetProcessAffinityMask 返回的是亲和性掩码，不是线程数；用工具函数兜底
+    DWORD_PTR processMask = 0, systemMask = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask)) {
+        // 统计掩码中置位的位数作为可用核心数
+        int count = 0;
+        for (size_t i = 0; i < sizeof(processMask) * 8; ++i) {
+            if (processMask & (DWORD_PTR(1) << i)) ++count;
+        }
+        return count;
     }
     return 0;
 #else
