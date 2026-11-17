@@ -19,6 +19,7 @@
         "test_cusum_calibrate",
         "test_macro",
         "test_quote_finance",
+        "test_dividend_adj",
         "test_node_unit",
         "test_formula_math",
         "test_multi_freq",

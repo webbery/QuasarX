@@ -4,7 +4,10 @@
 测试 FinanceDB::recalcSymbolAdjPrices() 和 calcEventAdjFactor()
 基于 BaoStock 涨跌幅复权法:
   adj_factor(T) = Close(T-1) / ex_div_ref_price
-  adj_price(t)  = org_price(t) × ∏[factor(e) for e where ex_date > t]
+  adj_price(t)  = org_price(t) × ∏[factor(e) for e where ex_date <= t]
+
+复权因子作用于「除权日当天及之后」的 bar：除权日 raw 价格已按 1/factor 下跌，
+乘回因子后与前一日复权价衔接 —— 后复权以最早价为基准向后调整。
 
 测试用例:
   1. 纯现金分红
@@ -27,39 +30,47 @@ from tool import check_response, BASE_URL, _DATA_DIR as SERVER_DATA_DIR
 # ── Python 黄金标准实现 ──
 
 def calc_event_adj_factor(prev_close, ex_div_price, cash_per_10=0,
-                          bonus_per_10=0, transfer_per_10=0):
+                          bonus_per_10=0, transfer_per_10=0,
+                          allot_per_10=0, allot_price=0):
     """
     计算单个分红事件的后复权因子 (BaoStock 涨跌幅复权法)
-    
+
     adj_factor = prev_close / ex_div_ref_price
-    
-    当 ex_div_price 缺失时反推:
-      ex_ref = prev_close * (1 - cash/10/prev_close + (bonus+transfer)/10)
+
+    当 ex_div_price 缺失时反推 (与 FinanceDB::calcEventAdjFactor 保持一致):
+      ex_ref = (prev_close - cash_per_share + allot_per_share × allot_price)
+               / (1 + stock_per_share + allot_per_share)
+    其中 stock_per_share = (bonus + transfer) / 10
     """
     if prev_close <= 0:
         return 1.0
-    
+
     ex_ref = ex_div_price
     if ex_ref <= 0:
-        cash_ratio = cash_per_10 / 10.0 / prev_close
-        stock_ratio = (bonus_per_10 + transfer_per_10) / 10.0
-        ex_ref = prev_close * (1.0 - cash_ratio + stock_ratio)
-    
+        cash_per_share  = cash_per_10 / 10.0
+        stock_per_share = (bonus_per_10 + transfer_per_10) / 10.0
+        allot_per_share = allot_per_10 / 10.0
+        divisor = 1.0 + stock_per_share + allot_per_share
+        if divisor <= 0:
+            return 1.0
+        ex_ref = (prev_close - cash_per_share
+                  + allot_per_share * allot_price) / divisor
+
     if ex_ref <= 0:
         return 1.0
-    
+
     return prev_close / ex_ref
 
 
 def calc_cumulative_adj_factor(bar_date, events):
     """
     计算某根 bar 的累乘复权因子
-    
-    adj_factor(t) = ∏[factor(e) for e where ex_date > t]
+
+    adj_factor(t) = ∏[factor(e) for e where ex_date <= t]
     """
     factor = 1.0
     for ev in events:
-        if ev['ex_dividend_date'] > bar_date:
+        if ev['ex_dividend_date'] <= bar_date:
             factor *= calc_event_adj_factor(
                 ev['prev_close'],
                 ev.get('ex_div_price', 0),
@@ -108,16 +119,18 @@ DIVIDEND_CSV_ROW = [
 # 事件: ex_date=2024-01-04, prev_close=10.50 (bar1), ex_div_price=10.30
 # factor = 10.50 / 10.30 = 1.019417...
 #
-# bar0 (2024-01-02): ex_date > bar0 → factor = 1.019417
-#   adj_close = 10.00 × 1.019417 = 10.19417
-# bar1 (2024-01-03): ex_date > bar1 → factor = 1.019417
-#   adj_close = 10.50 × 1.019417 = 10.70388
-# bar2 (2024-01-04): ex_date == bar2, NOT > → factor = 1.0
-#   adj_close = 10.20 × 1.0 = 10.20
-# bar3 (2024-01-05): factor = 1.0
-#   adj_close = 10.80
-# bar4 (2024-01-08): factor = 1.0
-#   adj_close = 11.00
+# 因子作用于「除权日当天及之后」的 bar（后复权以最早价为基准向后调整）
+#
+# bar0 (2024-01-02): ex_date > bar0 → factor = 1.0
+#   adj_close = 10.00 × 1.0 = 10.00
+# bar1 (2024-01-03): ex_date > bar1 → factor = 1.0
+#   adj_close = 10.50 × 1.0 = 10.50
+# bar2 (2024-01-04): ex_date == bar2 → factor = 1.019417
+#   adj_close = 10.20 × 1.019417 = 10.39806
+# bar3 (2024-01-05): factor = 1.019417
+#   adj_close = 10.80 × 1.019417 = 11.00971
+# bar4 (2024-01-08): factor = 1.019417
+#   adj_close = 11.00 × 1.019417 = 11.21359
 
 EXPECTED_FACTOR = 10.50 / 10.30  # ≈ 1.019417
 
@@ -236,32 +249,35 @@ class TestDividendAdjCalculation:
         # 按日期排序
         bars.sort(key=lambda b: b['datetime'])
 
-        # bar0 (2024-01-02): 事件在之后 → adj_factor = EXPECTED_FACTOR
+        # bar0 (2024-01-02): 事件在之后 → adj_factor = 1.0
         adj_close_0 = bars[0]['adj_close']
-        expected_0 = 10.00 * EXPECTED_FACTOR
+        expected_0 = 10.00
         assert abs(adj_close_0 - expected_0) < 1e-4, \
             f"bar0: {adj_close_0} != {expected_0}"
 
-        # bar1 (2024-01-03): 事件在之后 → adj_factor = EXPECTED_FACTOR
+        # bar1 (2024-01-03): 事件在之后 → adj_factor = 1.0
         adj_close_1 = bars[1]['adj_close']
-        expected_1 = 10.50 * EXPECTED_FACTOR
+        expected_1 = 10.50
         assert abs(adj_close_1 - expected_1) < 1e-4, \
             f"bar1: {adj_close_1} != {expected_1}"
 
-        # bar2 (2024-01-04): 除权日当天 → adj_factor = 1.0
+        # bar2 (2024-01-04): 除权日当天 → adj_factor = EXPECTED_FACTOR
         adj_close_2 = bars[2]['adj_close']
-        assert abs(adj_close_2 - 10.20) < 1e-4, \
-            f"bar2: {adj_close_2} != 10.20"
+        expected_2 = 10.20 * EXPECTED_FACTOR
+        assert abs(adj_close_2 - expected_2) < 1e-4, \
+            f"bar2: {adj_close_2} != {expected_2}"
 
-        # bar3 (2024-01-05): 事件在之前 → adj_factor = 1.0
+        # bar3 (2024-01-05): 事件在之前 → adj_factor = EXPECTED_FACTOR
         adj_close_3 = bars[3]['adj_close']
-        assert abs(adj_close_3 - 10.80) < 1e-4, \
-            f"bar3: {adj_close_3} != 10.80"
+        expected_3 = 10.80 * EXPECTED_FACTOR
+        assert abs(adj_close_3 - expected_3) < 1e-4, \
+            f"bar3: {adj_close_3} != {expected_3}"
 
-        # bar4 (2024-01-08): 事件在之前 → adj_factor = 1.0
+        # bar4 (2024-01-08): 事件在之前 → adj_factor = EXPECTED_FACTOR
         adj_close_4 = bars[4]['adj_close']
-        assert abs(adj_close_4 - 11.00) < 1e-4, \
-            f"bar4: {adj_close_4} != 11.00"
+        expected_4 = 11.00 * EXPECTED_FACTOR
+        assert abs(adj_close_4 - expected_4) < 1e-4, \
+            f"bar4: {adj_close_4} != {expected_4}"
 
     # ── Step 6: 验证 adj_open/high/low 也正确 ──
 
@@ -274,17 +290,17 @@ class TestDividendAdjCalculation:
         data = check_response(response)
         bars = sorted(data['data'], key=lambda b: b['datetime'])
 
-        # bar0: 所有 OHLC 都乘以 EXPECTED_FACTOR
+        # bar0: 事件之前 → factor = 1.0，OHLC 保持原值
         bar0 = bars[0]
-        assert abs(bar0['adj_open'] - 9.90 * EXPECTED_FACTOR) < 1e-4
-        assert abs(bar0['adj_high'] - 10.10 * EXPECTED_FACTOR) < 1e-4
-        assert abs(bar0['adj_low'] - 9.80 * EXPECTED_FACTOR) < 1e-4
+        assert abs(bar0['adj_open'] - 9.90) < 1e-4
+        assert abs(bar0['adj_high'] - 10.10) < 1e-4
+        assert abs(bar0['adj_low'] - 9.80) < 1e-4
 
-        # bar2: 除权日当天，adj = org (factor=1.0)
+        # bar2: 除权日当天，OHLC 都乘以 EXPECTED_FACTOR
         bar2 = bars[2]
-        assert abs(bar2['adj_open'] - 10.30) < 1e-4
-        assert abs(bar2['adj_high'] - 10.40) < 1e-4
-        assert abs(bar2['adj_low'] - 10.10) < 1e-4
+        assert abs(bar2['adj_open'] - 10.30 * EXPECTED_FACTOR) < 1e-4
+        assert abs(bar2['adj_high'] - 10.40 * EXPECTED_FACTOR) < 1e-4
+        assert abs(bar2['adj_low'] - 10.10 * EXPECTED_FACTOR) < 1e-4
 
     # ── 清理 ──
 
@@ -340,9 +356,17 @@ class TestDividendAdjFactorCalc:
         """ex_div_price 缺失时公式反推"""
         # 每10股派2元, prev_close=10.50
         factor = calc_event_adj_factor(10.50, 0, cash_per_10=2.0)
-        # ex_ref = 10.50 * (1 - 2/10/10.50) = 10.50 * (1 - 0.019048) = 10.30
-        expected_ex_ref = 10.50 * (1.0 - 2.0 / 10.0 / 10.50)
+        # ex_ref = (10.50 - 0.2) / 1.0 = 10.30
+        expected_ex_ref = (10.50 - 2.0 / 10.0) / 1.0
         expected_factor = 10.50 / expected_ex_ref
+        assert abs(factor - expected_factor) < 1e-10
+
+    def test_missing_ex_div_price_with_bonus(self):
+        """ex_div_price 缺失 + 送股: 按 baostock 公式反推 (除权参考价要除以送股比例)"""
+        # 10送3, prev_close=10.00
+        factor = calc_event_adj_factor(10.00, 0, bonus_per_10=3.0)
+        # ex_ref = (10.00 - 0) / (1 + 0.3) = 7.6923... → factor = 1.3
+        expected_factor = 1.3
         assert abs(factor - expected_factor) < 1e-10
 
     def test_zero_prev_close(self):
@@ -363,20 +387,20 @@ class TestDividendAdjFactorCalc:
             {'ex_dividend_date': '2024-06-15', 'prev_close': 12.00,
              'ex_div_price': 11.50, 'cash_per_10': 1.5},
         ]
-        
-        # bar at 2024-01-02: both events after → cumulative = f1 * f2
-        cum = calc_cumulative_adj_factor('2024-01-02', events)
         f1 = 10.50 / 10.30
         f2 = 12.00 / 11.50
-        assert abs(cum - f1 * f2) < 1e-10
-        
-        # bar at 2024-03-01: only second event after → cumulative = f2
+
+        # bar at 2024-01-02: 两个事件都还没发生 → cumulative = 1.0
+        cum = calc_cumulative_adj_factor('2024-01-02', events)
+        assert cum == 1.0
+
+        # bar at 2024-03-01: 只发生了第一个事件 → cumulative = f1
         cum2 = calc_cumulative_adj_factor('2024-03-01', events)
-        assert abs(cum2 - f2) < 1e-10
-        
-        # bar at 2024-07-01: no events after → cumulative = 1.0
+        assert abs(cum2 - f1) < 1e-10
+
+        # bar at 2024-07-01: 两个事件都已发生 → cumulative = f1 * f2
         cum3 = calc_cumulative_adj_factor('2024-07-01', events)
-        assert cum3 == 1.0
+        assert abs(cum3 - f1 * f2) < 1e-10
 
 
 @pytest.mark.usefixtures("auth_token")
@@ -418,7 +442,7 @@ class TestBaostockFormulaRegression:
 
     def _verify_baostock_factor(self, auth_token, symbol, stock_lines,
                                 dividend_row, expected_factor, tolerance=1e-4):
-        """通用流程：import stock → import dividend → recalc → 验证事件前 bar 的 adj_close"""
+        """通用流程：import stock → import dividend → recalc → 验证除权日 bar 的 adj_close"""
         kwargs = self._kwargs(auth_token)
         dividend_dir = SERVER_DATA_DIR / "dividend"
 
@@ -447,17 +471,30 @@ class TestBaostockFormulaRegression:
         response = requests.post(f"{BASE_URL}/dividend", **kwargs)
         check_response(response)
 
-        # 4. 验证事件前 bar 的 adj_close = org_close × baostock_factor
+        # 4. 验证除权日 bar 的 adj_close = org_close × baostock_factor
+        #    后复权口径：因子作用于「除权日当天及之后」，除权日之前的 bar 保持原值
         params = {'table': TEST_TABLE, 'symbol': symbol}
         response = requests.get(f"{BASE_URL}/quote", params=params, **kwargs)
         data = check_response(response)
         bars = sorted(data['data'], key=lambda b: b['datetime'])
 
-        # 第一根 bar 早于 ex_div_date，应累计因子
-        pre_event_bar = bars[0]
-        org_close = pre_event_bar['close']
-        actual_adj_close = pre_event_bar['adj_close']
+        ex_date = dividend_row[DIVIDEND_CSV_HEADER.index('ex_dividend_date')]
+        bar_dates = [str(b['datetime'])[:10] for b in bars]
+        ex_bars = [b for b, d in zip(bars, bar_dates) if d == ex_date]
+        assert len(ex_bars) == 1, \
+            f"{symbol}: 期望恰好 1 根除权日 bar ({ex_date}), 实际 {len(ex_bars)}"
+        ex_bar = ex_bars[0]
+
+        org_close = ex_bar['close']
+        actual_adj_close = ex_bar['adj_close']
         expected_adj_close = org_close * expected_factor
+
+        # 除权日之前的 bar 不应被复权（factor = 1.0），否则序列在除权日断裂
+        pre_bars = [b for b, d in zip(bars, bar_dates) if d < ex_date]
+        for pre_bar in pre_bars:
+            assert abs(pre_bar['adj_close'] - pre_bar['close']) < tolerance, \
+                f"{symbol}: 除权前 bar {pre_bar['datetime']} 不应复权, " \
+                f"adj_close={pre_bar['adj_close']} != close={pre_bar['close']}"
 
         # 清理
         self._cleanup(auth_token, symbol)

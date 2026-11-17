@@ -117,8 +117,8 @@ class TestDividendRecalc:
 
     测试逻辑:
       导入 15 根 bar → 导入分红(10派2) → recalc → 验证 adj_close
-      除权前 bar0-10: adj_close = org_close × ADJ_FACTOR
-      除权后 bar11-14: adj_close = org_close (factor=1.0)
+      除权前 bar0-10: adj_close = org_close (factor=1.0)
+      除权日及之后 bar11-14: adj_close = org_close × ADJ_FACTOR
     """
 
     @pytest.mark.timeout(10)
@@ -173,8 +173,9 @@ class TestDividendRecalc:
         """
         验证 adj_close 正确性
 
-        除权前 (bar 0-10): adj_close = org_close × (11.00/10.80)
-        除权日及之后 (bar 11-14): adj_close = org_close
+        后复权口径（因子作用于除权日当天及之后）：
+        除权前 (bar 0-10): adj_close = org_close
+        除权日及之后 (bar 11-14): adj_close = org_close × (11.00/10.80)
         """
         kwargs = make_kwargs(auth_token)
         resp = requests.get(f"{BASE_URL}/quote",
@@ -184,23 +185,25 @@ class TestDividendRecalc:
         bars = sorted(data['data'], key=lambda b: b['datetime'])
         assert len(bars) == 15
 
-        # 除权前: bar 0 (close=10.00)
-        expected_0 = 10.00 * ADJ_FACTOR
+        # 除权前: bar 0 (close=10.00, factor=1.0)
+        expected_0 = 10.00
         assert abs(bars[0]['adj_close'] - expected_0) < 1e-3, \
             f"bar0: {bars[0]['adj_close']:.4f} != {expected_0:.4f}"
 
-        # 除权前: bar 10 (close=11.00, 除权前最后一根)
-        expected_10 = 11.00 * ADJ_FACTOR
+        # 除权前: bar 10 (close=11.00, 除权前最后一根, factor=1.0)
+        expected_10 = 11.00
         assert abs(bars[10]['adj_close'] - expected_10) < 1e-3, \
             f"bar10: {bars[10]['adj_close']:.4f} != {expected_10:.4f}"
 
-        # 除权日: bar 11 (close=10.80, factor=1.0)
-        assert abs(bars[11]['adj_close'] - 10.80) < 1e-3, \
-            f"bar11: {bars[11]['adj_close']:.4f} != 10.80"
+        # 除权日: bar 11 (close=10.80, factor=ADJ_FACTOR → 复权后衔接前一日 11.00)
+        expected_11 = 10.80 * ADJ_FACTOR
+        assert abs(bars[11]['adj_close'] - expected_11) < 1e-3, \
+            f"bar11: {bars[11]['adj_close']:.4f} != {expected_11:.4f}"
 
-        # 除权后: bar 14 (close=11.40)
-        assert abs(bars[14]['adj_close'] - 11.40) < 1e-3, \
-            f"bar14: {bars[14]['adj_close']:.4f} != 11.40"
+        # 除权后: bar 14 (close=11.40, factor=ADJ_FACTOR)
+        expected_14 = 11.40 * ADJ_FACTOR
+        assert abs(bars[14]['adj_close'] - expected_14) < 1e-3, \
+            f"bar14: {bars[14]['adj_close']:.4f} != {expected_14:.4f}"
 
     @pytest.mark.timeout(10)
     def test_6_verify_adj_ohlc(self, auth_token):
@@ -212,17 +215,17 @@ class TestDividendRecalc:
         data = check_response(resp)
         bars = sorted(data['data'], key=lambda b: b['datetime'])
 
-        # bar 0: OHLC 都乘以 ADJ_FACTOR
+        # bar 0: 除权前 → factor = 1.0，OHLC 保持原值
         bar0 = bars[0]
-        assert abs(bar0['adj_open'] - 10.00 * ADJ_FACTOR) < 1e-3
-        assert abs(bar0['adj_high'] - 10.10 * ADJ_FACTOR) < 1e-3
-        assert abs(bar0['adj_low'] - 9.90 * ADJ_FACTOR) < 1e-3
+        assert abs(bar0['adj_open'] - 10.00) < 1e-3
+        assert abs(bar0['adj_high'] - 10.10) < 1e-3
+        assert abs(bar0['adj_low'] - 9.90) < 1e-3
 
-        # bar 11 (除权日): adj = org (factor=1.0)
+        # bar 11 (除权日): OHLC 都乘以 ADJ_FACTOR
         bar11 = bars[11]
-        assert abs(bar11['adj_open'] - 10.80) < 1e-3
-        assert abs(bar11['adj_high'] - 10.90) < 1e-3
-        assert abs(bar11['adj_low'] - 10.70) < 1e-3
+        assert abs(bar11['adj_open'] - 10.80 * ADJ_FACTOR) < 1e-3
+        assert abs(bar11['adj_high'] - 10.90 * ADJ_FACTOR) < 1e-3
+        assert abs(bar11['adj_low'] - 10.70 * ADJ_FACTOR) < 1e-3
 
     @pytest.mark.timeout(10)
     def test_9_cleanup(self, auth_token):

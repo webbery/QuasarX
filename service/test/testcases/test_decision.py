@@ -440,7 +440,9 @@ INTEG_DIVIDEND_HEADER = [
     "cash_per_10", "allot_per_10", "allot_price", "ex_div_price", "action_type"
 ]
 
-# 10送3, prev_close=10.00 → baostock factor = 1.30, adj_close for bar0 = 13.00
+# 10送3, prev_close=10.00 → baostock factor = 1.30
+# 后复权口径（因子作用于除权日当天及之后）: bar0 (除权前) adj_close = 10.00,
+# bar1 (除权日) adj_close = 10.00 × 1.30 = 13.00
 INTEG_STOCK_LINES = [
     "datetime,open,close,high,low,volume,turnover",
     "2024-07-01 00:00:00,9.90,10.00,10.10,9.80,100000,1000000",
@@ -683,10 +685,16 @@ class TestDailyExecutionWithDividend:
             assert data["count"] == 2, f"期望 2 根 bar, 实际 {data['count']}"
 
             bars = sorted(data["data"], key=lambda b: b["datetime"])
-            bar0 = bars[0]  # 事件前
-            expected_adj = bar0["close"] * INTEG_BAOSTOCK_FACTOR
-            assert abs(bar0["adj_close"] - expected_adj) < 1e-4, \
-                f"adj_close={bar0['adj_close']}, expected={expected_adj}"
+            bar0 = bars[0]  # 除权前
+            bar1 = bars[1]  # 除权日
+
+            # 后复权口径：因子作用于除权日当天及之后，除权前的 bar 保持原值
+            assert abs(bar0["adj_close"] - bar0["close"]) < 1e-4, \
+                f"除权前 bar 不应复权: adj_close={bar0['adj_close']}, close={bar0['close']}"
+
+            expected_adj = bar1["close"] * INTEG_BAOSTOCK_FACTOR
+            assert abs(bar1["adj_close"] - expected_adj) < 1e-4, \
+                f"adj_close={bar1['adj_close']}, expected={expected_adj}"
 
         finally:
             _cleanup_integ_data(auth_token)
@@ -795,19 +803,31 @@ class TestDailyExecutionWithDividend:
             # 绩效需要 >= 2 个交易日的序列才能算收益/波动率，所以范围必须覆盖
             # 导入的两根 bar（2024-07-01 建仓 + 2024-07-02 除权日），
             # 只查除权日当天必然拿到 "insufficient data"。
-            resp = requests.get(
-                f"{BASE_URL}/strategy/performance",
-                params={
-                    "name": integ_strategy_name,
-                    "start": "2024-07-01",
-                    "end": bar_date
-                },
-                **kwargs,
-            )
-            assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
-            perf_data = resp.json()
+            #
+            # 必须轮询：持仓快照是在日终管线最末尾才落库的（决策先写进
+            # SendSummaryEmail，快照在 onComplete 回调里写），决策可见时
+            # daily_positions 往往还是空的 —— 查一次必然拿到
+            # "no position data found"。
+            deadline = time.time() + 20
+            perf_data = {}
+            while time.time() < deadline:
+                resp = requests.get(
+                    f"{BASE_URL}/strategy/performance",
+                    params={
+                        "name": integ_strategy_name,
+                        "start": "2024-07-01",
+                        "end": bar_date
+                    },
+                    **kwargs,
+                )
+                assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
+                perf_data = resp.json()
+                if "metrics" in perf_data:
+                    break
+                time.sleep(0.5)
 
-            assert perf_data["strategy"] == integ_strategy_name
+            assert perf_data.get("strategy") == integ_strategy_name, \
+                f"绩效响应策略名不符: {perf_data}"
             assert "metrics" in perf_data, f"缺少 metrics 字段: {perf_data}"
             for key in ["total_return", "sharpe_ratio", "max_drawdown"]:
                 assert key in perf_data["metrics"], \
@@ -960,25 +980,26 @@ TF_STOCK_LINES_NO_DIV = [
 ]
 
 # 单次分红场景：3 根 bar + 10送5 分红
+# 除权参考价 = 21.00 / 1.5 = 14.00 → 除权日 raw 价取 14.00（与参考价一致）
 TF_STOCK_LINES_SINGLE_DIV = [
     "datetime,open,close,high,low,volume,turnover",
     "2025-04-01 00:00:00,20.00,21.00,21.50,19.80,200000,4200000",  # 除权前
-    "2025-04-02 00:00:00,21.00,22.00,22.30,20.90,250000,5500000",  # 除权日
+    "2025-04-02 00:00:00,14.00,14.00,14.40,13.80,250000,3500000",  # 除权日
     "2025-04-03 00:00:00,14.00,14.50,14.80,13.90,300000,4350000",  # 除权后
 ]
 
 # 多次分红场景：5 根 bar + 2 次分红（验证累积复权）
 # 时间线：
-#   2025-01-01: close=100 (分红前)
+#   2025-01-01: close=100 (分红1前)
 #   2025-02-01: 10送2, factor=1.2
 #   2025-03-01: close=60  (分红1后，分红2前)
 #   2025-04-01: 10送3, factor=1.3
 #   2025-05-01: close=50  (分红2后)
 #
-# 累积复权因子：
-#   2025-01-01: 1.2 × 1.3 = 1.56 (两次分红都在之后)
-#   2025-03-01: 1.3 (只有分红2在之后)
-#   2025-05-01: 1.0 (无后续分红)
+# 累积复权因子（后复权：因子作用于除权日当天及之后）：
+#   2025-01-01: 1.0 (两次分红都还没发生)
+#   2025-03-01: 1.2 (只有分红1已发生)
+#   2025-05-01: 1.2 × 1.3 = 1.56 (两次分红都已发生)
 TF_STOCK_LINES_MULTI_DIV = [
     "datetime,open,close,high,low,volume,turnover",
     "2025-01-01 00:00:00,99.00,100.00,101.00,98.00,100000,10000000",
@@ -1206,10 +1227,10 @@ class TestTickflowDailyStrategy:
         3. 触发 recalcSymbolAdjPrices
         4. 验证 adj_close = org_close × factor
 
-        复权规则：ex_dividend_date > bar.datetime 时才调整
-        除权前 bar (2025-04-01): close=21.00 → adj_close = 21.00 × 1.5 = 31.50
-        除权日 bar (2025-04-02): close=22.00 → adj_close = 22.00 × 1.0 = 22.00 (不调整)
-        除权后 bar (2025-04-03): close=14.50 → adj_close = 14.50 × 1.0 = 14.50 (不调整)
+        复权规则（后复权）：因子作用于除权日当天及之后的 bar
+        除权前 bar (2025-04-01): close=21.00 → adj_close = 21.00 × 1.0 = 21.00 (不调整)
+        除权日 bar (2025-04-02): close=14.00 → adj_close = 14.00 × 1.5 = 21.00 (乘回因子，与前一日衔接)
+        除权后 bar (2025-04-03): close=14.50 → adj_close = 14.50 × 1.5 = 21.75
         """
         if is_backtest:
             pytest.skip("仅在 tickflow 模式下运行")
@@ -1243,21 +1264,27 @@ class TestTickflowDailyStrategy:
 
             bars = sorted(data["data"], key=lambda b: b["datetime"])
 
-            # 除权前 bar (2025-04-01 < 2025-04-02): adj_close = close × factor
+            # 除权前 bar (2025-04-01 < 2025-04-02): 不复权，adj_close = close
             bar0 = bars[0]
-            expected_adj0 = bar0["close"] * TF_SINGLE_FACTOR
+            expected_adj0 = bar0["close"]
             assert abs(bar0["adj_close"] - expected_adj0) < 0.01, \
                 f"除权前 adj_close={bar0['adj_close']}, 期望={expected_adj0}"
 
-            # 除权日 bar (2025-04-02 == 2025-04-02): adj_close = close (不调整)
+            # 除权日 bar (2025-04-02 == 2025-04-02): adj_close = close × factor
             bar1 = bars[1]
-            assert abs(bar1["adj_close"] - bar1["close"]) < 0.01, \
-                f"除权日 adj_close={bar1['adj_close']} 应等于 close={bar1['close']} (不调整)"
+            expected_adj1 = bar1["close"] * TF_SINGLE_FACTOR
+            assert abs(bar1["adj_close"] - expected_adj1) < 0.01, \
+                f"除权日 adj_close={bar1['adj_close']}, 期望={expected_adj1} (因子={TF_SINGLE_FACTOR})"
 
-            # 除权后 bar (2025-04-03 > 2025-04-02): adj_close = close (不调整)
+            # 复权序列在除权日必须连续：除权日复权价 == 前一日复权价
+            assert abs(bar1["adj_close"] - bar0["adj_close"]) < 0.01, \
+                f"除权日复权价 {bar1['adj_close']} 应与前一日 {bar0['adj_close']} 连续"
+
+            # 除权后 bar (2025-04-03 > 2025-04-02): adj_close = close × factor
             bar2 = bars[2]
-            assert abs(bar2["adj_close"] - bar2["close"]) < 0.01, \
-                f"除权后 adj_close={bar2['adj_close']} 应等于 close={bar2['close']} (不调整)"
+            expected_adj2 = bar2["close"] * TF_SINGLE_FACTOR
+            assert abs(bar2["adj_close"] - expected_adj2) < 0.01, \
+                f"除权后 adj_close={bar2['adj_close']}, 期望={expected_adj2} (因子={TF_SINGLE_FACTOR})"
 
         finally:
             _cleanup_tf_data(auth_token)
@@ -1273,15 +1300,15 @@ class TestTickflowDailyStrategy:
           2025-04-01: 10送3, factor=1.3
           2025-05-01: close=50  (分红2后)
 
-        累积复权因子：
-          2025-01-01: 1.2 × 1.3 = 1.56 (两次分红都在之后)
-          2025-03-01: 1.3 (只有分红2在之后)
-          2025-05-01: 1.0 (无后续分红)
+        累积复权因子（后复权：因子作用于除权日当天及之后）：
+          2025-01-01: 1.0 (两次分红都还没发生)
+          2025-03-01: 1.2 (只有分红1已发生)
+          2025-05-01: 1.2 × 1.3 = 1.56 (两次分红都已发生)
 
         期望 adj_close：
-          2025-01-01: 100 × 1.56 = 156
-          2025-03-01: 60 × 1.3 = 78
-          2025-05-01: 50 × 1.0 = 50
+          2025-01-01: 100 × 1.0 = 100
+          2025-03-01: 60 × 1.2 = 72
+          2025-05-01: 50 × 1.56 = 78
         """
         if is_backtest:
             pytest.skip("仅在 tickflow 模式下运行")
@@ -1315,22 +1342,23 @@ class TestTickflowDailyStrategy:
 
             bars = sorted(data["data"], key=lambda b: b["datetime"])
 
-            # 2025-01-01: 两次分红都在之后，累积因子 = 1.2 × 1.3 = 1.56
+            # 2025-01-01: 两次分红都还没发生，因子 = 1.0
             bar0 = bars[0]
-            expected_adj0 = bar0["close"] * TF_CUMULATIVE_FACTOR  # 100 × 1.56 = 156
+            expected_adj0 = bar0["close"]  # 100 × 1.0 = 100
             assert abs(bar0["adj_close"] - expected_adj0) < 0.01, \
-                f"2025-01-01 adj_close={bar0['adj_close']}, 期望={expected_adj0} (累积因子={TF_CUMULATIVE_FACTOR})"
+                f"2025-01-01 adj_close={bar0['adj_close']}, 期望={expected_adj0}"
 
-            # 2025-03-01: 只有分红2在之后，因子 = 1.3
+            # 2025-03-01: 只有分红1已发生，因子 = 1.2
             bar1 = bars[1]
-            expected_adj1 = bar1["close"] * TF_FACTOR_2  # 60 × 1.3 = 78
+            expected_adj1 = bar1["close"] * TF_FACTOR_1  # 60 × 1.2 = 72
             assert abs(bar1["adj_close"] - expected_adj1) < 0.01, \
-                f"2025-03-01 adj_close={bar1['adj_close']}, 期望={expected_adj1} (因子={TF_FACTOR_2})"
+                f"2025-03-01 adj_close={bar1['adj_close']}, 期望={expected_adj1} (因子={TF_FACTOR_1})"
 
-            # 2025-05-01: 无后续分红，因子 = 1.0
+            # 2025-05-01: 两次分红都已发生，累积因子 = 1.2 × 1.3 = 1.56
             bar2 = bars[2]
-            assert abs(bar2["adj_close"] - bar2["close"]) < 0.01, \
-                f"2025-05-01 adj_close={bar2['adj_close']} 应等于 close={bar2['close']}"
+            expected_adj2 = bar2["close"] * TF_CUMULATIVE_FACTOR  # 50 × 1.56 = 78
+            assert abs(bar2["adj_close"] - expected_adj2) < 0.01, \
+                f"2025-05-01 adj_close={bar2['adj_close']}, 期望={expected_adj2} (累积因子={TF_CUMULATIVE_FACTOR})"
 
         finally:
             _cleanup_tf_data(auth_token)
