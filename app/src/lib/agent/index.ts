@@ -43,17 +43,22 @@ export function removeAgentConfig(): void {
 }
 
 export function createLLM(config: AgentConfig): LLMInstance {
+  // 不自动重试：额度耗尽（429）重试无意义，只会让用户干等。
+  // 三层都要关：LangChain AsyncCaller（默认 6 次重试）→ SDK 客户端（默认 2 次）→ 上层图节点。
+  const maxRetries = 0
+
   const commonOptions = {
     model: config.model,
     temperature: 0.7,
     maxTokens: 4096,
+    maxRetries,
   }
 
   switch (config.protocol) {
     case "openai":
       return new ChatOpenAI({
         ...commonOptions,
-        configuration: { baseURL: config.url },
+        configuration: { baseURL: config.url, maxRetries },
         apiKey: config.apiKey,
       })
     case "anthropic":
@@ -61,11 +66,12 @@ export function createLLM(config: AgentConfig): LLMInstance {
         ...commonOptions,
         apiKey: config.apiKey,
         anthropicApiUrl: config.url,
+        clientOptions: { maxRetries },
       })
     default:
       return new ChatOpenAI({
         ...commonOptions,
-        configuration: { baseURL: config.url },
+        configuration: { baseURL: config.url, maxRetries },
         apiKey: config.apiKey,
       })
   }

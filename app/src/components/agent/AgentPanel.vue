@@ -75,8 +75,9 @@
           </div>
           <div v-if="branchNodes > 1 || lastError" class="status-line">
             <span v-if="branchNodes > 1">{{ branchNodes }} 个分支点</span>
-            <span v-if="lastError" class="status-error" :data-tooltip="lastError">
-              <i class="fas fa-circle-exclamation"></i> 最近一次出错
+            <span v-if="lastError" class="status-error" :class="{ 'is-rate-limit': lastErrorType === 'rate_limit' }">
+              <i class="fas fa-circle-exclamation"></i>
+              <span class="status-error-text" :title="lastError">{{ lastError }}</span>
             </span>
           </div>
         </div>
@@ -103,6 +104,16 @@
             <div class="row">
               <span class="hint">Enter 发送 · Shift+Enter 换行</span>
               <button
+                v-if="isLoading"
+                type="button"
+                class="stop-btn"
+                data-tooltip="中止请求"
+                @click="session.abort"
+              >
+                <i class="fas fa-stop"></i>
+              </button>
+              <button
+                v-else
                 type="button"
                 class="send-btn"
                 :disabled="!canSend"
@@ -145,7 +156,7 @@ const chatStore = useChatStore()
 const session = useAgentSession()
 
 // 解构出来才能在模板里自动解包 ref
-const { loading: isLoading, currentAgent, lastError, events, tokenUsage } = session
+const { loading: isLoading, currentAgent, lastError, lastErrorType, events, tokenUsage } = session
 
 provide(AGENT_SESSION_KEY, session)
 
@@ -570,6 +581,24 @@ onMounted(() => {
   cursor: default;
 }
 
+.stop-btn {
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  border: none;
+  cursor: pointer;
+  background: #ef5350;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.stop-btn:hover {
+  background: #d32f2f;
+}
+
 /* 状态指示点 */
 .dot {
   width: 6px;
@@ -606,5 +635,22 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+
+.status-error i {
+  flex: 0 0 auto;
+}
+
+.status-error.is-rate-limit {
+  color: #ff9800;
+}
+
+/* 具体错误文案：单行截断，完整内容看 title */
+.status-error-text {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

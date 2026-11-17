@@ -25,6 +25,24 @@ export interface RunTurnOptions {
   assistantMessageId: string
 }
 
+/** 错误类型分类 */
+export type ErrorType = 'rate_limit' | 'aborted' | 'network' | 'unknown'
+
+/** 解析错误信息，返回错误类型 */
+function classifyError(message: string): ErrorType {
+  const lower = message.toLowerCase()
+  if (lower.includes('429') || lower.includes('too many requests') || lower.includes('quota') || lower.includes('rate limit')) {
+    return 'rate_limit'
+  }
+  if (lower.includes('abort') || lower.includes('cancel')) {
+    return 'aborted'
+  }
+  if (lower.includes('network') || lower.includes('fetch') || lower.includes('timeout')) {
+    return 'network'
+  }
+  return 'unknown'
+}
+
 export function useAgentSession() {
   const chatStore = useChatStore()
 
@@ -32,7 +50,9 @@ export function useAgentSession() {
   const loading = ref(false)
   const currentAgent = ref<AgentType>('supervisor')
   const lastError = ref<string | null>(null)
+  const lastErrorType = ref<ErrorType>('unknown')
   const tokenUsage = ref<ChatMessage['tokenUsage']>(undefined)
+  const abortController = ref<AbortController | null>(null)
 
   const artifactEvents = computed(() =>
     events.value.filter((e) => e.eventType === 'artifact' && !!e.payload),
@@ -97,8 +117,13 @@ export function useAgentSession() {
     chatStore.isLoading = true
     events.value = []
     lastError.value = null
+    lastErrorType.value = 'unknown'
     tokenUsage.value = undefined
     currentAgent.value = 'supervisor'
+
+    // 创建 AbortController 用于中止请求
+    const controller = new AbortController()
+    abortController.value = controller
 
     const onUsage: UsageReporter = (u) => {
       const cur = tokenUsage.value
@@ -142,6 +167,7 @@ export function useAgentSession() {
         onEvent,
         history,
         onUsage,
+        controller.signal,
       )
 
       const finalAnswer = extractFinalAnswer(result) || 'Agent 未返回回复'
@@ -159,14 +185,32 @@ export function useAgentSession() {
         error: undefined,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error('[AgentSession] 回合执行失败:', error)
-      lastError.value = message
+      // 以「本回合的 controller 是否被 abort」为准，底层 SDK 抛的错名各不相同
+      const aborted = controller.signal.aborted
+      const rawMessage = aborted
+        ? '请求已取消'
+        : error instanceof Error
+          ? error.message
+          : String(error)
+      const errorType: ErrorType = aborted ? 'aborted' : classifyError(rawMessage)
+      const friendly = aborted
+        ? '请求已取消'
+        : errorType === 'rate_limit'
+          ? 'AI 服务额度已用完，请稍后重试或充值 API 额度'
+          : `AI 服务暂时不可用：${rawMessage}`
+
+      if (!aborted) {
+        console.error('[AgentSession] 回合执行失败:', error)
+      }
+      // 错误只在状态栏展示具体原因，不占用 AI 的回复栏
+      lastError.value = friendly
+      lastErrorType.value = errorType
       chatStore.updateMessage(assistantMessageId, {
-        content: `抱歉，AI 服务暂时不可用：${message}`,
-        error: message,
+        content: '',
+        error: undefined,
       })
     } finally {
+      abortController.value = null
       loading.value = false
       chatStore.isLoading = false
     }
@@ -242,12 +286,23 @@ export function useAgentSession() {
     })
   }
 
+  /**
+   * 中止当前正在进行的请求
+   */
+  function abort() {
+    if (abortController.value) {
+      abortController.value.abort()
+      abortController.value = null
+    }
+  }
+
   return {
     // 状态
     events,
     loading,
     currentAgent,
     lastError,
+    lastErrorType,
     tokenUsage,
     artifactEvents,
     thoughtEvents,
@@ -257,5 +312,6 @@ export function useAgentSession() {
     regenerate,
     editAndSend,
     forkAndSend,
+    abort,
   }
 }

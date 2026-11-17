@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-msg" :class="[`is-${message.role}`, { 'is-editing': editing }]">
+  <div v-if="!isBlank" class="agent-msg" :class="[`is-${message.role}`, { 'is-editing': editing }]">
     <div class="msg-avatar">
       <i :class="message.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
     </div>
@@ -55,9 +55,12 @@
           <span></span><span></span><span></span>
         </div>
 
-        <!-- 错误 -->
-        <div v-if="message.error" class="msg-error">
-          <i class="fas fa-circle-exclamation"></i>{{ message.error }}
+        <!-- 错误（终结态：不提供重试，直接结束本轮对话） -->
+        <div v-if="message.error" class="msg-error" :class="[errorClass]">
+          <div class="error-content" :title="message.error">
+            <i class="fas" :class="errorIcon"></i>
+            <span class="error-text">{{ errorDisplayText }}</span>
+          </div>
         </div>
       </template>
 
@@ -123,6 +126,19 @@ const chatStore = useChatStore()
 const editing = ref(false)
 const draft = ref('')
 
+/**
+ * 完全空白的消息（如错误时留下的空 assistant 占位）不渲染，
+ * 避免对话流里出现孤立头像。加载中的占位不算空白，仍显示打字指示。
+ */
+const isBlank = computed(
+  () =>
+    !props.pending &&
+    !props.message.content &&
+    !props.message.error &&
+    !props.message.artifactIds?.length &&
+    !props.message.thoughts?.length,
+)
+
 const rendered = computed(() => renderMarkdown(props.message.content))
 
 const artifacts = computed(() => {
@@ -130,6 +146,48 @@ const artifacts = computed(() => {
   return ids
     .map((id) => chatStore.artifacts[id])
     .filter((a) => !!a)
+})
+
+/** 错误类型检测 */
+const errorLower = computed(() => (props.message.error || '').toLowerCase())
+
+const isRateLimitError = computed(() =>
+  errorLower.value.includes('429') ||
+  errorLower.value.includes('too many requests') ||
+  errorLower.value.includes('quota') ||
+  errorLower.value.includes('rate limit') ||
+  errorLower.value.includes('余额')
+)
+
+const isAbortedError = computed(() =>
+  errorLower.value.includes('abort') ||
+  errorLower.value.includes('取消') ||
+  errorLower.value.includes('cancel')
+)
+
+/** 错误显示文本 */
+const errorDisplayText = computed(() => {
+  if (isRateLimitError.value) {
+    return 'AI 服务额度已用完，请稍后重试或充值 API 额度'
+  }
+  if (isAbortedError.value) {
+    return '请求已取消'
+  }
+  return props.message.error || '未知错误'
+})
+
+/** 错误图标 */
+const errorIcon = computed(() => {
+  if (isRateLimitError.value) return 'fa-coins'
+  if (isAbortedError.value) return 'fa-ban'
+  return 'fa-circle-exclamation'
+})
+
+/** 错误样式类 */
+const errorClass = computed(() => {
+  if (isRateLimitError.value) return 'is-rate-limit'
+  if (isAbortedError.value) return 'is-aborted'
+  return ''
 })
 
 function startEdit() {
@@ -508,10 +566,37 @@ function submitEdit() {
 
 .msg-error {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 10px;
   font-size: 12px;
   color: #ef5350;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(239, 83, 80, 0.08);
+  border: 1px solid rgba(239, 83, 80, 0.2);
+}
+
+.msg-error.is-rate-limit {
+  color: #ff9800;
+  background: rgba(255, 152, 0, 0.08);
+  border-color: rgba(255, 152, 0, 0.25);
+}
+
+.msg-error.is-aborted {
+  color: #6f7b8a;
+  background: rgba(111, 123, 138, 0.08);
+  border-color: rgba(111, 123, 138, 0.2);
+}
+
+.error-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.error-text {
+  line-height: 1.4;
 }
 
 /* 用户消息的操作按钮在左下方更自然 */

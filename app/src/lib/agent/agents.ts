@@ -131,6 +131,7 @@ async function runAgentLoop(
   tools: StructuredToolInterface[],
   onEvent?: (event: AgentEvent) => void,
   onUsage?: UsageReporter,
+  signal?: AbortSignal,
   maxToolCalls = 30,
 ): Promise<AgentRunResult> {
   let llm: any;
@@ -151,9 +152,14 @@ async function runAgentLoop(
   let toolCallCount = 0;
 
   while (toolCallCount < maxToolCalls) {
+    // 已被用户中止：抛出而非返回空串，否则会话层会误显示「Agent 未返回回复」
+    if (signal?.aborted) {
+      throw new DOMException("请求已取消", "AbortError");
+    }
+
     let response: any;
     try {
-      response = await llm.invoke(currentMessages);
+      response = await llm.invoke(currentMessages, { signal });
     } catch (err) {
       console.error(`[LangGraph] ${agentType} LLM 调用失败:`, err);
       onEvent?.({
@@ -162,7 +168,8 @@ async function runAgentLoop(
         eventType: "error",
         timestamp: Date.now(),
       });
-      return { content: "AI 服务暂时不可用，请稍后重试。" };
+      // LLM 调用失败是致命错误：不能吞成一句通用文本，否则会话层无法展示错误和重试入口
+      throw err;
     }
 
     // 上报本次 LLM 调用的 token 用量
@@ -330,6 +337,7 @@ export function createAgentNode(
   onEvent?: (event: AgentEvent) => void,
   internalTools: StructuredToolInterface[] = [],
   onUsage?: UsageReporter,
+  signal?: AbortSignal,
 ) {
   return async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
     const { messages, userInput } = state;
@@ -361,7 +369,7 @@ export function createAgentNode(
       agentMessages.push(new HumanMessage(userInput));
     }
 
-    const { content, delegation } = await runAgentLoop(agentType, agentMessages, tools, onEvent, onUsage);
+    const { content, delegation } = await runAgentLoop(agentType, agentMessages, tools, onEvent, onUsage, signal);
 
     // 内部 Tool 转交：不结束图，把带 tool_calls 的 AIMessage 交回 Supervisor 路由到目标 Agent
     if (delegation) {

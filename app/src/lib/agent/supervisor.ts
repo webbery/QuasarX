@@ -38,7 +38,12 @@ function createSupervisorLLM() {
  * Supervisor 路由决策 Node
  * 分析当前状态，决定下一步交给哪个 Agent，或直接回复
  */
-async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEvent) => void, onUsage?: UsageReporter): Promise<Partial<GraphStateType>> {
+async function supervisorNode(
+  state: GraphStateType,
+  emitEvent?: (event: AgentEvent) => void,
+  onUsage?: UsageReporter,
+  signal?: AbortSignal,
+): Promise<Partial<GraphStateType>> {
   const { messages, userInput, iterationCount, maxIterations, shouldEnd } = state;
 
   // ★ 调试日志：打印收到的 state
@@ -132,7 +137,7 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
 
   let response: any;
   try {
-    response = await llm.invoke(supervisorMessages);
+    response = await llm.invoke(supervisorMessages, { signal });
   } catch (err) {
     console.error('[LangGraph] Supervisor LLM 调用失败:', err);
     emitEvent?.({
@@ -141,11 +146,8 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
       eventType: "error",
       timestamp: Date.now(),
     });
-    return {
-      routerDecision: "respond",
-      activeAgent: null,
-      finalResponse: "",
-    };
+    // 向上抛出，由会话层展示错误并提供重试入口；吞掉会让 UI 只显示「未返回回复」
+    throw err;
   }
 
   // 上报 Supervisor 本次 LLM 调用的 token 用量
@@ -289,12 +291,14 @@ function checkInternalToolRouting(state: GraphStateType): string {
  *
  * @param emitEvent 事件回调，用于向 UI 推送 Agent 工作流事件
  * @param checkpointer Checkpoint 持久化器（用于多轮对话上下文恢复）
+ * @param signal AbortSignal，透传给各节点的 LLM 调用以便中止
  * @returns 编译后的图
  */
 export function buildSupervisorGraph(
   emitEvent?: (event: AgentEvent) => void,
   checkpointer?: IndexedDBSaver,
   onUsage?: UsageReporter,
+  signal?: AbortSignal,
 ) {
   const workflow = new StateGraph(GraphState);
 
@@ -302,36 +306,36 @@ export function buildSupervisorGraph(
 
   // Supervisor Node
   workflow.addNode("supervisor", async (state: GraphStateType) => {
-    return supervisorNode(state, emitEvent, onUsage);
+    return supervisorNode(state, emitEvent, onUsage, signal);
   });
 
   // Chat Agent Node
   workflow.addNode("chatAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("chat", emitEvent, internalTools, onUsage);
+    const node = createAgentNode("chat", emitEvent, internalTools, onUsage, signal);
     return node(state);
   });
 
   // Strategy Agent Node
   workflow.addNode("strategyAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage);
+    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage, signal);
     return node(state);
   });
 
   // Risk Agent Node
   workflow.addNode("riskAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("risk", emitEvent, internalTools, onUsage);
+    const node = createAgentNode("risk", emitEvent, internalTools, onUsage, signal);
     return node(state);
   });
 
   // Portfolio Agent Node
   workflow.addNode("portfolioAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage);
+    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage, signal);
     return node(state);
   });
 
   // Analysis Agent Node
   workflow.addNode("analysisAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage);
+    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage, signal);
     return node(state);
   });
 
@@ -420,6 +424,7 @@ export function buildSupervisorGraph(
  *   跨轮次会造成历史重复 —— 所以分支模式下不传，checkpoint 仅作可选审计轨迹。
  * @param emitEvent 事件回调
  * @param historyMessages 手动注入的历史消息历史（优先级高于 checkpoint 恢复）
+ * @param signal AbortSignal 用于中止请求
  * @returns 最终状态
  */
 export async function runSupervisorGraph(
@@ -429,8 +434,9 @@ export async function runSupervisorGraph(
   emitEvent?: (event: AgentEvent) => void,
   historyMessages?: Array<HumanMessage | AIMessage>,
   onUsage?: UsageReporter,
+  signal?: AbortSignal,
 ) {
-  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage);
+  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage, signal);
 
   // 调试：尝试从 checkpoint 恢复历史
   if (checkpointer) {
@@ -480,6 +486,7 @@ export async function runSupervisorGraph(
       thread_id: sessionId,
     },
     recursionLimit: 50,
+    signal,
   });
 
   console.log('[LangGraph] 执行完成:', {
