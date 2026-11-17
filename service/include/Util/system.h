@@ -558,6 +558,15 @@ std::pair<double, double> getMemoryInfo();
 /// 失败返回 0
 double getProcessRSS();
 
+/// @brief 当前进程的线程数（Linux 读 /proc/self/status 的 Threads 行）
+/// 失败返回 0
+int getProcessThreadCount();
+
+/// @brief 当前进程直接派生的子进程数（按 /proc/<pid>/stat 的 ppid 统计）
+/// @param comm_prefix 子进程名前缀，如 "python"；空表示统计全部子进程
+/// 用于监控下载脚本（python3）开了多少个，避免并发开太多把内存打爆
+int countChildProcesses(const std::string& comm_prefix = "");
+
 void strategy_error(const String& strategy, const String& info);
 void strategy_log(const String & strategy, const String & info);
 

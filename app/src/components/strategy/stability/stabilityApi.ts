@@ -4,7 +4,6 @@
 // 与 useBacktest.js 保持同一请求形状：JSON 模式下 body 是 { script: <图 JSON 字符串> }，
 // script.capital / script.backtest.start-end 都在字符串内部的图里，所以扰动靠改图实现。
 
-import axios from 'axios'
 import { apiUrl, authedClient } from '@/lib/api/serviceClient'
 
 export interface CapitalPoolInfo {

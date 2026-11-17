@@ -34,6 +34,7 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <net/if_arp.h>
+#include <dirent.h>
 #endif
 #include <vector>
 #include <fstream>
@@ -345,7 +346,7 @@ bool RunCommand(const std::string& cmd, String& output) {
 
     if (pid == 0) { // 子进程
         close(pipefd[0]); // 关闭读端
-        dup2(pipefd[1], STDOUT_FILENO); // 将标准输出重定向到管道
+        dup2(pipefd[1], STDOUT_FILENO); // 标准输出重定向到管道
         dup2(pipefd[1], STDERR_FILENO); // 标准错误也重定向到管道
         close(pipefd[1]);
 
@@ -993,6 +994,77 @@ double getProcessRSS() {
     return 0.0;
 #else
     return 0.0;
+#endif
+}
+
+int getProcessThreadCount() {
+#ifdef __linux__
+    // /proc/self/status 的 "Threads:  123" 行
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return 0;
+    char line[256];
+    int threads = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Threads:", 8) == 0) {
+            threads = (int)strtol(line + 8, nullptr, 10);
+            break;
+        }
+    }
+    fclose(f);
+    return threads;
+#elif defined(_WIN32)
+    DWORD n = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &n)) {
+        // GetProcessAffinityMask 返回的是亲和性掩码，不是线程数；用工具函数兜底
+    }
+    return 0;
+#else
+    return 0;
+#endif
+}
+
+int countChildProcesses(const std::string& comm_prefix) {
+#ifdef __linux__
+    // 遍历 /proc，解析 /proc/<pid>/stat 的 ppid(第 4 字段) 与 comm(第 2 字段)
+    // 统计 ppid == getpid() 且 comm 以 comm_prefix 开头的子进程
+    DIR* dir = opendir("/proc");
+    if (!dir) return 0;
+    const pid_t self = getpid();
+    int count = 0;
+    struct dirent* ent = nullptr;
+    while ((ent = readdir(dir)) != nullptr) {
+        if (ent->d_name[0] < '0' || ent->d_name[0] > '9') continue;
+        char path[128];
+        snprintf(path, sizeof(path), "/proc/%s/stat", ent->d_name);
+        FILE* f = fopen(path, "r");
+        if (!f) continue;
+        char buf[1024];
+        size_t nread = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        if (nread == 0) continue;
+        buf[nread] = '\0';
+
+        // 格式: pid (comm) state ppid ...
+        char* open_paren = strchr(buf, '(');
+        char* close_paren = open_paren ? strrchr(buf, ')') : nullptr;
+        if (!open_paren || !close_paren || close_paren < open_paren + 2) continue;
+
+        std::string comm(open_paren + 1, close_paren - open_paren - 1);
+        if (!comm_prefix.empty() && comm.compare(0, comm_prefix.size(), comm_prefix) != 0) continue;
+
+        // close_paren 之后是 " state ppid ..."
+        char* p = close_paren + 1;
+        while (*p == ' ') ++p;
+        while (*p && *p != ' ') ++p;   // 跳过 state
+        while (*p == ' ') ++p;
+        long ppid = strtol(p, nullptr, 10);
+        if (ppid == (long)self) ++count;
+    }
+    closedir(dir);
+    return count;
+#else
+    (void)comm_prefix;
+    return 0;
 #endif
 }
 

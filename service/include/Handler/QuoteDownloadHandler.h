@@ -21,7 +21,11 @@ public:
     /**
      * @brief 复用 POST 的核心下载 + 导入逻辑（不通过 HTTP，直接传入参数）
      *
-     * 按 (asset_type) 异步启动线程：
+     * 任务被投递到全局下载线程池（worker 数 = 硬件线程数），不再"每个 group
+     * 起一个线程"：那样夜间批量更新会同时 fork 50+ 个 python3 下载脚本，
+     * 把内存小的机器打到 global OOM。
+     *
+     * 每个任务内部：
      *   1. RunCommand 下载脚本（同时下 HFQ + 不复权 CSV 到 quote/{asset_type}_{hfq,org}/{freq}）
      *   2. 扫描落盘 CSV 并调 QuoteDB::importCsv 入库
      *   3. 对 stock_1d 调用 validateAndReconcileAdj 校验下载 vs 重算
@@ -36,6 +40,14 @@ public:
                                const std::string& interpreter,
                                const std::string& quote_dir,
                                bool overwrite = false);
+
+    /**
+     * @brief 停止下载线程池（服务退出前调用）
+     *
+     * 先停止接收新任务，再等在跑的下载收尾，避免 DuckDB 关闭后后台 python
+     * 还在写库。
+     */
+    static void ShutdownDownloads();
 
     /**
      * @brief 股票除权校验：对比下载 HFQ 与本地重算，差异>1% 则用下载值

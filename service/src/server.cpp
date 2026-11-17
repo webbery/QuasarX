@@ -2008,12 +2008,12 @@ bool Server::SendMailInternal(const String& body, bool isHtml,
                              ShellQuote(StripQuotes(_config->GetWarningAddr())),
                              ShellQuote(tmpPath),
                              ShellQuote(isHtml ? "html" : "plain"));
-    
+
     // 追加 subject（非空时）
     if (!subject.empty()) {
         cmd += " " + ShellQuote(subject);
     }
-    
+
     // 追加附件路径
     for (const auto& attach : attachments) {
         if (std::filesystem::exists(attach)) {
@@ -2023,12 +2023,16 @@ bool Server::SendMailInternal(const String& body, bool isHtml,
         }
     }
 
-    INFO("SendMailInternal: cmd={}", cmd);
-    
+
     try {
-        bool ok = RunCommand(cmd);
+        // 这里直接调 system() 而不是 RunCommand(cmd)：RunCommand 失败时会把**整条命令行**
+        // 打进日志，而命令行里带着授权码。改成自己调，失败时只打印脱敏后的命令。
+        int rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            WARN("SendMailInternal: mail command failed rc={}", rc);
+        }
         std::filesystem::remove(tmpPath);
-        return ok;
+        return rc == 0;
     } catch (const std::exception& e) {
         WARN("SendMailInternal: send email fail: {}", e.what());
         std::filesystem::remove(tmpPath);

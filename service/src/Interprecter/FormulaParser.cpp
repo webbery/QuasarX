@@ -107,10 +107,10 @@ bool FormulaParser::parse(const String& code) {
         // printAST(_ast);
         _ast = _parser.optimize_ast(_ast);
 
-#ifdef _DEBUG
-        INFO("** Node: {}, token: {}", _ast->name, _ast->token);
-        printAST(_ast);
-#endif
+// #ifdef _DEBUG
+//         INFO("** Node: {}, token: {}", _ast->name, _ast->token);
+//         printAST(_ast);
+// #endif
         _init = true;
         return true;
     } else {

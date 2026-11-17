@@ -1,6 +1,7 @@
 #include "spdlog/common.h"
 #include <memory_resource>
 #include <exception>  // std::set_terminate
+#include <atomic>
 #ifdef WIN32
 #define WIN32_LEAN_AND_MEAN  // 阻止 windows.h 包含 winsock.h（避免 sockaddr 重定义）
 #include <windows.h>
@@ -15,12 +16,15 @@
 #include <getopt.h>
 #include <signal.h>
 #include <pthread.h>
+#include <poll.h>
+#include <sys/resource.h>  // setrlimit
 #include <sys/syscall.h>
 #include <sys/wait.h>  // waitpid
 #include <vector>
 #include <string>
 #endif
 #include "server.h"
+#include "Handler/QuoteDownloadHandler.h"
 #include "Util/string_algorithm.h"
 #include "Util/DuckDBLogger.h"
 #include "Util/QuoteDB.h"
@@ -58,6 +62,19 @@ static int g_shutdown_pipe[2] = {-1, -1};
 
 // addr2line 解析后的堆栈（供邮件使用）
 static std::string g_resolved_trace;
+
+// ── 崩溃处理重入保护 ────────────────────────────────────────────
+// 一次未捕获异常会走两条路径：std::terminate → on_terminate()，
+// 以及随后 abort() 触发的 SIGABRT → print_stacktrace()。
+// 两条路径都会 fork 一个 addr2line 去解析符号；在 1.6GB 的机器上
+// 两个 addr2line（各约 600MB）会直接把整机打到 global OOM。
+// 用这个原子量保证"同一次崩溃只解析一次"，重入的一方直接退出。
+static std::atomic<bool> g_crashing{false};
+
+// addr2line 一次最多解析多少帧（64 帧会让 addr2line 常驻内存翻几倍）
+static constexpr int kMaxResolveFrames = 16;
+// addr2line 最长允许跑多久（毫秒）。超时立刻 SIGKILL，绝不无限期挂着。
+static constexpr int kResolveTimeoutMs = 10000;
 
 // Build a brief crash notification email body and dispatch via Server::SendEmail.
 // Captures: host, pid, time, version, uptime, crash kind, top frames.
@@ -271,6 +288,10 @@ static void resolve_addresses(void** addrs, int count) {
     }
 
     // 构建 addr2line 命令行参数
+    // 只解析栈顶若干帧：addr2line 的内存占用主要来自 DWARF 索引，
+    // 一次喂几十个地址会让它常驻几百 MB，在小内存机器上直接拖垮整机。
+    const int nframes = (count < kMaxResolveFrames) ? count : kMaxResolveFrames;
+
     std::vector<const char*> args;
     args.push_back("addr2line");
     args.push_back("-e");
@@ -279,8 +300,8 @@ static void resolve_addresses(void** addrs, int count) {
     args.push_back("-s");  // 只显示文件名基名
 
     // 将运行时地址转换为偏移地址 (addr - base)
-    char buf_storage[64][32];
-    for (int i = 0; i < count; i++) {
+    char buf_storage[kMaxResolveFrames][32];
+    for (int i = 0; i < nframes; i++) {
         uintptr_t offset = (uintptr_t)addrs[i] - base;
         snprintf(buf_storage[i], sizeof(buf_storage[i]), "0x%lx", (unsigned long)offset);
         args.push_back(buf_storage[i]);
@@ -308,6 +329,14 @@ static void resolve_addresses(void** addrs, int count) {
             dup2(devnull, STDERR_FILENO);
             close(devnull);
         }
+        // 限制子进程堆上限：addr2line 读 200MB+ 的 .debug 时可能吃到几百 MB，
+        // 超过上限就让它 malloc 失败退出，绝不允许它把宿主机的内存吃光。
+        // 注意不能用 RLIMIT_AS：本进程是 PIE 且虚拟内存被线程栈撑到几 GB，
+        // fork 出来的子进程继承了同样的虚拟地址空间，RLIMIT_AS 一设就会 exec 失败。
+        struct rlimit rl;
+        rl.rlim_cur = 512ULL * 1024 * 1024;
+        rl.rlim_max = 512ULL * 1024 * 1024;
+        setrlimit(RLIMIT_DATA, &rl);
         execvp("addr2line", const_cast<char**>(args.data()));
         _exit(127);
     }
@@ -316,18 +345,46 @@ static void resolve_addresses(void** addrs, int count) {
     close(pipefd[1]);
 
     // 读取 addr2line -f -s 输出 (两行一组: 函数名\n文件:行号)
+    // 带超时：addr2line 卡住时不能无限期等下去（这是"服务看起来卡死"的直接原因）
     char readbuf[4096];
     ssize_t n;
     std::string buffer;
-    while ((n = read(pipefd[0], readbuf, sizeof(readbuf))) > 0) {
-        buffer.append(readbuf, n);
+    bool timed_out = false;
+    {
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(kResolveTimeoutMs);
+        for (;;) {
+            auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              deadline - std::chrono::steady_clock::now()).count();
+            if (remain <= 0) { timed_out = true; break; }
+            struct pollfd pfd;
+            pfd.fd = pipefd[0];
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int pr = poll(&pfd, 1, (int)remain);
+            if (pr < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (pr == 0) { timed_out = true; break; }   // 超时
+            n = read(pipefd[0], readbuf, sizeof(readbuf));
+            if (n > 0) { buffer.append(readbuf, n); continue; }
+            if (n == 0) break;                            // EOF: 子进程结束
+            if (errno == EINTR) continue;
+            break;
+        }
+    }
+    if (timed_out) {
+        const char warn[] = "[addr2line] timeout, killed\n";
+        write(STDERR_FILENO, warn, sizeof(warn) - 1);
+        kill(pid, SIGKILL);
     }
     close(pipefd[0]);
 
     // 解析两行一组，用 abi::__cxa_demangle 后格式化
     size_t pos = 0;
     int frame = 0;
-    while (pos < buffer.size() && frame < count) {
+    while (pos < buffer.size() && frame < nframes) {
         size_t name_end = buffer.find('\n', pos);
         if (name_end == std::string::npos) break;
         std::string mangled = buffer.substr(pos, name_end - pos);
@@ -375,6 +432,15 @@ static void resolve_addresses(void** addrs, int count) {
 
 // 异步信号安全的堆栈打印（信号处理函数中只能调用 async-signal-safe 函数）
 void print_stacktrace(int signo) {
+    // 重入保护：on_terminate() 已经在处理同一次崩溃（或另一个线程也崩了），
+    // 这里不能再 fork 一个 addr2line 去解析符号 —— 两个 addr2line 各约 600MB，
+    // 在 1.6GB 的机器上会直接触发 global OOM 把整机拖死。
+    if (g_crashing.exchange(true)) {
+        const char again[] = "[CRASH] already handling a crash, exit now\n";
+        write(STDERR_FILENO, again, sizeof(again) - 1);
+        _exit(EXIT_FAILURE);
+    }
+
     // 使用 write() 直接输出到 stderr，这是 async-signal-safe 的
     const char* signal_name = strsignal(signo);
     const char prefix[] = "\n=== CRASH: Caught signal ";
@@ -706,6 +772,14 @@ void print_cpu_features() {
 
 // C++ terminate handler（捕获 std::terminate，通常是未捕获异常）
 void on_terminate() {
+    // 重入保护：若信号处理函数已经在处理崩溃，这里不再重复解析符号
+    // （每个 addr2line 都要几百 MB，重复解析会把小内存机器打到 OOM）。
+    if (g_crashing.exchange(true)) {
+        const char again[] = "[TERMINATE] already handling a crash, exit now\n";
+        write(STDERR_FILENO, again, sizeof(again) - 1);
+        _exit(EXIT_FAILURE);
+    }
+
 #ifdef WIN32
     // Windows: 使用 fprintf 输出到 stderr
     fprintf(stderr, "\n========== std::terminate called ==========\n");
@@ -778,8 +852,12 @@ void on_terminate() {
     write(STDERR_FILENO, footer, sizeof(footer) - 1);
 #endif
 
-    // 调用默认 terminate handler（会 abort() 触发 SIGABRT）
-    std::abort();
+    // 直接退出，不再 std::abort()。
+    // 原因：abort() 会触发 SIGABRT，而 SIGABRT 的处理函数 print_stacktrace()
+    // 会**再** fork 一个 addr2line 解析一遍符号 —— 一次崩溃因此会起两个
+    // addr2line（各约 600MB），在 1.6GB 的机器上直接 global OOM、整机卡死。
+    // 崩溃路径上也不需要 atexit/析构（账本落盘由正常退出流程负责）。
+    _exit(EXIT_FAILURE);
 }
 
 void init_logger() {
@@ -810,6 +888,25 @@ void init_logger() {
     
     // 7. 设置为默认logger（可选，这样可以直接使用spdlog::info()等函数）
     spdlog::set_default_logger(combined_logger);
+}
+
+// ── 运行时资源监控 ─────────────────────────────────────────────
+// 之前两次整机卡死都和内存有关：一次是 50+ 个 python3 下载进程把内存吃光，
+// 一次是崩溃处理里 fork 的 addr2line 把内存吃光。这里周期性把
+// RSS / 线程数 / python 子进程数打进日志，出问题时不用再猜。
+static std::atomic<bool> g_metrics_stop{false};
+
+static void metrics_monitor_loop() {
+    while (!g_metrics_stop.load()) {
+        for (int i = 0; i < 60 && !g_metrics_stop.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        if (g_metrics_stop.load()) break;
+        double rss = getProcessRSS();
+        int threads = getProcessThreadCount();
+        int py = countChildProcesses("python");
+        SPDLOG_INFO("[Metrics] rss={:.1f}MB threads={} python_children={}", rss, threads, py);
+    }
 }
 
 int main(int argc, char* argv[])
@@ -849,7 +946,17 @@ int main(int argc, char* argv[])
     }
     g_server_ready = true;
 
+    // 资源监控线程（退出前 join，避免 spdlog 已关闭后还在写日志）
+    std::thread metrics_thread(metrics_monitor_loop);
+
     server.Run();
+
+    // 停止下载线程池：先不再接新任务，再等在跑的下载收尾，
+    // 否则后台 python 会在 DuckDB 关闭后继续写库
+    QuoteDownloadHandler::ShutdownDownloads();
+
+    g_metrics_stop.store(true);
+    if (metrics_thread.joinable()) metrics_thread.join();
 
     // 优雅关闭所有 DuckDB 实例（CHECKPOINT + disconnect + close）
     SPDLOG_INFO("[Main] Shutting down...");
