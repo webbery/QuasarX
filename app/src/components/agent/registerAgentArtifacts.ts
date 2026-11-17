@@ -10,12 +10,23 @@ import AgentMetricArtifact from './AgentMetricArtifact.vue'
 import AgentTableArtifact from './AgentTableArtifact.vue'
 import AgentPatchArtifact from './AgentPatchArtifact.vue'
 import AgentActionArtifact from './AgentActionArtifact.vue'
+import UiFrame from './ui/UiFrame.vue'
 
 let registered = false
 
 export function registerAgentArtifacts(): void {
   if (registered) return
   registered = true
+
+  // 通用 UI 产物：自带标题 / 最大化 / 参数控件条，不再套通用卡片外壳
+  registerArtifact({
+    kind: 'ui',
+    label: '可视化',
+    icon: 'chart-line',
+    render: UiFrame,
+    compact: true,
+    exportable: true,
+  })
 
   registerArtifact({
     kind: 'chart',

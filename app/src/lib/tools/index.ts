@@ -33,6 +33,7 @@ import { orderQueryTool } from "./orderQuery"
 import { performanceTool } from "./performanceTool"
 import { mathTool } from "./mathTool"
 import { chartTool } from "./chart"
+import { visualizeTool } from "./visualize"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -55,6 +56,7 @@ const builtinTools: StructuredToolInterface[] = [
   performanceTool,
   mathTool,
   chartTool,
+  visualizeTool,
 ]
 
 // === 插件 Tool 加载 ===

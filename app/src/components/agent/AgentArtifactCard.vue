@@ -1,5 +1,12 @@
 <template>
-  <div class="artifact-card">
+  <!-- UI 产物：UiFrame 自带标题 / 最大化 / 参数条，不套通用卡片外壳 -->
+  <component
+    :is="renderer"
+    v-if="isUiKind && renderer"
+    v-bind="rendererProps"
+  />
+
+  <div v-else class="artifact-card">
     <div class="artifact-head">
       <span class="artifact-icon"><i :class="iconClass"></i></span>
       <span class="artifact-title">{{ artifact.title }}</span>
@@ -72,19 +79,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getArtifactSpec } from '@/lib/agent/artifactRegistry'
-import { runAction, type ActionContext } from '@/lib/agent/actionRegistry'
 import type { ArtifactAction, ArtifactDensity, ArtifactEnvelope } from '@/lib/agent/artifacts'
-import { useChatStore } from '@/stores/chatStore'
 import AgentFallbackArtifact from './AgentFallbackArtifact.vue'
+import { useArtifactActions } from './useArtifactActions'
 
 const props = defineProps<{ artifact: ArtifactEnvelope }>()
 
-const chatStore = useChatStore()
-
-const actionState = reactive<Record<string, 'idle' | 'pending' | 'done'>>({})
-const resultMessage = ref('')
 const applied = ref(false)
 
 const spec = computed(() => getArtifactSpec(props.artifact.kind))
@@ -126,9 +128,23 @@ const effectiveHeight = computed<number | undefined>(() => {
   return ui?.height
 })
 
+/** UI 产物走 UiFrame（自带外壳），其余走通用卡片 */
+const isUiKind = computed(() => props.artifact.kind === 'ui')
+
 /** 只传渲染器真正需要的 props，避免多余属性落到 DOM 上 */
 const rendererProps = computed<Record<string, unknown>>(() => {
   if (!spec.value) return {}
+
+  if (isUiKind.value) {
+    // UiFrame 的 props 是 spec / artifact / height / density
+    return {
+      spec: props.artifact.payload,
+      artifact: props.artifact,
+      height: effectiveHeight.value,
+      density: density.value,
+    }
+  }
+
   const out: Record<string, unknown> = { payload: props.artifact.payload }
   const height = effectiveHeight.value
   if (height) out.height = height
@@ -149,12 +165,10 @@ const iconClass = computed(() => {
   return map[props.artifact.kind] || 'fas fa-cube'
 })
 
-/** 动作来源：顶层 actions 优先，其次 action 类型的 payload.actions */
-const actions = computed<ArtifactAction[]>(() => {
-  if (props.artifact.actions?.length) return props.artifact.actions
-  const payload = props.artifact.payload as { actions?: ArtifactAction[] } | undefined
-  if (props.artifact.kind === 'action' && payload?.actions?.length) return payload.actions
-  return []
+/** 动作来源与执行：与 UiFrame 共用同一套逻辑 */
+const artifactRef = computed(() => props.artifact)
+const { actionState, resultMessage, actions, execute } = useArtifactActions(artifactRef, (action) => {
+  if (action.kind === 'apply_patch') applied.value = true
 })
 
 function actionIcon(action: ArtifactAction): string {
@@ -187,33 +201,7 @@ function actionLabel(action: ArtifactAction): string {
   return action.label
 }
 
-async function execute(action: ArtifactAction) {
-  if (action.destructive && action.confirm) {
-    const ok = window.confirm(
-      `${action.confirm.title}${action.confirm.body ? `\n\n${action.confirm.body}` : ''}`,
-    )
-    if (!ok) return
-  }
-
-  actionState[action.id] = 'pending'
-  resultMessage.value = ''
-
-  const ctx: ActionContext = {
-    artifact: props.artifact,
-    sessionId: chatStore.currentSession?.id ?? 'default',
-  }
-
-  const result = await runAction(action, ctx)
-
-  actionState[action.id] = result.ok ? 'done' : 'idle'
-  resultMessage.value = result.message
-    ? `${result.ok ? '✓' : '✕'} ${result.message}`
-    : ''
-
-  if (result.ok && action.kind === 'apply_patch') {
-    applied.value = true
-  }
-}
+/** 动作执行成功且是补丁应用 → 标记已应用 */
 </script>
 
 <style scoped>

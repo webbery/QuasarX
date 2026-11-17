@@ -122,6 +122,9 @@
 
     <!-- 分支/会话浮层 -->
     <AgentBranchTree v-if="branchOpen" @close="branchOpen = false" />
+
+    <!-- UI 产物放大的宿主（UiFrame 最大化时 Teleport 到这里） -->
+    <div ref="overlayHostRef" class="agent-panel__overlay-host"></div>
   </div>
 </template>
 
@@ -132,6 +135,8 @@ import { useAgentSession } from '@/composables/useAgentSession'
 import { ensureAgentActionsRegistered } from '@/lib/agent/agentActions'
 import { AGENT_SESSION_KEY } from './sessionContext'
 import { registerAgentArtifacts } from './registerAgentArtifacts'
+import { registerUiTypes } from './ui/registerUiTypes'
+import { UI_OVERLAY_KEY } from './ui/overlayContext'
 import AgentConversation from './AgentConversation.vue'
 import AgentWorkflowTimeline from './AgentWorkflowTimeline.vue'
 import AgentBranchTree from './AgentBranchTree.vue'
@@ -143,6 +148,10 @@ const session = useAgentSession()
 const { loading: isLoading, currentAgent, lastError, events, tokenUsage } = session
 
 provide(AGENT_SESSION_KEY, session)
+
+/** UI 产物放大的宿主元素 */
+const overlayHostRef = ref<HTMLElement | null>(null)
+provide(UI_OVERLAY_KEY, { host: overlayHostRef })
 
 const pane = ref<'chat' | 'workflow'>('chat')
 const branchOpen = ref(false)
@@ -270,8 +279,9 @@ function scrollToBottom() {
 }
 
 onMounted(() => {
-  // 注册产物渲染器与动作处理器（幂等）
+  // 注册产物渲染器、UI 类型与动作处理器（幂等）
   registerAgentArtifacts()
+  registerUiTypes()
   ensureAgentActionsRegistered()
   chatStore.ensureSession()
 })
@@ -285,6 +295,14 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--darker-bg, #0d111c);
+}
+
+/* UI 产物放大的宿主：铺满面板但不拦截点击（由放大的 frame 自己接管） */
+.agent-panel__overlay-host {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
 }
 
 /* 工具条 */

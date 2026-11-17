@@ -897,7 +897,7 @@ void init_logger() {
 static std::atomic<bool> g_metrics_stop{false};
 
 static void metrics_monitor_loop() {
-    while (!g_metrics_stop.load()) {
+    while (!g_metrics_stop.load() && !Server::IsExit()) {
         for (int i = 0; i < 60 && !g_metrics_stop.load(); ++i) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }

@@ -13,6 +13,7 @@
  */
 
 import type { TimeSeries, HistogramData } from '@/lib/chartData'
+import type { UiSpec } from '@/lib/charts/types'
 
 /* ============================================================================
  * 类型登记
@@ -26,6 +27,8 @@ export const ArtifactKind = {
   Patch: 'patch',
   Action: 'action',
   Error: 'error',
+  /** 通用 UI 产物：payload 是一份平铺的 UiSpec，由 UI 注册表分发渲染 */
+  Ui: 'ui',
 } as const
 
 export type KnownArtifactKind = (typeof ArtifactKind)[keyof typeof ArtifactKind]
@@ -298,6 +301,16 @@ export interface ErrorArtifact extends ArtifactEnvelope<ErrorPayload> {
   kind: 'error'
 }
 
+/**
+ * 通用 UI 产物。
+ *
+ * payload 是一份平铺的 UiSpec —— 「画什么、怎么画」由 spec.type 决定，
+ * 数据在 spec.data（列式），参数在 spec.params。
+ */
+export interface UiArtifact extends ArtifactEnvelope<UiSpec> {
+  kind: 'ui'
+}
+
 export type AgentArtifact =
   | ChartArtifact
   | MetricArtifact
@@ -305,6 +318,7 @@ export type AgentArtifact =
   | PatchArtifact
   | ActionArtifact
   | ErrorArtifact
+  | UiArtifact
 
 /* ============================================================================
  * 工具返回的双通道

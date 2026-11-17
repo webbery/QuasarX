@@ -348,11 +348,17 @@ class AuthAPI:
         return self._mode
 
     def is_backtest_mode(self):
-        """判断是否为回测模式（含 Simulation/stock_hist_sim）"""
+        """判断是否为回测模式（仅 stock_hist_sim / Backtest）
+
+        注意：TickFlow 模式 login 返回 mode="Simulation"，
+        不应视为 backtest —— Simulation 下 broker->Buy/Sell 走异步
+        fill 回调，CI 无交易所时 decisionId 的 MarkDecisionExecuted
+        永远不会触发。
+        """
         if not self._mode:
             return False
         m = self._mode.lower()
-        return 'backtest' in m or 'simulation' in m or 'sim' in m
+        return m == 'backtest'
 
 
 @pytest.fixture(scope="session")
