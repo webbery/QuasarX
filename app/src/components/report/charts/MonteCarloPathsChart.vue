@@ -22,7 +22,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
-import { useECharts, createBaseChartOption } from '../composables/useECharts'
+import { useECharts } from '../composables/useECharts'
+import { buildMonteCarloOption } from '@/lib/charts/options/monteCarlo'
 import type { McPathDetail } from '@/stores/history'
 
 interface Props {
@@ -48,194 +49,17 @@ const pathCount = computed(() => {
 })
 
 /**
- * 降采样 equity_curve 到 maxPoints 个点
+ * 构建 ECharts 配置 —— 调共享 builder（Agent 的 mc_paths 视图同款）。
  */
-function downsampleCurve(curve: number[], maxPoints: number): number[] {
-  if (curve.length <= maxPoints) return curve
-  const ratio = (curve.length - 1) / (maxPoints - 1)
-  const result: number[] = []
-  for (let i = 0; i < maxPoints; i++) {
-    const srcIdx = Math.round(i * ratio)
-    result.push(curve[srcIdx])
-  }
-  return result
-}
-
-/**
- * 生成 x 轴标签（bar 索引）
- */
-function generateXLabels(count: number): string[] {
-  const labels: string[] = []
-  for (let i = 0; i < count; i++) {
-    labels.push(String(i))
-  }
-  return labels
-}
-
 function buildChartOption() {
-  const maxPoints = 500  // 前端降采样到 500 点
-  const curveLen = props.barCount || 252
-
-  const xLabels = generateXLabels(Math.min(curveLen, maxPoints))
-
-  const series: any[] = []
-
-  if (activeTab.value === 'benchmark') {
-    // 基准路径：P10/P50/P90
-    const benchmarkPaths = [
-      { path: props.p10Path, name: 'P10 (次差)', color: '#ff6d00', dashType: 'dotted' },
-      { path: props.medianPath, name: 'P50 (中位数)', color: '#a0aec0', dashType: 'dashed' },
-      { path: props.p90Path, name: 'P90 (次优)', color: '#00c853', dashType: 'dotted' },
-    ]
-
-    for (const bp of benchmarkPaths) {
-      if (!bp.path) continue
-      const curve = downsampleCurve(bp.path.equity_curve, maxPoints)
-      const data = curve.map(v => Number(((v - 1) * 100).toFixed(2)))
-
-      series.push({
-        name: bp.name,
-        type: 'line',
-        data,
-        smooth: true,
-        lineStyle: {
-          width: bp.name.includes('中位数') ? 3 : 2,
-          color: bp.color,
-          type: bp.dashType as 'solid' | 'dashed' | 'dotted'
-        },
-        symbol: 'none',
-      })
-    }
-  } else {
-    // worst/best 路径 - 全部显示
-    const color = activeTab.value === 'worst' ? '#f44336' : '#00c853'
-
-    for (let i = 0; i < currentPaths.value.length; i++) {
-      const path = currentPaths.value[i]
-      const curve = downsampleCurve(path.equity_curve, maxPoints)
-      const data = curve.map(v => Number(((v - 1) * 100).toFixed(2)))
-
-      const alpha = currentPaths.value.length > 1 ? Math.max(0.15, 0.6 - i * 0.04) : 0.8
-
-      series.push({
-        name: `#${i + 1}`,
-        type: 'line',
-        data,
-        smooth: true,
-        lineStyle: {
-          width: 1.5,
-          color,
-        },
-        itemStyle: {
-          opacity: alpha,
-        },
-        symbol: 'none',
-        // 存储路径详情用于 tooltip
-        _pathDetail: path,
-      })
-    }
-  }
-
-  // 添加 50% 爆仓阈值线
-  series.push({
-    name: '50% 阈值',
-    type: 'line',
-    data: Array.from({ length: xLabels.length }, () => -50),
-    lineStyle: {
-      width: 1,
-      color: '#f44336',
-      type: 'dotted',
-    },
-    symbol: 'none',
-  })
-
-  return createBaseChartOption({
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
-      backgroundColor: 'rgba(26, 34, 54, 0.95)',
-      borderColor: '#2a3449',
-      textStyle: { color: '#e0e0e0', fontSize: 12 },
-      formatter: function(params: any) {
-        if (!params || params.length === 0) return ''
-
-        let result = `<div style="margin: 0 0 6px 0; font-weight: bold; color: #2962ff;">Bar ${params[0].axisValue}</div>`
-
-        // 如果是基准路径模式
-        if (activeTab.value === 'benchmark') {
-          params.forEach((item: any) => {
-            const value = typeof item.value === 'number' ? item.value.toFixed(2) : item.value
-            result += `<div>${item.marker} ${item.seriesName}: <span style="color: ${item.color}; font-weight: bold;">${value}%</span></div>`
-          })
-          return result
-        }
-
-        // worst/best 模式：显示前 5 条路径 + 详情
-        const shown = params.slice(0, 5)
-        shown.forEach((item: any) => {
-          const value = typeof item.value === 'number' ? item.value.toFixed(2) : item.value
-          const pd = item.series?._pathDetail
-          if (pd) {
-            result += `<div style="margin-top: 4px; border-top: 1px solid #2a3449; padding-top: 4px;">`
-            result += `<div>${item.marker} <b>${item.seriesName}</b>: <span style="color: ${item.color}; font-weight: bold;">${value}%</span></div>`
-            result += `<div style="font-size: 11px; color: #a0aec0; margin-left: 16px;">`
-            result += `收益率: ${(pd.total_return * 100).toFixed(1)}% | 回撤: ${(pd.max_drawdown * 100).toFixed(1)}% | 胜率: ${(pd.win_rate * 100).toFixed(0)}%`
-            if (pd.longest_loss_streak > 0) {
-              result += ` | 最长连亏: ${pd.longest_loss_streak}天`
-            }
-            if (pd.longest_win_streak > 0) {
-              result += ` | 最长连胜: ${pd.longest_win_streak}天`
-            }
-            result += `</div></div>`
-          } else {
-            result += `<div>${item.marker} ${item.seriesName}: <span style="color: ${item.color}; font-weight: bold;">${value}%</span></div>`
-          }
-        })
-
-        if (params.length > 5) {
-          result += `<div style="color: #a0aec0; font-size: 11px; margin-top: 4px;">... 及 ${params.length - 5} 条路径</div>`
-        }
-
-        return result
-      }
-    },
-    legend: {
-      data: series.map((s: any) => s.name),
-      textStyle: { color: '#e0e0e0', fontSize: 11 },
-      top: activeTab.value === 'benchmark' ? 10 : undefined,
-      show: activeTab.value === 'benchmark',
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      top: activeTab.value === 'benchmark' ? '15%' : '5%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      data: xLabels,
-      axisLine: { lineStyle: { color: '#6E7079' } },
-      axisLabel: {
-        color: '#a0aec0',
-        interval: Math.floor(xLabels.length / 10),
-        formatter: (value: string) => `Day ${value}`
-      },
-      name: 'Bar 索引',
-      nameTextStyle: { color: '#a0aec0' }
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: {
-        formatter: '{value}%',
-        color: '#a0aec0'
-      },
-      axisLine: { lineStyle: { color: '#6E7079' } },
-      splitLine: {
-        lineStyle: { color: '#2a3449', type: 'dashed' }
-      }
-    },
-    series
+  return buildMonteCarloOption({
+    mode: activeTab.value,
+    worstPaths: props.worstPaths,
+    bestPaths: props.bestPaths,
+    medianPath: props.medianPath,
+    p10Path: props.p10Path,
+    p90Path: props.p90Path,
+    barCount: props.barCount,
   })
 }
 

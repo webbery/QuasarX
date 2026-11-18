@@ -67,6 +67,10 @@ export interface ChatMessage {
 export interface ChatSession {
   id: string
   title: string
+  /** 标题来源：auto 时允许自动命名覆盖，manual 时保持用户输入 */
+  titleSource?: 'auto' | 'manual'
+  /** 归档时间；有值 = 已归档（默认列表不展示，但数据保留） */
+  archivedAt?: number
   messages: ChatMessage[]
   /** 当前查看路径的末端消息 id */
   currentLeafId: string | null
@@ -82,8 +86,10 @@ const SESSIONS_KEY = 'quasarx_chat_sessions_v2'
 const ARTIFACTS_KEY = 'quasarx_chat_artifacts'
 const LEGACY_KEY = 'quasarx_chat'
 
-/** 最多保留的会话数 */
+/** 最多保留的活跃会话数（超出时自动归档最旧的非当前会话） */
 const MAX_SESSIONS = 20
+/** 最多保留的归档会话数（超出时才硬删最旧的） */
+const MAX_ARCHIVED_SESSIONS = 100
 /** 单个会话最多保留的消息数（超出时裁剪最老的根分支） */
 const MAX_MESSAGES = 800
 /**
@@ -157,6 +163,25 @@ export const useChatStore = defineStore('chat', () => {
   const currentSession = computed<ChatSession | null>(
     () => sessions.value.find((s) => s.id === currentSessionId.value) ?? null,
   )
+
+  /** 活跃会话（按最近活动倒序） */
+  const activeSessions = computed<ChatSession[]>(() =>
+    sessions.value
+      .filter((s) => !s.archivedAt)
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
+  )
+
+  /** 已归档会话（按归档时间倒序） */
+  const archivedSessions = computed<ChatSession[]>(() =>
+    sessions.value
+      .filter((s) => !!s.archivedAt)
+      .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)),
+  )
+
+  /** 最近活跃的会话；没有则返回 null */
+  function mostRecentActiveSession(): ChatSession | null {
+    return activeSessions.value[0] ?? null
+  }
 
   /** 当前会话的全部消息（树的扁平存储，不含路径筛选） */
   const allMessages = computed<ChatMessage[]>(() => currentSession.value?.messages ?? [])
@@ -380,6 +405,9 @@ export const useChatStore = defineStore('chat', () => {
             currentSessionId.value = pickLatestSessionId(sessions.value)
           }
         }
+
+        // 存量数据可能超过新的数量上限：活跃超限自动归档，归档超限才硬删
+        await enforceSessionLimit()
       } catch (e) {
         console.warn('[Chat] 加载本地会话失败', e)
       } finally {
@@ -403,11 +431,12 @@ export const useChatStore = defineStore('chat', () => {
     return merged
   }
 
-  /** 取最近更新的会话 id */
+  /** 取最近更新的会话 id（优先活跃会话） */
   function pickLatestSessionId(list: ChatSession[]): string {
     if (!list.length) return ''
-    let best = list[0]
-    for (const s of list) {
+    const pool = list.some((s) => !s.archivedAt) ? list.filter((s) => !s.archivedAt) : list
+    let best = pool[0]
+    for (const s of pool) {
       if ((s.updatedAt ?? 0) > (best.updatedAt ?? 0)) best = s
     }
     return best.id
@@ -419,6 +448,7 @@ export const useChatStore = defineStore('chat', () => {
     const session: ChatSession = {
       id: uid('sess'),
       title,
+      titleSource: 'auto',
       messages: [],
       currentLeafId: null,
       createdAt: Date.now(),
@@ -450,7 +480,7 @@ export const useChatStore = defineStore('chat', () => {
     if (idx < 0) return
     sessions.value.splice(idx, 1)
     if (currentSessionId.value === id) {
-      currentSessionId.value = sessions.value[sessions.value.length - 1]?.id ?? ''
+      currentSessionId.value = mostRecentActiveSession()?.id ?? ''
       void rememberCurrentSession()
     }
     // 会话没了，产物也就没人引用了 —— 让 GC 回收
@@ -459,44 +489,111 @@ export const useChatStore = defineStore('chat', () => {
     scheduleArtifactGC()
   }
 
-  function setSessionTitle(id: string, title: string) {
+  /**
+   * 重命名会话。
+   * 空标题视为取消；成功后标记为手动命名，避免被首条用户消息覆盖。
+   */
+  function renameSession(id: string, title: string) {
     const s = sessions.value.find((x) => x.id === id)
-    if (s) {
-      s.title = title
-      s.updatedAt = Date.now()
-      markSessionDirty(id)
+    if (!s) return
+    const next = title.replace(/\s+/g, ' ').trim().slice(0, 40)
+    if (!next) return
+    s.title = next
+    s.titleSource = 'manual'
+    markSessionDirty(id)
+  }
+
+  /** 归档会话；归档当前会话时自动切到最近活跃的会话 */
+  function archiveSession(id: string) {
+    const s = sessions.value.find((x) => x.id === id)
+    if (!s || s.archivedAt) return
+    s.archivedAt = Date.now()
+    markSessionDirty(id)
+    if (currentSessionId.value === id) {
+      const next = mostRecentActiveSession()
+      currentSessionId.value = next?.id ?? ''
+      if (!next) createSession()
+      void rememberCurrentSession()
     }
   }
 
-  /** 会话数超限时删掉最旧的一个 */
+  /** 恢复归档会话（不自动切换当前会话） */
+  function unarchiveSession(id: string) {
+    const s = sessions.value.find((x) => x.id === id)
+    if (!s?.archivedAt) return
+    delete s.archivedAt
+    markSessionDirty(id)
+  }
+
+  /**
+   * 会话数量治理：
+   * - 活跃会话超限 → 自动归档最旧的非当前会话（不丢数据）
+   * - 归档会话超限 → 才硬删最旧的（同样避开当前会话）
+   */
   async function enforceSessionLimit() {
-    if (sessions.value.length <= MAX_SESSIONS) return
-    const sorted = [...sessions.value].sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
-    const excess = sorted.slice(0, sessions.value.length - MAX_SESSIONS)
-    for (const s of excess) {
+    const active = sessions.value
+      .filter((s) => !s.archivedAt)
+      .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    const activeExcess = Math.max(0, active.length - MAX_SESSIONS)
+    if (activeExcess > 0) {
+      const candidates = active.filter((s) => s.id !== currentSessionId.value)
+      for (const s of candidates.slice(0, activeExcess)) {
+        if (!s.archivedAt) {
+          s.archivedAt = Date.now()
+          markSessionDirty(s.id)
+        }
+      }
+    }
+
+    const archived = sessions.value
+      .filter((s) => !!s.archivedAt && s.id !== currentSessionId.value)
+      .sort((a, b) => (a.archivedAt ?? 0) - (b.archivedAt ?? 0))
+    const archivedExcess = Math.max(0, archived.length - MAX_ARCHIVED_SESSIONS)
+    for (const s of archived.slice(0, archivedExcess)) {
       const idx = sessions.value.findIndex((x) => x.id === s.id)
       if (idx >= 0) sessions.value.splice(idx, 1)
       dirtySessions.delete(s.id)
       try {
         await dbDeleteSession(s.id)
       } catch (e) {
-        console.warn('[Chat] 清理超限会话失败', s.id, e)
+        console.warn('[Chat] 清理超限归档会话失败', s.id, e)
       }
     }
-    scheduleArtifactGC()
+
+    if (activeExcess > 0 || archivedExcess > 0) scheduleArtifactGC()
   }
 
-  /** 用首条用户消息自动命名会话 */
+  /** 用首条用户消息自动命名会话（只覆盖自动命名） */
   function autoTitle(session: ChatSession) {
+    if (session.titleSource === 'manual') return
     if (session.title && session.title !== '新会话') return
     const firstUser = session.messages.find((m) => m.role === 'user' && m.content)
-    if (firstUser) session.title = firstUser.content.slice(0, 24)
+    if (firstUser) {
+      session.title = firstUser.content.slice(0, 24)
+      session.titleSource = 'auto'
+    }
   }
 
   /* ---------- 消息操作 ---------- */
 
-  function findMessage(messageId: string): ChatMessage | undefined {
-    return currentSession.value?.messages.find((m) => m.id === messageId)
+  /**
+   * 跨会话查找消息。
+   * 回合进行中用户可能切到别的会话，回复仍要写回消息原本所属的会话。
+   */
+  function findMessageEntry(
+    messageId: string,
+  ): { session: ChatSession; message: ChatMessage } | null {
+    const current = currentSession.value
+    if (current) {
+      const message = current.messages.find((m) => m.id === messageId)
+      if (message) return { session: current, message }
+    }
+    for (const session of sessions.value) {
+      if (session === current) continue
+      const message = session.messages.find((m) => m.id === messageId)
+      if (message) return { session, message }
+    }
+    return null
   }
 
   /**
@@ -511,6 +608,11 @@ export const useChatStore = defineStore('chat', () => {
     },
   ): ChatMessage {
     const session = ensureSession()
+    // 在归档会话里继续发消息 → 自动恢复为活跃会话
+    if (session.archivedAt) {
+      delete session.archivedAt
+      markSessionDirty(session.id)
+    }
     const parentId = msg.parentId !== undefined ? msg.parentId : session.currentLeafId
     const parent = parentId ? session.messages.find((m) => m.id === parentId) : null
 
@@ -536,11 +638,10 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 更新消息内容 */
   function updateMessage(messageId: string, patch: Partial<ChatMessage>) {
-    const m = findMessage(messageId)
-    if (!m) return
-    Object.assign(m, patch)
-    const session = currentSession.value
-    if (session) markSessionDirty(session.id)
+    const entry = findMessageEntry(messageId)
+    if (!entry) return
+    Object.assign(entry.message, patch)
+    markSessionDirty(entry.session.id)
   }
 
   /**
@@ -645,16 +746,28 @@ export const useChatStore = defineStore('chat', () => {
     markSessionDirty(session.id)
   }
 
+  /**
+   * 查看某个节点所在的分支：切到该节点子树的最深叶子。
+   * 与 switchTo 的区别是「不会把路径截断在中间节点」，用于分支树点击。
+   */
+  function viewBranchAt(messageId: string) {
+    const session = currentSession.value
+    if (!session) return
+    if (!session.messages.some((m) => m.id === messageId)) return
+    session.currentLeafId = deepestLeaf(session, messageId)
+    session.updatedAt = Date.now()
+    markSessionDirty(session.id)
+  }
+
   /* ---------- 产物 ---------- */
 
   function attachArtifact(messageId: string, artifact: ArtifactEnvelope) {
     artifacts.value[artifact.id] = artifact
-    const m = findMessage(messageId)
-    if (m) {
-      const ids = m.artifactIds ?? []
-      if (!ids.includes(artifact.id)) m.artifactIds = [...ids, artifact.id]
-      const session = currentSession.value
-      if (session) markSessionDirty(session.id)
+    const entry = findMessageEntry(messageId)
+    if (entry) {
+      const ids = entry.message.artifactIds ?? []
+      if (!ids.includes(artifact.id)) entry.message.artifactIds = [...ids, artifact.id]
+      markSessionDirty(entry.session.id)
     }
     // 先落产物，再排队 GC —— GC 会看 artifactIds 引用，顺序不能反
     void persistArtifact(artifact)
@@ -666,9 +779,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function artifactsFor(messageId: string): ArtifactEnvelope[] {
-    const m = findMessage(messageId)
-    if (!m?.artifactIds?.length) return []
-    return m.artifactIds
+    const entry = findMessageEntry(messageId)
+    if (!entry?.message.artifactIds?.length) return []
+    return entry.message.artifactIds
       .map((id) => artifacts.value[id])
       .filter((a): a is ArtifactEnvelope => !!a)
   }
@@ -794,13 +907,17 @@ ${accountRiskText}
 
     // 会话
     sessions,
+    activeSessions,
+    archivedSessions,
     currentSessionId,
     currentSession,
     createSession,
     ensureSession,
     switchSession,
     deleteSession,
-    setSessionTitle,
+    renameSession,
+    archiveSession,
+    unarchiveSession,
 
     // 消息树
     messages,
@@ -822,6 +939,7 @@ ${accountRiskText}
     branchInfo,
     switchBranch,
     switchTo,
+    viewBranchAt,
 
     // 产物
     artifacts,

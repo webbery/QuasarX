@@ -15,7 +15,7 @@
 import { computed, ref } from 'vue'
 import { AIMessage, HumanMessage } from '@langchain/core/messages'
 import { useChatStore, type ChatMessage } from '@/stores/chatStore'
-import { runSupervisorGraph } from '@/lib/agent'
+import { getAgentConfig, runSupervisorGraph } from '@/lib/agent'
 import type { AgentEvent, AgentType, UsageReporter } from '@/lib/agent/types'
 
 export interface RunTurnOptions {
@@ -121,6 +121,16 @@ export function useAgentSession() {
     tokenUsage.value = undefined
     currentAgent.value = 'supervisor'
 
+    // 每轮开始取一次配置快照：模型基底在回合中途切换也不会让图节点混用模型
+    const config = getAgentConfig()
+    if (!config) {
+      loading.value = false
+      chatStore.isLoading = false
+      lastError.value = '请先在设置中配置模型基底（URL / 模型 / API Key）'
+      chatStore.updateMessage(assistantMessageId, { content: '', error: undefined })
+      return
+    }
+
     // 创建 AbortController 用于中止请求
     const controller = new AbortController()
     abortController.value = controller
@@ -168,6 +178,7 @@ export function useAgentSession() {
         history,
         onUsage,
         controller.signal,
+        config,
       )
 
       const finalAnswer = extractFinalAnswer(result) || 'Agent 未返回回复'

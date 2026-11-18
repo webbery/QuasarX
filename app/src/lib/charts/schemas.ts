@@ -27,6 +27,15 @@ export const uiMarkerSchema = z.object({
   label: z.string().optional().describe('标记说明'),
 })
 
+/** 时刻条目 —— 图上标记的信息化描述，渲染在图下方的时刻条 */
+export const uiMomentSchema = z.object({
+  id: z.string().describe('时刻 id'),
+  timestamp: z.number().describe('Unix 时间戳（秒）'),
+  title: z.string().describe('时刻标题'),
+  detail: z.string().optional().describe('详细说明'),
+  severity: z.enum(['info', 'positive', 'warning', 'critical']).optional(),
+})
+
 /* ============================================================================
  * timeseries
  * ========================================================================== */
@@ -35,6 +44,7 @@ export const timeSeriesSchema = z.object({
   x: z.array(z.number()).describe('X 轴：时间戳（秒）或序号，长度必须与每列的 v 相同'),
   cols: z.array(uiColumnSchema).min(1).describe('数据列，每列 { n: 名称, v: 值数组 }'),
   markers: z.array(uiMarkerSchema).optional().describe('图上标记（买卖点等）'),
+  moments: z.array(uiMomentSchema).optional().describe('关键时刻列表，渲染在图下方的时刻条'),
   x_label: z.string().optional().describe('X 轴标题'),
   y_label: z.string().optional().describe('Y 轴标题'),
   y_format: z.enum(['number', 'percent', 'currency']).optional().describe('Y 轴数值格式'),
@@ -42,7 +52,8 @@ export const timeSeriesSchema = z.object({
 
 export const TIME_SERIES_DESCRIPTION =
   '{ x: number[], cols: [{ n: 列名, v: number[], u?: 单位, tone?: good|bad|neutral }], ' +
-  'x_label?, y_label?, y_format?: number|percent|currency, markers?: [{ x: 下标, kind?: buy|sell|point, label? }] }'
+  'x_label?, y_label?, y_format?: number|percent|currency, markers?: [{ x: 下标, kind?: buy|sell|point, label? }], ' +
+  'moments?: [{ id, timestamp, title, detail?, severity? }] }'
 
 /* ============================================================================
  * histogram
@@ -121,3 +132,30 @@ export const metricSchema = z.object({
 export const METRIC_DESCRIPTION =
   '{ items: [{ key, label, value: number|string, format?: number|percent|currency|ratio|raw, ' +
   'precision?, delta?, deltaLabel?, tone?: good|bad|neutral }] }'
+
+/* ============================================================================
+ * monte_carlo
+ * ========================================================================== */
+
+/** 单条蒙特卡洛路径 */
+export const mcPathSchema = z.object({
+  equity_curve: z.array(z.number()).describe('净值曲线，1.0 为起点'),
+  total_return: z.number().optional(),
+  max_drawdown: z.number().optional(),
+  win_rate: z.number().optional(),
+  longest_win_streak: z.number().optional(),
+  longest_loss_streak: z.number().optional(),
+})
+
+export const monteCarloSchema = z.object({
+  worst: z.array(mcPathSchema).describe('最差路径族'),
+  best: z.array(mcPathSchema).describe('最好路径族'),
+  median: mcPathSchema.optional().describe('P50 中位数路径'),
+  p10: mcPathSchema.optional().describe('P10 次差路径'),
+  p90: mcPathSchema.optional().describe('P90 次优路径'),
+  bar_count: z.number().optional().describe('bar 数量（x 轴范围）'),
+})
+
+export const MONTE_CARLO_DESCRIPTION =
+  '{ worst: 路径数组, best: 路径数组, median?, p10?, p90?, bar_count? }；' +
+  '每条路径 = { equity_curve: number[], total_return?, max_drawdown?, win_rate? }'

@@ -7,6 +7,9 @@
  *
  * 数据集全部来自最近一次回测结果（historyStore），不额外打后端。
  * 依赖方向：chart → backtest（复用 buildChartFromResult），单向无环。
+ *
+ * 产物是 `ui` 类型：payload 是一份平铺的 UiSpec，
+ * 数据用列式结构（每列 { n: 名称, v: 值数组 }），由 UI 注册表分发渲染。
  */
 
 import { tool } from '@langchain/core/tools'
@@ -14,9 +17,6 @@ import { z } from 'zod'
 import { useHistoryStore } from '@/stores/history'
 import {
   makeArtifact,
-  type ChartMoment,
-  type ChartPayload,
-  type ChartType,
   type ToolArtifactResult,
 } from '@/lib/agent/artifacts'
 import { buildChartFromResult } from './backtest'
@@ -43,11 +43,21 @@ const DATASET_LABEL: Record<ChartDataset, string> = {
   daily_returns: '日收益率',
 }
 
-const DATASET_CHART_TYPE: Record<ChartDataset, ChartType> = {
+/** 每个数据集对应的 UI 类型 */
+const DATASET_UI_TYPE: Record<ChartDataset, 'timeseries' | 'histogram'> = {
+  performance: 'timeseries',
+  price: 'timeseries',
+  drawdown: 'timeseries',
+  distribution: 'histogram',
+  daily_returns: 'timeseries',
+}
+
+/** 每个数据集默认的图形（呈现层参数） */
+const DATASET_CHART_TYPE: Record<ChartDataset, string> = {
   performance: 'line',
   price: 'line',
   drawdown: 'area',
-  distribution: 'histogram',
+  distribution: 'bar',
   daily_returns: 'bar',
 }
 
@@ -88,42 +98,45 @@ export const chartTool = tool(
 
     // 优先用回测结果里已算好的 chartData，否则现场构建
     const chartData = result.chartData ?? buildChartFromResult(result)
+    const ds = dataset as ChartDataset
 
-    const payload = buildChartPayload(dataset as ChartDataset, chartData, momentInputs)
-
-    if (!payload) {
+    const built = buildUiPayload(ds, chartData, momentInputs)
+    if (!built) {
       return {
-        text: `回测结果中没有「${DATASET_LABEL[dataset as ChartDataset] ?? dataset}」数据集，无法生成图表。`,
+        text: `回测结果中没有「${DATASET_LABEL[ds] ?? dataset}」数据集，无法生成图表。`,
       }
     }
 
-    payload.chartType = chartType ?? DATASET_CHART_TYPE[dataset as ChartDataset] ?? 'line'
-
-    if (!payload.yFormat) {
-      payload.yFormat = inferYFormat(dataset as ChartDataset, payload)
+    // 呈现层参数
+    const uiParams: Record<string, unknown> = {
+      chart_type: chartType ?? DATASET_CHART_TYPE[ds],
+      legend: true,
     }
-
-    // 双轴：把指定序列挂到独立 Y 轴
-    if (secondarySeries) {
-      const idx = payload.timeSeries?.labels.indexOf(secondarySeries) ?? -1
+    if (secondarySeries && built.colLabels) {
+      const idx = built.colLabels.indexOf(secondarySeries)
       if (idx >= 0) {
-        payload.secondaryAxis = { seriesIndex: idx, yAxisLabel: secondarySeries }
+        uiParams.secondary_axis = idx
+        uiParams.secondary_axis_label = secondarySeries
       }
     }
 
-    const artifact = makeArtifact(
-      'chart',
-      title || `${DATASET_LABEL[dataset as ChartDataset] ?? dataset}（最近一次回测）`,
-      payload,
-      {
-        subtitle: subtitle ?? '数据源：最近一次回测结果',
-        source: `chart · dataset=${dataset}`,
-        ui: { height: 300, collapsible: true },
-      },
-    )
+    const spec = {
+      type: DATASET_UI_TYPE[ds],
+      title: title || `${DATASET_LABEL[ds] ?? dataset}（最近一次回测）`,
+      subtitle: subtitle ?? '数据源：最近一次回测结果',
+      source: `chart · dataset=${dataset}`,
+      params: uiParams,
+      data: built.data,
+    }
+
+    const artifact = makeArtifact('ui', spec.title, spec, {
+      subtitle: spec.subtitle,
+      source: spec.source,
+      ui: { height: 300, collapsible: true },
+    })
 
     return {
-      text: describeChart(dataset as ChartDataset, payload),
+      text: describeChart(ds, built),
       artifact,
     }
   },
@@ -138,7 +151,7 @@ export const chartTool = tool(
       dataset: z.enum(CHART_DATASETS).describe('数据集：performance 累计收益 / price 价格趋势 / drawdown 回撤 / distribution 收益分布 / daily_returns 日收益率'),
       title: z.string().optional().describe('图表标题'),
       subtitle: z.string().optional().describe('图表副标题'),
-      chartType: z.enum(['line', 'area', 'bar', 'scatter', 'candlestick', 'histogram', 'heatmap']).optional().describe('图表类型，缺省按数据集推断'),
+      chartType: z.enum(['line', 'area', 'bar', 'scatter']).optional().describe('图表类型，缺省按数据集推断'),
       yFormat: z.enum(['number', 'percent', 'currency']).optional().describe('Y 轴格式'),
       secondarySeries: z.string().optional().describe('挂到右侧独立 Y 轴的序列名'),
       moments: z
@@ -183,137 +196,146 @@ function nearestIndex(timestamps: number[], ts: number): number {
   return best
 }
 
+interface BuiltPayload {
+  /** 列式数据 */
+  data: Record<string, unknown>
+  /** 列名（用于双轴定位） */
+  colLabels?: string[]
+}
+
 /**
- * 从 chartData 组装图表 payload。
+ * 从 chartData 组装 UI 规格的 data 部分（列式）。
  * 返回 null 表示该数据集不存在。
  */
-function buildChartPayload(
+function buildUiPayload(
   dataset: ChartDataset,
   chartData: any,
   momentInputs?: MomentInput[],
-): ChartPayload | null {
-  const payload: ChartPayload = { chartType: 'line' }
+): BuiltPayload | null {
+  /* ---------- 分布直方图 ---------- */
+  if (dataset === 'distribution') {
+    if (!chartData?.distribution) return null
+    return {
+      data: {
+        bins: chartData.distribution.bins,
+        counts: chartData.distribution.counts,
+        x_label: '收益率区间',
+        y_label: '频次',
+      },
+    }
+  }
+
+  /* ---------- 时序类 ---------- */
+  let x: number[] = []
+  let cols: Array<{ n: string; v: number[] }> = []
+  let yLabel = ''
+  let yFormat: 'number' | 'percent' | 'currency' = 'number'
 
   switch (dataset) {
     case 'performance': {
-      if (!chartData?.performance) return null
-      payload.timeSeries = chartData.performance
-      payload.xAxisLabel = '日期'
-      payload.yAxisLabel = '累计收益 (%)'
+      const ts = chartData?.performance
+      if (!ts) return null
+      x = ts.timestamps
+      cols = ts.labels.map((n: string, i: number) => ({ n, v: ts.values[i] ?? [] }))
+      yLabel = '累计收益 (%)'
+      yFormat = 'percent'
       break
     }
     case 'price': {
-      if (!chartData?.price) return null
-      payload.timeSeries = chartData.price
-      payload.xAxisLabel = '日期'
-      payload.yAxisLabel = '价格'
+      const ts = chartData?.price
+      if (!ts) return null
+      x = ts.timestamps
+      cols = ts.labels.map((n: string, i: number) => ({ n, v: ts.values[i] ?? [] }))
+      yLabel = '价格'
+      yFormat = 'number'
       break
     }
     case 'drawdown': {
-      if (!chartData?.drawdown) return null
-      payload.timeSeries = chartData.drawdown
-      payload.xAxisLabel = '日期'
-      payload.yAxisLabel = '回撤 (%)'
-      payload.chartType = 'area'
-      break
-    }
-    case 'distribution': {
-      if (!chartData?.distribution) return null
-      payload.histogram = chartData.distribution
-      payload.chartType = 'histogram'
-      payload.xAxisLabel = '收益率区间'
-      payload.yAxisLabel = '频次'
+      const ts = chartData?.drawdown
+      if (!ts) return null
+      x = ts.timestamps
+      cols = ts.labels.map((n: string, i: number) => ({ n, v: ts.values[i] ?? [] }))
+      yLabel = '回撤 (%)'
+      yFormat = 'percent'
       break
     }
     case 'daily_returns': {
-      if (!chartData?.dailyReturns) return null
-      const rets: number[] = chartData.dailyReturns
-      const dates: number[] | undefined = chartData.performance?.timestamps
-      payload.timeSeries = {
-        timestamps: dates && dates.length === rets.length ? dates : rets.map((_, i) => i),
-        values: [rets],
-        labels: ['日收益率'],
-      }
-      payload.xAxisLabel = '日期'
-      payload.yAxisLabel = '日收益率 (%)'
-      payload.chartType = 'bar'
+      const rets: number[] = chartData?.dailyReturns
+      if (!rets) return null
+      const dates: number[] | undefined = chartData?.performance?.timestamps
+      x = dates && dates.length === rets.length ? dates : rets.map((_, i) => i)
+      cols = [{ n: '日收益率', v: rets }]
+      yLabel = '日收益率 (%)'
+      yFormat = 'percent'
       break
     }
   }
 
+  if (!x.length) return null
+
+  const data: Record<string, unknown> = {
+    x,
+    cols,
+    x_label: '日期',
+    y_label: yLabel,
+    y_format: yFormat,
+  }
+
   // 时刻标注：转成 marker + moment 双向关联
-  if (momentInputs?.length && payload.timeSeries?.timestamps.length) {
-    const timestamps = payload.timeSeries.timestamps
-    const markers: NonNullable<ChartPayload['markers']> = []
-    const moments: ChartMoment[] = []
+  if (momentInputs?.length) {
+    const markers: Array<{ x: number; kind: string; label: string }> = []
+    const moments: Array<Record<string, unknown>> = []
 
     momentInputs.forEach((input, i) => {
       const ts = parseMomentTimestamp(input.date)
       if (ts === null) return
-      const idx = nearestIndex(timestamps, ts)
+      const idx = nearestIndex(x, ts)
       if (idx < 0) return
-      markers.push({
-        type: 'vline',
-        timestamp: timestamps[idx],
-        label: input.title,
-        style: 'dashed',
-      })
+      markers.push({ x: idx, kind: 'point', label: input.title })
       moments.push({
         id: `moment-${i}`,
-        timestamp: timestamps[idx],
+        timestamp: x[idx],
         title: input.title,
         detail: input.detail,
         severity: input.severity,
-        markerIndex: markers.length - 1,
       })
     })
 
     if (moments.length) {
-      payload.markers = markers
-      payload.moments = moments
+      data.markers = markers
+      data.moments = moments
     }
   }
 
-  return payload
-}
-
-/** Y 轴格式推断：回撤与收益按百分比，其余保留显式指定或按数值 */
-function inferYFormat(
-  dataset: ChartDataset,
-  payload: ChartPayload,
-): 'number' | 'percent' | 'currency' {
-  if (dataset === 'performance' || dataset === 'drawdown' || dataset === 'daily_returns') {
-    return 'percent'
-  }
-  return payload.yFormat ?? 'number'
+  return { data, colLabels: cols.map((c) => c.n) }
 }
 
 /** 生成给 LLM 的文字摘要 */
-function describeChart(dataset: ChartDataset, payload: ChartPayload): string {
+function describeChart(dataset: ChartDataset, built: BuiltPayload): string {
   const lines: string[] = []
+  const data = built.data
 
-  if (payload.timeSeries) {
-    const ts = payload.timeSeries
+  const cols = data.cols as Array<{ n: string; v: number[] }> | undefined
+  const x = (data.x as number[]) ?? []
+
+  if (cols) {
     lines.push(
-      `已生成「${DATASET_LABEL[dataset]}」图表：${ts.timestamps.length} 个数据点，${ts.labels.length} 条序列（${ts.labels.join(' / ')}）。`,
+      `已生成「${DATASET_LABEL[dataset]}」图表：${x.length} 个数据点，${cols.length} 条序列（${cols.map((c) => c.n).join(' / ')}）。`,
     )
-    ts.labels.forEach((label, i) => {
-      const values = ts.values[i] || []
-      if (!values.length) return
-      const first = values[0]
-      const last = values[values.length - 1]
-      const isPct = payload.yFormat === 'percent'
+    const isPct = data.y_format === 'percent'
+    cols.forEach((col) => {
+      if (!col.v.length) return
       const fmt = (v: number) => (isPct ? `${(v * 100).toFixed(2)}%` : v.toFixed(4))
-      lines.push(`  ${label}: ${fmt(first)} → ${fmt(last)}`)
+      lines.push(`  ${col.n}: ${fmt(col.v[0])} → ${fmt(col.v[col.v.length - 1])}`)
     })
-  } else if (payload.histogram) {
-    lines.push(`已生成「${DATASET_LABEL[dataset]}」直方图：${payload.histogram.bins.length} 个区间。`)
-  } else if (payload.matrix) {
-    lines.push(`已生成热力图：${payload.matrix.rows.length} × ${payload.matrix.cols.length}。`)
+  } else {
+    const counts = (data.counts as number[]) ?? []
+    lines.push(`已生成「${DATASET_LABEL[dataset]}」直方图：${counts.length} 个区间。`)
   }
 
-  if (payload.moments?.length) {
-    lines.push(`已标注 ${payload.moments.length} 个关键时刻：${payload.moments.map((m) => m.title).join('、')}。`)
+  const moments = (data.moments as Array<{ title: string }>) ?? []
+  if (moments.length) {
+    lines.push(`已标注 ${moments.length} 个关键时刻：${moments.map((m) => m.title).join('、')}。`)
   }
 
   lines.push('图表已在对话流中渲染，可直接查看。')

@@ -13,13 +13,36 @@
  * visualize 工具不需要改 —— 它的描述与校验都从注册表生成。
  */
 
+import type { Component } from 'vue'
 import type { UiTypeDefinition, UiTypeId } from './types'
 
 const defs = new Map<string, UiTypeDefinition>()
 
-/** 注册一种 UI 类型 */
+/**
+ * 注册一种 UI 类型。
+ *
+ * 契约（schema / controls / resolver）与组件分开注册时，后注册的会**合并**而不是覆盖 ——
+ * 工具层先注册契约、UI 层后补组件，两边都调这个函数也不会互相抹掉。
+ */
 export function registerUiType(def: UiTypeDefinition): void {
-  defs.set(def.id, def)
+  const existing = defs.get(def.id)
+  if (!existing) {
+    defs.set(def.id, { ...def })
+    return
+  }
+  defs.set(def.id, {
+    ...existing,
+    ...def,
+    // 后注册没带组件时，保留先注册的那个
+    component: def.component ?? existing.component ?? null,
+  })
+}
+
+/** 给已登记的 UI 类型补上渲染组件 */
+export function attachUiComponent(id: string, component: Component): void {
+  const existing = defs.get(id)
+  if (!existing) return
+  defs.set(id, { ...existing, component })
 }
 
 /** 按 id 查找 UI 类型定义 */

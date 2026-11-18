@@ -13,7 +13,7 @@
 
 import { StateGraph } from "@langchain/langgraph";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
-import { createLLM, getAgentConfig } from ".";
+import { createLLM, getAgentConfig, type AgentConfig } from ".";
 
 import { GraphState, GraphStateType, AgentType, RouterDecision, AGENT_SYSTEM_PROMPTS, UsageReporter } from "./types";
 import { createAgentNode } from "./agents";
@@ -22,13 +22,13 @@ import { AgentEvent } from "./types";
 import { IndexedDBSaver } from "./checkpointer";
 
 /** Supervisor LLM（仅用于路由决策，不绑定 Tool） */
-function createSupervisorLLM() {
-  const config = getAgentConfig();
-  if (!config) {
+function createSupervisorLLM(config?: AgentConfig) {
+  const resolved = config ?? getAgentConfig();
+  if (!resolved) {
     throw new Error("LLM 配置未设置");
   }
   // Supervisor 需要较强的推理能力，使用稍低的 temperature
-  const llm = createLLM({ ...config });
+  const llm = createLLM({ ...resolved });
   // @ts-ignore - temperature 在创建后可修改
   llm.temperature = 0.2;
   return llm;
@@ -43,6 +43,7 @@ async function supervisorNode(
   emitEvent?: (event: AgentEvent) => void,
   onUsage?: UsageReporter,
   signal?: AbortSignal,
+  config?: AgentConfig,
 ): Promise<Partial<GraphStateType>> {
   const { messages, userInput, iterationCount, maxIterations, shouldEnd } = state;
 
@@ -119,7 +120,7 @@ async function supervisorNode(
 
   let llm: any;
   try {
-    llm = createSupervisorLLM();
+    llm = createSupervisorLLM(config);
   } catch (err) {
     console.error('[LangGraph] Supervisor 创建 LLM 失败:', err);
     emitEvent?.({
@@ -299,6 +300,7 @@ export function buildSupervisorGraph(
   checkpointer?: IndexedDBSaver,
   onUsage?: UsageReporter,
   signal?: AbortSignal,
+  config?: AgentConfig,
 ) {
   const workflow = new StateGraph(GraphState);
 
@@ -306,36 +308,36 @@ export function buildSupervisorGraph(
 
   // Supervisor Node
   workflow.addNode("supervisor", async (state: GraphStateType) => {
-    return supervisorNode(state, emitEvent, onUsage, signal);
+    return supervisorNode(state, emitEvent, onUsage, signal, config);
   });
 
   // Chat Agent Node
   workflow.addNode("chatAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("chat", emitEvent, internalTools, onUsage, signal);
+    const node = createAgentNode("chat", emitEvent, internalTools, onUsage, signal, config);
     return node(state);
   });
 
   // Strategy Agent Node
   workflow.addNode("strategyAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage, signal);
+    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage, signal, config);
     return node(state);
   });
 
   // Risk Agent Node
   workflow.addNode("riskAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("risk", emitEvent, internalTools, onUsage, signal);
+    const node = createAgentNode("risk", emitEvent, internalTools, onUsage, signal, config);
     return node(state);
   });
 
   // Portfolio Agent Node
   workflow.addNode("portfolioAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage, signal);
+    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage, signal, config);
     return node(state);
   });
 
   // Analysis Agent Node
   workflow.addNode("analysisAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage, signal);
+    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage, signal, config);
     return node(state);
   });
 
@@ -435,8 +437,9 @@ export async function runSupervisorGraph(
   historyMessages?: Array<HumanMessage | AIMessage>,
   onUsage?: UsageReporter,
   signal?: AbortSignal,
+  config?: AgentConfig,
 ) {
-  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage, signal);
+  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage, signal, config);
 
   // 调试：尝试从 checkpoint 恢复历史
   if (checkpointer) {

@@ -1,5 +1,5 @@
 <template>
-  <Teleport :to="overlayHost ?? undefined" :disabled="!maximized">
+  <Teleport :to="overlayHost ?? undefined" :disabled="!maximized || !overlayHost">
     <div class="ui-frame" :class="{ 'is-maximized': maximized }">
       <!-- 头部：标题 + 右上最大化 -->
       <div class="ui-frame__head">
@@ -26,6 +26,26 @@
         </button>
 
         <button
+          v-if="canExportPng"
+          class="icon-btn"
+          aria-label="导出 PNG"
+          data-tooltip="导出 PNG"
+          @click="onExportPng"
+        >
+          <i class="fas fa-image"></i>
+        </button>
+
+        <button
+          v-if="canExportCsv"
+          class="icon-btn"
+          aria-label="导出 CSV"
+          data-tooltip="导出 CSV"
+          @click="onExportCsv"
+        >
+          <i class="fas fa-file-csv"></i>
+        </button>
+
+        <button
           class="icon-btn"
           :aria-label="maximized ? '退出放大' : '最大化'"
           :data-tooltip="maximized ? '退出放大' : '最大化'"
@@ -36,7 +56,7 @@
       </div>
 
       <!-- 主体：按 type 分发到视图组件 -->
-      <div class="ui-frame__body">
+      <div ref="bodyRef" class="ui-frame__body">
         <component
           :is="viewComponent"
           v-if="viewComponent"
@@ -84,6 +104,7 @@
 import { computed, inject, onUnmounted, ref, watch } from 'vue'
 import { getUiType, mergeParams } from '@/lib/charts/registry'
 import { getResolver } from '@/lib/charts/resolvers'
+import { exportCsv, exportPng } from '@/lib/charts/export'
 import type { UiControlDef, UiSpec } from '@/lib/charts/types'
 import type { ArtifactAction, ArtifactDensity, ArtifactEnvelope } from '@/lib/agent/artifacts'
 import { useArtifactActions } from '../useArtifactActions'
@@ -141,13 +162,42 @@ function toggleDensity() {
 }
 
 const effectiveHeight = computed(() => {
-  if (maximized.value) return Math.max(360, Math.floor(window.innerHeight * 0.55))
+  if (maximized.value) {
+    // 放大态：图区占满宿主（Agent 面板）减去头尾
+    const hostHeight = overlayHost.value?.clientHeight ?? 0
+    const base = hostHeight || Math.floor(window.innerHeight * 0.55)
+    return Math.max(320, base - 110)
+  }
   const hints = props.artifact?.ui
   if (densityRef.value === 'compact') {
     return hints?.compactHeight ?? (hints?.height ? Math.round(hints.height * 0.55) : 165)
   }
   return props.height ?? hints?.height ?? 300
 })
+
+/* ---------- 导出 ---------- */
+
+const bodyRef = ref<HTMLElement | null>(null)
+
+/** 是否能导出 PNG（图表类才有 ECharts 实例） */
+const canExportPng = computed(
+  () => typeDef.value?.exportable === true && ['timeseries', 'histogram', 'matrix'].includes(props.spec.type),
+)
+
+/** 是否能导出 CSV */
+const canExportCsv = computed(() => typeDef.value?.exportable === true)
+
+function onExportPng() {
+  const canvas = bodyRef.value?.querySelector('.ui-view__canvas') as HTMLElement | null
+  const ok = exportPng(canvas, props.spec)
+  if (!ok) {
+    resolveError.value = '没有找到可导出的图表实例'
+  }
+}
+
+function onExportCsv() {
+  exportCsv(props.spec, data.value)
+}
 
 /* ---------- 产物动作 ---------- */
 
@@ -271,8 +321,6 @@ function actionIcon(action: ArtifactAction): string {
       return 'fas fa-stop'
     case 'deploy_strategy':
       return 'fas fa-upload'
-    case 'query_data':
-      return 'fas fa-database'
     case 'open_panel':
       return 'fas fa-table-columns'
     default:

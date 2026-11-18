@@ -84,34 +84,64 @@
                 </div>
                 <div class="section-content" :class="{ expanded: expandedSections.agent }">
                     <div class="form-group">
+                        <label>模型基底</label>
+                        <div class="agent-base-list">
+                            <button
+                                v-for="preset in agentPresets"
+                                :key="preset.id"
+                                type="button"
+                                class="agent-base-item"
+                                :class="{ 'is-editing': editingBaseId === preset.id }"
+                                @click="selectBase(preset.id)"
+                            >
+                                <span class="base-name">{{ preset.label }}</span>
+                                <span class="base-state" :class="{ 'is-ready': isPresetReady(preset.id) }">
+                                    {{ isPresetReady(preset.id) ? '已配置' : '未配置' }}
+                                </span>
+                                <span v-if="agentStore.activeId === preset.id" class="base-active">当前</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
                         <label>服务 URL</label>
-                        <input type="text" class="form-control" v-model="agentConfig.url" placeholder="例如：https://api.openai.com 或 http://localhost:11434">
+                        <input type="text" class="form-control" v-model="agentDraft.url" placeholder="例如：https://api.deepseek.com">
                     </div>
                     <div class="form-group">
                         <label>协议类型</label>
-                        <select class="form-control" v-model="agentConfig.protocol">
+                        <select class="form-control" v-model="agentDraft.protocol">
                             <option value="openai">OpenAI 兼容</option>
                             <option value="anthropic">Anthropic Claude</option>
                             <option value="custom">自定义</option>
                         </select>
+                    </div>
+                    <div class="form-group">
                         <label>模型</label>
-                        <input type="text" class="form-control" v-model="agentConfig.model" placeholder="例如：https://api.openai.com 或 http://localhost:11434">
+                        <input
+                            type="text"
+                            class="form-control"
+                            v-model="agentDraft.model"
+                            :list="'agent-models-' + editingBaseId"
+                            placeholder="例如：deepseek-chat"
+                        >
+                        <datalist :id="'agent-models-' + editingBaseId">
+                            <option v-for="m in currentPreset.models" :key="m" :value="m"></option>
+                        </datalist>
                     </div>
                     <div class="form-group">
                         <label>API Key</label>
                         <div class="password-input-wrapper">
-                            <input :type="showAgentKey ? 'text' : 'password'" class="form-control" v-model="agentConfig.apiKey" placeholder="请输入 API Key">
+                            <input :type="showAgentKey ? 'text' : 'password'" class="form-control" v-model="agentDraft.apiKey" placeholder="请输入该基底的 API Key">
                             <button class="eye-toggle-btn" @click="showAgentKey = !showAgentKey" type="button">
-                                <i :class="showAgentKey ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'"></i>
+                                <i class="fa-solid" :class="showAgentKey ? 'fa-eye' : 'fa-eye-slash'"></i>
                             </button>
                         </div>
                     </div>
                     <div class="form-actions">
-                        <button class="btn btn-primary" @click="saveAgentConfig">保存配置</button>
+                        <button class="btn btn-primary" @click="saveAgentBase">保存并设为当前</button>
                         <button class="btn btn-secondary" @click="testAgentConnection" :disabled="testingAgentConnection">
                             {{ testingAgentConnection ? '测试中...' : '测试连接' }}
                         </button>
-                        <button class="btn btn-danger" @click="clearAgentConfig">清除配置</button>
+                        <button class="btn btn-danger" @click="resetAgentBase">恢复默认</button>
                     </div>
                     <div class="test-result" :class="agentTestResult?.success ? 'success' : 'error'" v-if="agentTestResult">
                         <span :class="['result-icon', agentTestResult.success ? 'success' : 'error']">
@@ -372,19 +402,52 @@ const showTickflowKey = ref(false);  // 密码显示/隐藏切换
 const testingConnection = ref(false);
 const testResult = ref(null);
 
-// Agent 模型配置
-import { getAgentConfig, saveAgentConfig as saveAgentConfigUtil, removeAgentConfig, testAgentConnection as testAgentConnectionUtil } from '@/lib/agent';
+// Agent 模型基底
+import { testAgentConnection as testAgentConnectionUtil } from '@/lib/agent';
+import {
+  MODEL_BASE_PRESETS,
+  getModelBasePreset,
+  isBaseReady,
+} from '@/lib/agent/modelBases';
+import { useAgentModelStore } from '@/stores/agentModel';
 
-const agentConfig = ref({
-  url: '',
-  protocol: 'openai',
-  apiKey: '',
-  model: ''
-});
+const agentStore = useAgentModelStore();
+const agentPresets = MODEL_BASE_PRESETS;
+const editingBaseId = ref(agentStore.activeId);
+
+function baseOf(id) {
+  const found = agentStore.bases.find((base) => base.presetId === id);
+  if (found) return { ...found };
+  const preset = getModelBasePreset(id);
+  return {
+    presetId: id,
+    url: preset.defaultUrl,
+    protocol: preset.protocol,
+    model: preset.defaultModel,
+    apiKey: '',
+  };
+}
+
+const agentDraft = ref(baseOf(agentStore.activeId));
+const currentPreset = computed(() => getModelBasePreset(editingBaseId.value));
 
 const testingAgentConnection = ref(false);
 const showAgentKey = ref(false);  // 密码显示/隐藏切换
 const agentTestResult = ref(null);
+
+function isPresetReady(id) {
+  return isBaseReady(baseOf(id));
+}
+
+function loadDraft(id) {
+  agentDraft.value = baseOf(id);
+}
+
+function selectBase(id) {
+  editingBaseId.value = id;
+  loadDraft(id);
+  agentTestResult.value = null;
+}
 
 // Tavily 搜索配置
 const tavilyApiKey = ref(localStorage.getItem('tavily_api_key') || '');
@@ -595,31 +658,35 @@ const testTickFlowConnection = async () => {
     }
 };
 
-// Agent 模型配置保存
-const saveAgentConfig = () => {
-  if (!agentConfig.value.url) {
+// Agent 模型基底保存
+const saveAgentBase = () => {
+  const draft = agentDraft.value;
+  if (!draft.url.trim()) {
     message.error('服务 URL 不能为空');
     return;
   }
-  if (!agentConfig.value.apiKey) {
+  if (!draft.model.trim()) {
+    message.error('模型不能为空');
+    return;
+  }
+  if (!draft.apiKey.trim()) {
     message.error('API Key 不能为空');
     return;
   }
-  
-  saveAgentConfigUtil(agentConfig.value);
-  message.success('Agent 模型配置已保存');
+
+  agentStore.saveBase({ ...draft, url: draft.url.trim(), model: draft.model.trim(), apiKey: draft.apiKey.trim() });
+  agentStore.setActive(draft.presetId);
+  loadDraft(draft.presetId);
+  message.success(`${getModelBasePreset(draft.presetId).label} 配置已保存并设为当前基底`);
 };
 
-// Agent 模型配置清除
-const clearAgentConfig = () => {
-  removeAgentConfig();
-  agentConfig.value = {
-    url: '',
-    protocol: 'openai',
-    apiKey: ''
-  };
+// 恢复当前基底的预设默认值
+const resetAgentBase = () => {
+  if (!window.confirm(`恢复「${getModelBasePreset(editingBaseId.value).label}」的默认 URL/模型？API Key 会一起清空。`)) return;
+  agentStore.resetBase(editingBaseId.value);
+  loadDraft(editingBaseId.value);
   agentTestResult.value = null;
-  message.success('Agent 模型配置已清除');
+  message.success('已恢复默认配置');
 };
 
 // Agent 模型连接测试
@@ -628,7 +695,16 @@ const testAgentConnection = async () => {
   agentTestResult.value = null;
 
   try {
-    const result = await testAgentConnectionUtil(agentConfig.value);
+    const draft = agentDraft.value;
+    if (!draft.url.trim() || !draft.model.trim() || !draft.apiKey.trim()) {
+      throw new Error('URL、模型和 API Key 都不能为空');
+    }
+    const result = await testAgentConnectionUtil({
+      url: draft.url.trim(),
+      protocol: draft.protocol,
+      apiKey: draft.apiKey.trim(),
+      model: draft.model.trim(),
+    });
     agentTestResult.value = result;
     
     if (result.success) {
@@ -655,15 +731,9 @@ onMounted(async () => {
         console.error('[Setting] 加载股票参数失败:', e)
     }
 
-    // 加载 Agent 配置
-    try {
-        const savedAgentConfig = getAgentConfig();
-        if (savedAgentConfig) {
-            agentConfig.value = savedAgentConfig;
-        }
-    } catch (e) {
-        console.error('[Setting] 加载 Agent 配置失败:', e)
-    }
+    // 加载模型基底（Pinia store 会自动读 localStorage + 迁移旧配置）
+    agentStore.reload()
+    selectBase(agentStore.activeId)
 
     // 加载 Tavily 配置
     const savedTavilyKey = localStorage.getItem('tavily_api_key');
@@ -782,6 +852,56 @@ onMounted(async () => {
     color: var(--text);
     margin-right: 15px;
     text-align: right;
+}
+
+/* 模型基底选择 */
+.agent-base-list {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.agent-base-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border, #2a3449);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+
+.agent-base-item:hover {
+    border-color: var(--primary, #2962ff);
+    color: var(--text);
+}
+
+.agent-base-item.is-editing {
+    border-color: var(--primary, #2962ff);
+    background: rgba(41, 98, 255, 0.1);
+    color: var(--text);
+}
+
+.base-state {
+    font-size: 10.5px;
+    color: #6f7b8a;
+}
+
+.base-state.is-ready {
+    color: #00c853;
+}
+
+.base-active {
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(41, 98, 255, 0.18);
+    color: var(--primary, #2962ff);
 }
 
 .hint {

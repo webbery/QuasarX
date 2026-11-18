@@ -107,7 +107,7 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   ],
   strategy: [
     "strategy", "backtest", "quote", "calculator", "skill",
-    "data_manager", "analysis", "performance", "chart",
+    "data_manager", "analysis", "performance", "chart", "visualize",
     "ask_risk", "ask_portfolio", "ask_chat",
   ],
   risk: [
@@ -122,7 +122,7 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   ],
   analysis: [
     "analysis", "math_tool", "option_pricing", "data_manager", "performance",
-    "calculator", "chart",
+    "calculator", "chart", "visualize",
   ],
 };
 
@@ -230,7 +230,11 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   除非用户明确要求"立即生效、不用确认"，否则不要用 update_strategy 直接写入。
 
   **出图用 chart 工具**：需要展示回测收益/回撤/分布时调用 \`chart\`，
-  不要自己编造图表数值。`,
+  不要自己编造图表数值。
+
+  **自由绘图用 visualize 工具**：需要画 chart 覆盖不到的图（多序列对比、相关性热力图、
+  自定义表格、指标条）时调用 \`visualize\`，自己按 type 要求给 data。
+  图表数值同样禁止编造，必须来自 Tool 返回。`,
 
   risk: `你是一个专业的风控专家，负责风险管理和合规检查。
 
@@ -290,8 +294,10 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   2. **关键数值**：列出主要指标，保留 4 位小数
   3. **统计显著性**：协整检验、CUSUM、Granger 等需明确 p-value
   4. **数据范围**：明确 start_date / end_date / symbol 列表
-  5. **可视化**：如需出图，调用 \`chart\` 工具（dataset 取 performance / price / drawdown / distribution / daily_returns），
+  5. **可视化**：如需出图，优先调用 \`chart\` 工具（dataset 取 performance / price / drawdown / distribution / daily_returns），
      可用 moments 标注关键时刻（变点、回撤极值等），图表会直接渲染在对话流中。
+     chart 覆盖不到的图（多序列对比、相关性热力图、自定义表格、指标条）改用 \`visualize\` 工具，
+     按 type 给 data（列式：{ n: 列名, v: 值数组 }）。
      禁止自己编造图表数值，所有图形必须由工具产出。
 
   数据要求：

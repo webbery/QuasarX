@@ -29,13 +29,32 @@
       <span class="session-title">
         <i class="fas fa-message"></i>
         {{ chatStore.currentSession?.title || '新会话' }}
+        <span v-if="chatStore.currentSession?.archivedAt" class="archived-badge">已归档</span>
       </span>
 
       <button type="button" class="icon-btn" data-tooltip="新建会话" @click="onNewSession">
         <i class="fas fa-plus"></i>
       </button>
-      <button type="button" class="icon-btn" data-tooltip="清空当前会话" @click="onClear">
-        <i class="fas fa-trash"></i>
+      <button type="button" class="icon-btn" data-tooltip="清空当前会话消息" @click="onClear">
+        <i class="fas fa-eraser"></i>
+      </button>
+      <button
+        v-if="chatStore.currentSession?.archivedAt"
+        type="button"
+        class="icon-btn"
+        data-tooltip="恢复当前会话"
+        @click="onUnarchive"
+      >
+        <i class="fas fa-box-open"></i>
+      </button>
+      <button
+        v-else
+        type="button"
+        class="icon-btn"
+        data-tooltip="归档当前会话"
+        @click="onArchive"
+      >
+        <i class="fas fa-box-archive"></i>
       </button>
     </div>
 
@@ -103,6 +122,7 @@
             ></textarea>
             <div class="row">
               <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+              <AgentModelSelect :disabled="isLoading" />
               <button
                 v-if="isLoading"
                 type="button"
@@ -132,7 +152,7 @@
     </div>
 
     <!-- 分支/会话浮层 -->
-    <AgentBranchTree v-if="branchOpen" @close="branchOpen = false" />
+    <AgentBranchTree v-if="branchOpen" @close="branchOpen = false" @jump="onJumpToMessage" />
 
     <!-- UI 产物放大的宿主（UiFrame 最大化时 Teleport 到这里） -->
     <div ref="overlayHostRef" class="agent-panel__overlay-host"></div>
@@ -151,6 +171,7 @@ import { UI_OVERLAY_KEY } from './ui/overlayContext'
 import AgentConversation from './AgentConversation.vue'
 import AgentWorkflowTimeline from './AgentWorkflowTimeline.vue'
 import AgentBranchTree from './AgentBranchTree.vue'
+import AgentModelSelect from './AgentModelSelect.vue'
 
 const chatStore = useChatStore()
 const session = useAgentSession()
@@ -285,6 +306,24 @@ function onClear() {
   chatStore.clearMessages()
 }
 
+function onArchive() {
+  const sessionId = chatStore.currentSessionId
+  if (!sessionId) return
+  chatStore.archiveSession(sessionId)
+}
+
+function onUnarchive() {
+  const sessionId = chatStore.currentSessionId
+  if (!sessionId) return
+  chatStore.unarchiveSession(sessionId)
+}
+
+function onJumpToMessage(messageId: string) {
+  branchOpen.value = false
+  pane.value = 'chat'
+  conversationRef.value?.scrollToMessage?.(messageId)
+}
+
 function scrollToBottom() {
   conversationRef.value?.scrollToBottom?.()
 }
@@ -408,6 +447,15 @@ onMounted(() => {
 
 .session-title i {
   color: #6f7b8a;
+}
+
+.archived-badge {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 152, 0, 0.14);
+  color: #ff9800;
 }
 
 .icon-btn {
@@ -558,8 +606,12 @@ onMounted(() => {
 
 .hint {
   flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: #6f7b8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .send-btn {

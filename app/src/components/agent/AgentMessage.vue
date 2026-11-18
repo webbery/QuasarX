@@ -1,5 +1,10 @@
 <template>
-  <div v-if="!isBlank" class="agent-msg" :class="[`is-${message.role}`, { 'is-editing': editing }]">
+  <div
+    v-if="!isBlank"
+    class="agent-msg"
+    :class="[`is-${message.role}`, { 'is-editing': editing }]"
+    :data-message-id="message.id"
+  >
     <div class="msg-avatar">
       <i :class="message.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
     </div>

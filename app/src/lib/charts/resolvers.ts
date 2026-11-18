@@ -160,7 +160,16 @@ registerResolver('backtest_performance', async (args) => {
   }
 
   const { returns, timestamps } = extractDailySeries(result)
-  const cols = [toColumn('策略收益', toCumulative(returns))]
+  const cumulative = toCumulative(returns)
+  const cols = [toColumn('策略收益', cumulative)]
+
+  // 回撤：累计收益 - 历史峰值
+  let peak = -Infinity
+  const drawdown = cumulative.map((v) => {
+    if (v > peak) peak = v
+    return v - peak
+  })
+  cols.push({ ...toColumn('回撤', drawdown), tone: 'bad' })
 
   // 基准：按回测时间范围取基准日线，算同区间累计收益
   try {
@@ -281,8 +290,7 @@ function nearestIndex(timestamps: number[], ts: number): number {
  * args:
  *   - benchmark?  基准代码
  *   - version_id? 用回测时间范围
- */
-registerResolver('benchmark_curve', async (args) => {
+ */registerResolver('benchmark_curve', async (args) => {
   const benchmark = (args.benchmark as string) || DEFAULT_BENCHMARK
   const history = useHistoryStore()
   const versionId = args.version_id as string | undefined
@@ -321,5 +329,41 @@ registerResolver('benchmark_curve', async (args) => {
         default: benchmark,
       },
     ],
+  }
+})
+
+/**
+ * 蒙特卡洛路径。
+ *
+ * args:
+ *   - version_id? 指定版本；缺省用最近一次回测
+ */
+registerResolver('mc_paths', async (args) => {
+  const history = useHistoryStore()
+  const versionId = args.version_id as string | undefined
+  const result = versionId
+    ? await history.loadBacktestResult(versionId)
+    : await history.getLatestBacktestResult()
+
+  if (!result) {
+    throw new Error('没有可用的回测结果，请先执行一次回测')
+  }
+
+  const paths = (result as any).mcPaths
+  if (!paths?.worst?.length && !paths?.best?.length) {
+    throw new Error('这次回测没有蒙特卡洛路径数据（后端未返回 mc_paths）')
+  }
+
+  const { timestamps } = extractDailySeries(result)
+
+  return {
+    data: {
+      worst: paths.worst ?? [],
+      best: paths.best ?? [],
+      median: paths.median,
+      p10: paths.p10,
+      p90: paths.p90,
+      bar_count: timestamps.length || 252,
+    },
   }
 })

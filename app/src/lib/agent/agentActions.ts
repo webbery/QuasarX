@@ -138,14 +138,6 @@ export function ensureAgentActionsRegistered(): void {
     return { ok: true, message: `已切换到 ${tab} 面板` }
   })
 
-  /* ---------- 检索数据（P0 占位） ---------- */
-  registerAction('query_data', async () => {
-    return {
-      ok: false,
-      message: '数据检索动作将在下一阶段接入（当前请直接用自然语言让 Agent 查询）',
-    }
-  })
-
   /* ---------- 远程启动策略 ---------- */
   registerAction('run_strategy', async (action) => {
     const name = action.params?.name as string | undefined

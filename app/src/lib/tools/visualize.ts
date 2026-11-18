@@ -16,9 +16,15 @@
 
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { getUiType, listUiTypes, mergeParams } from '@/lib/charts/registry'
+import { getUiType, listUiTypes, mergeParams, registerUiType } from '@/lib/charts/registry'
 import { getResolver } from '@/lib/charts/resolvers'
+import { UI_TYPE_DEFS } from '@/lib/charts/uiTypes'
 import { makeArtifact, type ToolArtifactResult } from '@/lib/agent/artifacts'
+
+// 先登记契约，工具描述才能列全类型（组件由 UI 层另行补上，不进 LLM 调用链）
+for (const def of UI_TYPE_DEFS) {
+  registerUiType(def)
+}
 
 /** 生成工具描述里的类型清单 */
 function buildTypeDescription(): string {

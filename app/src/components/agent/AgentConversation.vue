@@ -89,15 +89,38 @@ function onSwitchBranch(messageId: string, delta: number) {
   chatStore.switchBranch(messageId, delta)
 }
 
+/** 搜索/分支跳转的目标；设置后本次路径变化不再自动滚到底部 */
+const pendingJumpId = ref<string | null>(null)
+
 /** 新消息或加载状态变化时滚到底部 */
 watch(
   () => [messages.value.length, session.loading.value, chatStore.currentLeafId] as const,
   async () => {
+    // 跳转由 scrollToMessage 自己定位，避免先滚到底再跳回去
+    if (pendingJumpId.value) return
     await nextTick()
     const el = scrollRef.value
     if (el) el.scrollTop = el.scrollHeight
   },
 )
+
+/** 定位到某条消息（会话搜索/分支树跳转用） */
+async function scrollToMessage(messageId: string) {
+  pendingJumpId.value = messageId
+  try {
+    await nextTick()
+    const container = scrollRef.value
+    if (!container) return
+    const nodes = container.querySelectorAll<HTMLElement>('[data-message-id]')
+    const target = Array.from(nodes).find((n) => n.dataset.messageId === messageId)
+    if (!target) return
+    target.scrollIntoView({ block: 'center' })
+    target.classList.add('is-jump-target')
+    window.setTimeout(() => target.classList.remove('is-jump-target'), 1400)
+  } finally {
+    if (pendingJumpId.value === messageId) pendingJumpId.value = null
+  }
+}
 
 defineExpose({
   scrollToBottom: async () => {
@@ -105,6 +128,7 @@ defineExpose({
     const el = scrollRef.value
     if (el) el.scrollTop = el.scrollHeight
   },
+  scrollToMessage,
 })
 </script>
 
@@ -122,6 +146,21 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 搜索/分支跳转后的短暂高亮 */
+.is-jump-target {
+  animation: jump-flash 1.4s ease-out;
+}
+
+@keyframes jump-flash {
+  0%,
+  30% {
+    background: rgba(41, 98, 255, 0.16);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .empty-state {

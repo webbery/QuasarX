@@ -79,6 +79,16 @@ export interface UiMetricItem {
   tone?: 'good' | 'bad' | 'neutral'
 }
 
+/** 时刻条目 —— 图上标记的信息化描述，渲染在图下方的时刻条 */
+export interface UiMoment {
+  id: string
+  /** Unix 时间戳（秒） */
+  timestamp: number
+  title: string
+  detail?: string
+  severity?: 'info' | 'positive' | 'warning' | 'critical'
+}
+
 /* ============================================================================
  * 参数控件
  * ========================================================================== */
@@ -178,8 +188,14 @@ export interface UiTypeDefinition {
   schemaDescription: string
   /** 参数控件定义 */
   controls: UiControlDef[]
-  /** 渲染组件 */
-  component: Component
+  /**
+   * 渲染组件。
+   *
+   * 契约（schema / controls / resolver）与组件分开注册：
+   * 工具层只需要契约，不需要把 .vue 拉进 LLM 调用链；
+   * 组件由 UI 层在注册时补上。
+   */
+  component?: Component | null
   /** 数据层 resolver id —— 数据层控件变更时回源 */
   resolver?: string
   /** 默认参数 */

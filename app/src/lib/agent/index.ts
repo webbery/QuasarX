@@ -12,34 +12,30 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { ChatOpenAI } from "@langchain/openai"
 import { ChatAnthropic } from "@langchain/anthropic"
+import {
+  getActiveModelBase,
+  isBaseReady,
+  type ModelProtocol,
+} from "./modelBases"
 
 export type LLMInstance = ChatOpenAI | ChatAnthropic
 
 export interface AgentConfig {
   url: string
-  protocol: "openai" | "anthropic" | "custom"
+  protocol: ModelProtocol
   apiKey: string
   model: string
 }
 
-const STORAGE_KEY = "quasarx_agent_config"
-
 export function getAgentConfig(): AgentConfig | null {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) return JSON.parse(stored)
-  } catch (e) {
-    console.error("Failed to parse agent config:", e)
+  const base = getActiveModelBase()
+  if (!base || !isBaseReady(base)) return null
+  return {
+    url: base.url,
+    protocol: base.protocol,
+    apiKey: base.apiKey,
+    model: base.model,
   }
-  return null
-}
-
-export function saveAgentConfig(config: AgentConfig): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
-}
-
-export function removeAgentConfig(): void {
-  localStorage.removeItem(STORAGE_KEY)
 }
 
 export function createLLM(config: AgentConfig): LLMInstance {

@@ -155,12 +155,8 @@ const rendererProps = computed<Record<string, unknown>>(() => {
 
 const iconClass = computed(() => {
   const map: Record<string, string> = {
-    chart: 'fas fa-chart-line',
-    metric: 'fas fa-gauge-high',
-    table: 'fas fa-table',
     patch: 'fas fa-code-branch',
     action: 'fas fa-bolt',
-    error: 'fas fa-circle-exclamation',
   }
   return map[props.artifact.kind] || 'fas fa-cube'
 })
@@ -185,8 +181,6 @@ function actionIcon(action: ArtifactAction): string {
       return 'fas fa-stop'
     case 'deploy_strategy':
       return 'fas fa-upload'
-    case 'query_data':
-      return 'fas fa-database'
     case 'open_panel':
       return 'fas fa-table-columns'
     default:

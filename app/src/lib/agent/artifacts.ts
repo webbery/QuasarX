@@ -12,7 +12,6 @@
  * 5. **LLM 不生产产物** —— 产物由工具层产出，LLM 只拿到一段文本摘要。
  */
 
-import type { TimeSeries, HistogramData } from '@/lib/chartData'
 import type { UiSpec } from '@/lib/charts/types'
 
 /* ============================================================================
@@ -21,12 +20,8 @@ import type { UiSpec } from '@/lib/charts/types'
 
 /** 已知产物类型（在此登记可获得 IDE 提示） */
 export const ArtifactKind = {
-  Chart: 'chart',
-  Metric: 'metric',
-  Table: 'table',
   Patch: 'patch',
   Action: 'action',
-  Error: 'error',
   /** 通用 UI 产物：payload 是一份平铺的 UiSpec，由 UI 注册表分发渲染 */
   Ui: 'ui',
 } as const
@@ -50,8 +45,6 @@ export interface ArtifactUiHints {
   collapsible?: boolean
   /** 默认是否折叠 */
   defaultCollapsed?: boolean
-  /** 是否可被钉住 */
-  pin?: boolean
 }
 
 /** 产物呈现密度 */
@@ -85,11 +78,8 @@ export type ActionKind =
   | 'run_strategy'
   | 'stop_strategy'
   | 'deploy_strategy'
-  | 'query_data'
   | 'apply_patch'
   | 'open_panel'
-  | 'export'
-  | 'custom'
 
 export interface ArtifactAction {
   id: string
@@ -107,119 +97,6 @@ export interface ArtifactAction {
   doneLabel?: string
   disabled?: boolean
   disabledReason?: string
-}
-
-/* ============================================================================
- * 图表载荷
- * ========================================================================== */
-
-export type ChartType =
-  | 'line'
-  | 'area'
-  | 'bar'
-  | 'scatter'
-  | 'candlestick'
-  | 'histogram'
-  | 'heatmap'
-
-/** 图上的标记（竖线 / 横线 / 打点） */
-export interface ChartMarker {
-  type: 'vline' | 'hline' | 'point'
-  /** vline / point：Unix 时间戳（秒），渲染器就近匹配到索引 */
-  timestamp?: number
-  /** hline / point：数值 */
-  value?: number
-  /** point：属于哪个序列 */
-  seriesIndex?: number
-  label?: string
-  color?: string
-  style?: 'solid' | 'dashed'
-}
-
-/**
- * 时刻条目 —— 图上标记的信息化描述。
- * 与 ChartMarker 通过 markerIndex 双向关联：悬停时刻条目高亮图上标记，反之亦然。
- */
-export interface ChartMoment {
-  id: string
-  /** Unix 时间戳（秒） */
-  timestamp: number
-  title: string
-  detail?: string
-  severity?: 'info' | 'positive' | 'warning' | 'critical'
-  /** 数据来源，如 "mutation.detect" */
-  source?: string
-  /** 指向 payload.markers 的下标 */
-  markerIndex?: number
-}
-
-export interface ChartPayload {
-  chartType: ChartType
-  /** 折线 / 柱状 / 面积 / 散点：X = timestamps，Y = values[][], labels = 每列名 */
-  timeSeries?: TimeSeries
-  /** 分布直方图 */
-  histogram?: HistogramData
-  /** 热力图（月度收益、相关性矩阵） */
-  matrix?: { rows: string[]; cols: string[]; values: number[][] }
-  xAxisLabel?: string
-  yAxisLabel?: string
-  yFormat?: 'number' | 'percent' | 'currency'
-  /** 双轴：指定序列挂独立 Y 轴 */
-  secondaryAxis?: {
-    seriesIndex: number
-    yAxisLabel?: string
-    yFormat?: 'number' | 'percent'
-  }
-  markers?: ChartMarker[]
-  /** 时刻列表 */
-  moments?: ChartMoment[]
-  legend?: { show?: boolean; note?: string }
-}
-
-/* ============================================================================
- * 指标载荷
- * ========================================================================== */
-
-export type MetricFormat = 'number' | 'percent' | 'currency' | 'ratio' | 'raw'
-
-export interface MetricItem {
-  key: string
-  label: string
-  value: number | string
-  format?: MetricFormat
-  /** 小数位；缺省 percent = 1，number = 2 */
-  precision?: number
-  /** 与基期的变化 */
-  delta?: number
-  /** 变化说明，如「年化」 */
-  deltaLabel?: string
-  /** 语义色；不给则按 delta 符号推断 */
-  tone?: 'good' | 'bad' | 'neutral'
-}
-
-export interface MetricPayload {
-  items: MetricItem[]
-}
-
-/* ============================================================================
- * 表格载荷
- * ========================================================================== */
-
-export interface TableColumn {
-  key: string
-  label: string
-  align?: 'left' | 'right' | 'center'
-  format?: MetricFormat
-  precision?: number
-  width?: number
-}
-
-export interface TablePayload {
-  columns: TableColumn[]
-  rows: Record<string, unknown>[]
-  /** 真实总行数（rows 被截断时） */
-  total?: number
-  truncated?: boolean
 }
 
 /* ============================================================================
@@ -268,37 +145,14 @@ export interface ActionPayload {
 }
 
 /* ============================================================================
- * 错误载荷
- * ========================================================================== */
-
-export interface ErrorPayload {
-  code?: string
-  message: string
-  /** 修复建议 */
-  hint?: string
-}
-
-/* ============================================================================
  * 具体产物类型
  * ========================================================================== */
 
-export interface ChartArtifact extends ArtifactEnvelope<ChartPayload> {
-  kind: 'chart'
-}
-export interface MetricArtifact extends ArtifactEnvelope<MetricPayload> {
-  kind: 'metric'
-}
-export interface TableArtifact extends ArtifactEnvelope<TablePayload> {
-  kind: 'table'
-}
 export interface PatchArtifact extends ArtifactEnvelope<PatchPayload> {
   kind: 'patch'
 }
 export interface ActionArtifact extends ArtifactEnvelope<ActionPayload> {
   kind: 'action'
-}
-export interface ErrorArtifact extends ArtifactEnvelope<ErrorPayload> {
-  kind: 'error'
 }
 
 /**
@@ -311,14 +165,7 @@ export interface UiArtifact extends ArtifactEnvelope<UiSpec> {
   kind: 'ui'
 }
 
-export type AgentArtifact =
-  | ChartArtifact
-  | MetricArtifact
-  | TableArtifact
-  | PatchArtifact
-  | ActionArtifact
-  | ErrorArtifact
-  | UiArtifact
+export type AgentArtifact = PatchArtifact | ActionArtifact | UiArtifact
 
 /* ============================================================================
  * 工具返回的双通道

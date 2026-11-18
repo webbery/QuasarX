@@ -5,9 +5,6 @@
  */
 
 import { registerArtifact, listArtifactKinds } from '@/lib/agent/artifactRegistry'
-import AgentChartRenderer from './AgentChartRenderer.vue'
-import AgentMetricArtifact from './AgentMetricArtifact.vue'
-import AgentTableArtifact from './AgentTableArtifact.vue'
 import AgentPatchArtifact from './AgentPatchArtifact.vue'
 import AgentActionArtifact from './AgentActionArtifact.vue'
 import UiFrame from './ui/UiFrame.vue'
@@ -24,32 +21,6 @@ export function registerAgentArtifacts(): void {
     label: '可视化',
     icon: 'chart-line',
     render: UiFrame,
-    compact: true,
-    exportable: true,
-  })
-
-  registerArtifact({
-    kind: 'chart',
-    label: '图表',
-    icon: 'chart-line',
-    render: AgentChartRenderer,
-    compact: true,
-    exportable: true,
-  })
-
-  registerArtifact({
-    kind: 'metric',
-    label: '指标',
-    icon: 'gauge',
-    render: AgentMetricArtifact,
-    compact: true,
-  })
-
-  registerArtifact({
-    kind: 'table',
-    label: '表格',
-    icon: 'table',
-    render: AgentTableArtifact,
     compact: true,
     exportable: true,
   })

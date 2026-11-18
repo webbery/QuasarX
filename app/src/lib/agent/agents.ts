@@ -32,6 +32,7 @@ import { orderQueryTool } from "../tools/orderQuery";
 import { performanceTool } from "../tools/performanceTool";
 import { mathTool } from "../tools/mathTool";
 import { chartTool } from "../tools/chart";
+import { visualizeTool } from "../tools/visualize";
 
 import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent, UsageReporter } from "./types";
 import { INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
@@ -71,6 +72,7 @@ const TOOL_REGISTRY: Record<string, StructuredToolInterface> = {
   performance: performanceTool,
   math_tool: mathTool,
   chart: chartTool,
+  visualize: visualizeTool,
 };
 
 /**
@@ -99,13 +101,17 @@ export function getToolsForAgent(agentType: AgentType, internalTools: Structured
 /**
  * 创建 LLM 实例（带 Tool Calling 绑定）
  */
-function createAgentLLM(agentType: AgentType, tools: StructuredToolInterface[]) {
-  const config = getAgentConfig();
-  if (!config) {
+function createAgentLLM(
+  agentType: AgentType,
+  tools: StructuredToolInterface[],
+  config?: AgentConfig,
+) {
+  const resolved = config ?? getAgentConfig();
+  if (!resolved) {
     throw new Error("LLM 配置未设置，请先在设置中配置 Agent");
   }
 
-  const llm = createLLM(config);
+  const llm = createLLM(resolved);
   // 绑定 Tool Calling
   return llm.bindTools(tools);
 }
@@ -133,10 +139,11 @@ async function runAgentLoop(
   onUsage?: UsageReporter,
   signal?: AbortSignal,
   maxToolCalls = 30,
+  config?: AgentConfig,
 ): Promise<AgentRunResult> {
   let llm: any;
   try {
-    llm = createAgentLLM(agentType, tools);
+    llm = createAgentLLM(agentType, tools, config);
   } catch (err) {
     console.error(`[LangGraph] ${agentType} 创建 LLM 失败:`, err);
     onEvent?.({
@@ -338,6 +345,7 @@ export function createAgentNode(
   internalTools: StructuredToolInterface[] = [],
   onUsage?: UsageReporter,
   signal?: AbortSignal,
+  config?: AgentConfig,
 ) {
   return async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
     const { messages, userInput } = state;
@@ -369,7 +377,16 @@ export function createAgentNode(
       agentMessages.push(new HumanMessage(userInput));
     }
 
-    const { content, delegation } = await runAgentLoop(agentType, agentMessages, tools, onEvent, onUsage, signal);
+    const { content, delegation } = await runAgentLoop(
+      agentType,
+      agentMessages,
+      tools,
+      onEvent,
+      onUsage,
+      signal,
+      undefined,
+      config,
+    );
 
     // 内部 Tool 转交：不结束图，把带 tool_calls 的 AIMessage 交回 Supervisor 路由到目标 Agent
     if (delegation) {
