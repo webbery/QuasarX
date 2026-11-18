@@ -475,6 +475,33 @@ void EMDNode::clearOutputs(DataContext& context, const String& prefix,
 
 NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& context,
                                          SymbolOutput& out) {
+    // 先匹配 symbol prefix：缺失 key 的 warmup 路径也要用它。
+    // 修复 bug: 旧实现用 inputKey.find('.') 截取，对 "sz.000423.volume"
+    // 会截成 "sz."（symbol 自身的 '.' 被吃掉）。改用 Init 时缓存的
+    // _symbolPrefixes（"sz.000423."）按前缀匹配，避免被 symbol 中的 '.' 干扰。
+    String prefix;
+    for (auto& p : _symbolPrefixes) {
+        if (inputKey.size() > p.size() &&
+            inputKey.compare(0, p.size(), p) == 0) {
+            prefix = p;
+            break;
+        }
+    }
+    if (prefix.empty()) {
+        WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
+        return NodeProcessResult::Skip;
+    }
+    out._prefix = prefix;
+
+    // 实时模式下 QuoteInputNode 只要有一个标的有行情就返回 Success，本轮其余
+    // 标的的 key 可能尚未写入（首包/停牌）。这里必须容忍缺失、不能抛异常：
+    // processSymbol 运行在 OpenMP 并行区内，C++ 异常无法跨并行区传播，一旦
+    // context.get() 抛出 out_of_range，libgomp 会直接 std::terminate。
+    if (!context.exist(inputKey)) {
+        out._warmup = true;
+        return NodeProcessResult::Success;
+    }
+
     // 从 DataContext 获取输入时间序列（避免拷贝，用 const 引用）
     auto& value = context.get(inputKey);
     const Vector<double>* pInput = std::get_if<Vector<double>>(&value);
@@ -490,36 +517,9 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
         // warmup 期：输出 NaN 占位，保持向量长度与输入同步。
         // 下游节点（FunctionNode/XGBoostNode）可读到 key，
         // 由 XGBoostNode 的 80% 有效性规则决定是否跳过推理。
-        String prefix;
-        for (auto& p : _symbolPrefixes) {
-            if (inputKey.size() > p.size() &&
-                inputKey.compare(0, p.size(), p) == 0) {
-                prefix = p;
-                break;
-            }
-        }
-        out._prefix = prefix;
         out._warmup = true;
         return NodeProcessResult::Success;
     }
-
-    // 从 inputKey 匹配出正确的 symbol prefix
-    // 修复 bug: 旧实现用 inputKey.find('.') 截取，对 "sz.000423.volume"
-    // 会截成 "sz."（symbol 自身的 '.' 被吃掉）。改用 Init 时缓存的
-    // _symbolPrefixes（"sz.000423."）按前缀匹配，避免被 symbol 中的 '.' 干扰
-    String prefix;
-    for (auto& p : _symbolPrefixes) {
-        if (inputKey.size() > p.size() &&
-            inputKey.compare(0, p.size(), p) == 0) {
-            prefix = p;
-            break;
-        }
-    }
-    if (prefix.empty()) {
-        WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
-        return NodeProcessResult::Skip;
-    }
-    out._prefix = prefix;
 
     if (_windowSize > 0) {
         // ===== 滚动模式：增量计算，只处理最新窗口 =====

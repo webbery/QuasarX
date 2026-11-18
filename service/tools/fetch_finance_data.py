@@ -8,8 +8,11 @@
   # 下载单只股票全部财务数据（默认近5年）
   python fetch_finance_data.py --code sh.600519 --download
 
-  # 下载指定类别
-  python fetch_finance_data.py --code sh.600519 --download --category profit
+  # 批量下载（一次登录 baostock，连续下多只）
+  python fetch_finance_data.py --codes sh.600519,sz.000100 --download
+
+  # 下载指定类别（可逗号分隔多个）
+  python fetch_finance_data.py --code sh.600519 --download --category profit,growth
 
   # 指定年份范围
   python fetch_finance_data.py --code sh.600519 --download --start 2020 --end 2025
@@ -19,6 +22,9 @@
 
   # 列出支持的财务类别
   python fetch_finance_data.py --list
+
+下载模式结束时会输出一行 manifest（前缀 @@QUASARX_MANIFEST@@），供 C++ 侧
+按文件精确入库，不用猜 CSV 路径。
 """
 import argparse
 import json
@@ -160,18 +166,31 @@ def convert_to_baostock_code(symbol: str) -> str:
       "sh.600519" -> "sh.600519"
       "600519"    -> "sh.600519" (按前缀推断)
     """
-    sym = symbol.strip().upper()
+    sym = symbol.strip()
+    if not sym:
+        return sym
 
+    # 已经是 baostock 格式
+    if sym.startswith(("sh.", "sz.", "bj.")):
+        return sym.lower()
+
+    # 带点号：可能是 "600519.SH" 或 "SH.600519"
     if "." in sym:
         parts = sym.split(".")
-        code, market = parts[0], parts[1]
-        if market in ("SH", "SSE"):
-            return f"sh.{code}"
-        elif market in ("SZ", "SZSE"):
-            return f"sz.{code}"
-        return f"{market.lower()}.{code}"
+        if len(parts) != 2:
+            return sym.lower()
+        left, right = parts[0].lower(), parts[1].upper()
+        # "600519.SH" 格式
+        if left.isdigit() and right in ("SH", "SZ", "BJ"):
+            exchange_map = {"SH": "sh", "SZ": "sz", "BJ": "bj"}
+            return f"{exchange_map[right]}.{left}"
+        # "SH.600519" 格式
+        if left in ("sh", "sz", "bj") and right.isdigit():
+            return f"{left}.{right}"
+        return sym.lower()
 
-    code = sym
+    # 纯数字代码：按前缀推断交易所
+    code = sym.upper()
     if code.startswith(("6", "9")):
         return f"sh.{code}"
     elif code.startswith(("0", "2", "3")):
@@ -202,12 +221,14 @@ def to_display_code(bs_code: str) -> str:
 # ============================================================
 
 def download_category(code: str, category: str, data_dir: str,
-                      start_year: int = None, end_year: int = None) -> pd.DataFrame:
+                      start_year: int = None, end_year: int = None):
     """
     下载某个类别的全部季度数据
 
     baostock 财务接口每次只返回一个 (year, quarter) 的数据，
     需要遍历所有季度再合并。
+
+    返回: (DataFrame, filepath, row_count) 或 (empty_df, None, 0)
     """
     cat_info = CATEGORIES[category]
     api_func = getattr(bs, cat_info["api"])
@@ -233,7 +254,7 @@ def download_category(code: str, category: str, data_dir: str,
 
     if not all_rows:
         print(f"  [{category}] 无数据")
-        return pd.DataFrame()
+        return pd.DataFrame(), None, 0
 
     result = pd.concat(all_rows, ignore_index=True)
     result = result.drop_duplicates(subset=["statDate"]).sort_values("statDate").reset_index(drop=True)
@@ -245,12 +266,12 @@ def download_category(code: str, category: str, data_dir: str,
     filepath = os.path.join(out_dir, f"{display_name}.csv")
     result.to_csv(filepath, index=False)
     print(f"  [{category}] 已保存 {filepath} ({len(result)} 条)")
-    return result
+    return result, filepath, len(result)
 
 
 def download_all(code: str, data_dir: str, categories: list,
                  start_year: int = None, end_year: int = None):
-    """下载指定类别（或全部）的财务数据"""
+    """下载指定类别（或全部）的财务数据，返回下载结果列表"""
     display_code = to_display_code(code)
     print(f"\n{'=' * 60}")
     print(f"财务数据下载 (BaoStock)")
@@ -261,14 +282,22 @@ def download_all(code: str, data_dir: str, categories: list,
     print(f"目录: {data_dir}")
     print(f"{'=' * 60}")
 
+    results = []
     ok_count = 0
     for cat in categories:
         print(f"\n下载 {CATEGORIES[cat]['name']}...")
-        df = download_category(code, cat, data_dir, start_year, end_year)
+        df, filepath, row_count = download_category(code, cat, data_dir, start_year, end_year)
         if not df.empty:
             ok_count += 1
+            results.append({
+                "symbol": display_code,
+                "category": cat,
+                "path": filepath,
+                "rows": row_count
+            })
 
     print(f"\n完成: {ok_count}/{len(categories)} 个类别成功")
+    return results
 
 
 # ============================================================
@@ -424,15 +453,17 @@ def main():
 示例:
   python fetch_finance_data.py --list
   python fetch_finance_data.py --code sh.600519 --download
+  python fetch_finance_data.py --codes sh.600519,sz.000100 --download
   python fetch_finance_data.py --code sh.600519 --download --category profit --start 2022
   python fetch_finance_data.py --code sh.600519 --category profit --json
   python fetch_finance_data.py --code sh.600519 --category profit --start 2024-Q1 --json
         """,
     )
     parser.add_argument("--code", type=str, help="股票代码 (sh.600519 / 600519.SH / 600519)")
+    parser.add_argument("--codes", type=str, help="批量下载，逗号分隔 (sh.600519,sz.000100)")
     parser.add_argument("--download", action="store_true", help="下载并缓存到本地")
     parser.add_argument("--category", type=str, default=None,
-                        help="财务类别 (profit/operation/growth/balance/cashflow/dupont/all，默认 all)")
+                        help="财务类别 (profit/operation/growth/balance/cashflow/dupont/all，默认 all，可逗号分隔多个)")
     parser.add_argument("--start", type=str, help="起始年份或季度 (如 2022 或 2024-Q1)")
     parser.add_argument("--end", type=str, help="结束年份或季度 (如 2025 或 2025-Q2)")
     parser.add_argument("--json", action="store_true", help="JSON 输出（供 C++ Handler / Agent Tool）")
@@ -445,20 +476,26 @@ def main():
         list_categories()
         return
 
-    if not args.code:
-        print("错误: 请指定 --code 参数，或使用 --list 查看支持的类别")
+    # 解析标的列表
+    codes = []
+    if args.codes:
+        codes = [c.strip() for c in args.codes.split(",") if c.strip()]
+    elif args.code:
+        codes = [args.code]
+    else:
+        print("错误: 请指定 --code 或 --codes 参数，或使用 --list 查看支持的类别")
         parser.print_help()
         return
 
-    code = convert_to_baostock_code(args.code)
-
-    # 解析类别
+    # 解析类别（支持逗号分隔多个）
     if args.category and args.category != "all":
-        if args.category not in CATEGORIES:
-            print(f"错误: 不支持的类别 '{args.category}'")
-            print(f"可用类别: {', '.join(CATEGORIES.keys())}")
-            return
-        categories = [args.category]
+        cats_input = [c.strip() for c in args.category.split(",") if c.strip()]
+        for cat in cats_input:
+            if cat not in CATEGORIES:
+                print(f"错误: 不支持的类别 '{cat}'")
+                print(f"可用类别: {', '.join(CATEGORIES.keys())}")
+                return
+        categories = cats_input
     else:
         categories = list(CATEGORIES.keys())
 
@@ -487,21 +524,46 @@ def main():
             return
         print("登录成功")
 
+        all_results = []
+        failed_codes = []
         try:
-            download_all(code, args.data_dir, categories, start_year, end_year)
+            for code in codes:
+                baostock_code = convert_to_baostock_code(code)
+                try:
+                    results = download_all(baostock_code, args.data_dir, categories, start_year, end_year)
+                    all_results.extend(results)
+                except Exception as e:
+                    print(f"错误: 下载 {code} 失败: {e}")
+                    failed_codes.append(code)
         finally:
             bs.logout()
+
+        # 输出 manifest（供 C++ 侧解析）
+        manifest = {
+            "ok": len(failed_codes) == 0,
+            "symbols": len(codes),
+            "files": all_results,
+            "failed": [{"symbol": c, "error": "download failed"} for c in failed_codes]
+        }
+        print(f"@@QUASARX_MANIFEST@@{json.dumps(manifest, ensure_ascii=False)}")
     else:
-        # 查询模式
+        # 查询模式（只支持单标的）
+        if len(codes) > 1:
+            print("错误: 查询模式只支持单标的，请使用 --code")
+            return
+        code = convert_to_baostock_code(codes[0])
+
         if not args.category or args.category == "all":
             print("查询模式请指定 --category，或使用 --list 查看可用类别")
             return
 
+        # 查询模式只取第一个类别
+        cat = categories[0]
         if args.json:
-            result = query_json(code, args.category, args.data_dir, start_str, end_str)
+            result = query_json(code, cat, args.data_dir, start_str, end_str)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
-            query_print(code, args.category, args.data_dir, start_str, end_str)
+            query_print(code, cat, args.data_dir, start_str, end_str)
 
 
 if __name__ == "__main__":

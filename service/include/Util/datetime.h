@@ -32,6 +32,37 @@ time_t Now();
 time_t DateOnly(time_t ts);
 
 /**
+ * 日期加减 n 天（按日历走，夏令时安全：不做 86400 秒的简单加减）
+ */
+time_t ShiftDay(time_t day, int n);
+
+/**
+ * 该日期是不是交易日（周末与法定节假日都不是）
+ *
+ * 依赖 HolidayCalendar 单例：年份没加载时 isHoliday 一律返回 false，
+ * 此时法定节假日会被当成交易日（宁可多查一天，也不要漏查）。
+ */
+bool IsTradingDay(time_t day);
+
+/**
+ * 两个日期相差几天（to - from），入参 "YYYY-MM-DD"
+ */
+int DaysBetween(const String& from, const String& to);
+
+/**
+ * (from, to] 之间的交易日，最多 max_count 个
+ * 用于"表里最新那天之后到期望日之间还缺哪些交易日"
+ */
+Vector<String> TradingDaysBetween(const String& from, const String& to, int max_count = 20);
+
+/**
+ * 最近一个已收盘的交易日（"YYYY-MM-DD"）
+ *
+ * 收盘前（15:05 之前）当天还没有完整日线，从前一天开始找；周末与法定节假日跳过。
+ */
+String LastSettledTradingDay(time_t t = 0);
+
+/**
  * ISO 8601 周年周号，返回 iso_year * 100 + iso_week
  *
  * 周频聚合的边界判定：同一 (iso_year, iso_week) 即同一周。

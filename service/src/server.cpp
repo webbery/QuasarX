@@ -87,6 +87,7 @@
 #include "Handler/ShiborHandler.h"
 #include "Handler/MacroHandler.h"
 #include "Handler/HMMHandler.h"
+#include "Util/ThreadPool.h"
 #if defined(_DEBUG) || defined(ENABLE_SIMULATE_BAR)
 #include "Handler/SimulateBarHandler.h"
 #endif
@@ -94,6 +95,7 @@
 #include "AgentSubSystem.h"
 #include "Util/FinanceDB.h"
 #include "Util/DailyDecision.h"
+#include "Util/data.h"
 #include "nng/nng.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 #include <boost/algorithm/string.hpp>
@@ -1191,6 +1193,7 @@ void Server::Schedules(time_t t) {
     static bool daily_init_done = false;
     // static bool daily_force_done = false;
     static bool yearly_refresh_done = false;
+    static bool retry_fundamental_done = false;
     if (prev_day == -1) {
         prev_day = ltm->tm_wday;
     }
@@ -1199,6 +1202,7 @@ void Server::Schedules(time_t t) {
         daily_init_done = false;
         // daily_force_done = false;
         yearly_refresh_done = false;
+        retry_fundamental_done = false;
         prev_day = ltm->tm_wday;
     }
 
@@ -1367,6 +1371,19 @@ void Server::Schedules(time_t t) {
         // 两融明细（逐标的融资/融券余额）：每交易日更新。
         // 放在最后：抓取要联网、耗时 1~3 分钟，失败只记日志不影响上面的日终流程。
         RefreshMarginData(sseSock);
+        
+        // 基本面数据：每交易日更新。
+        // 使用线程池避免创建过多线程，socket 在线程内部创建。
+        RefreshFundamentalData(sseSock);
+    }
+    
+    // 03:00 补下载基本面数据异常
+    // 体检发现的问题（下载失败 / 数据缺失 / 数据滞后）在这里补一次，
+    // 避免 20:00 那次网络抖动导致整天的基本面数据停在旧报告期。
+    if (!retry_fundamental_done && ltm->tm_hour == 3 && ltm->tm_min == 0) {
+        retry_fundamental_done = true;
+        nng_socket sseSock = GetSocket();
+        RetryFundamentalData(sseSock);
     }
 }
 
@@ -1590,6 +1607,221 @@ void Server::RefreshMarginData(nng_socket sseSock) {
         return;
     }
     INFO("[RefreshMarginData] 两融明细更新完成，{} 行", imported);
+}
+
+void Server::RefreshFundamentalData(nng_socket sseSock) {
+    // 提交到线程池，避免创建过多线程
+    QuasarX::ThreadPool::instance().submit([this]() {
+        // 在线程中创建新的 socket（socket 不能跨线程使用）
+        nng_socket threadSock = GetSocket();
+        
+        INFO("[RefreshFundamentalData] 开始刷新基本面数据");
+        
+        try {
+            // 1. 收集策略池标的
+            std::vector<std::string> symbols;
+            if (_strategySystem) {
+                auto names = _strategySystem->GetStrategyNames();
+                for (auto& name : names) {
+                    try {
+                        for (auto sym : _strategySystem->GetPools(name)) {
+                            std::string symbol = get_symbol(sym);
+                            if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) {
+                                symbols.push_back(symbol);
+                            }
+                        }
+                    } catch (...) {
+                        WARN("[RefreshFundamentalData] GetPools({}) failed", name);
+                    }
+                }
+            }
+
+            if (symbols.empty()) {
+                WARN("[RefreshFundamentalData] 没有策略或策略池为空");
+                return;
+            }
+
+            INFO("[RefreshFundamentalData] 收集到 {} 个标的", symbols.size());
+
+            // 2. 确定要下载的类目（按覆盖率自适应）
+            std::vector<std::string> categories = {"profit", "operation", "growth", "balance", "cashflow", "dupont"};
+
+            // 3. 确定下载窗口（最近一个季度）
+            auto now = std::chrono::system_clock::now();
+            auto time_t_now = std::chrono::system_clock::to_time_t(now);
+            std::tm tm_now;
+#ifdef _WIN32
+            localtime_s(&tm_now, &time_t_now);
+#else
+            localtime_r(&time_t_now, &tm_now);
+#endif
+            int year = tm_now.tm_year + 1900;
+            int month = tm_now.tm_mon + 1;
+
+            // 确定最近一个季度
+            int quarter;
+            if (month <= 3) {
+                quarter = 4;
+                year -= 1;
+            } else if (month <= 6) {
+                quarter = 1;
+            } else if (month <= 9) {
+                quarter = 2;
+            } else {
+                quarter = 3;
+            }
+
+            std::string start_date = fmt::format("{}-{:02d}-01", year, (quarter - 1) * 3 + 1);
+            std::string end_date = ToString(time_t_now, "%Y-%m-%d");
+
+            INFO("[RefreshFundamentalData] 下载窗口: {} ~ {}", start_date, end_date);
+
+            // 4. 下载数据
+            auto& financeDB = FinanceDB::instance();
+            std::string db_path = _config->GetDatabasePath() + "/finance";
+
+            int total_downloaded = 0;
+            int total_failed = 0;
+
+            for (const auto& category : categories) {
+                INFO("[RefreshFundamentalData] 下载类目: {}", category);
+
+                for (const auto& symbol : symbols) {
+                    String csv_path;
+                    bool ok = DownloadFundamentalCsv(
+                        symbol, category, start_date, end_date,
+                        PythonEnv::fromConfig(_config->GetRawConfig()).resolve(""),
+                        db_path, csv_path);
+
+                    if (!ok) {
+                        WARN("[RefreshFundamentalData] 下载失败: {} {}", symbol, category);
+                        total_failed++;
+                        continue;
+                    }
+
+                    // 导入 CSV
+                    if (!csv_path.empty() && std::filesystem::exists(csv_path)) {
+                        int imported = financeDB.importCsv(csv_path, category);
+                        if (imported > 0) {
+                            total_downloaded += imported;
+                            std::filesystem::remove(csv_path);
+                        } else {
+                            WARN("[RefreshFundamentalData] 导入失败: {}", csv_path);
+                            total_failed++;
+                        }
+                    }
+                }
+            }
+
+            INFO("[RefreshFundamentalData] 完成: 导入 {} 行, 失败 {} 次", total_downloaded, total_failed);
+
+            SendSSE(threadSock, "fundamental_refresh", {
+                {"status", "completed"},
+                {"imported", std::to_string(total_downloaded)},
+                {"failed", std::to_string(total_failed)}
+            });
+
+        } catch (const std::exception& e) {
+            WARN("[RefreshFundamentalData] 异常: {}", e.what());
+            SendSSE(threadSock, "fundamental_refresh", {
+                {"status", "error"},
+                {"message", e.what()}
+            });
+        }
+    });
+}
+
+void Server::RetryFundamentalData(nng_socket sseSock) {
+    // 提交到线程池
+    QuasarX::ThreadPool::instance().submit([this]() {
+        nng_socket threadSock = GetSocket();
+        
+        INFO("[RetryFundamentalData] 开始补下载基本面数据");
+
+        try {
+            // 1. 取出异常清单
+            auto issues = TakeDataIssues();
+            if (issues.empty()) {
+                INFO("[RetryFundamentalData] 没有需要补下载的数据");
+                return;
+            }
+
+            INFO("[RetryFundamentalData] 发现 {} 条异常", issues.size());
+
+            // 2. 按 (symbol, category) 分组
+            std::map<std::pair<std::string, std::string>, std::vector<DataCheckIssue>> grouped;
+            for (auto& issue : issues) {
+                if (issue._type != DataCheckType::Fundamental) continue;
+                auto key = std::make_pair(issue._symbol, String(check_category_name(issue._category)));
+                grouped[key].push_back(issue);
+            }
+
+            // 3. 逐组补下载
+            auto& financeDB = FinanceDB::instance();
+            std::string db_path = _config->GetDatabasePath() + "/finance";
+
+            int total_downloaded = 0;
+            int total_failed = 0;
+
+            for (auto& [key, issue_list] : grouped) {
+                const std::string& symbol = key.first;
+                const std::string& category = key.second;
+
+                INFO("[RetryFundamentalData] 补下载: {} {}", symbol, category);
+
+                // 确定下载窗口（取异常中最晚的日期）
+                std::string start_date;
+                for (auto& issue : issue_list) {
+                    if (issue._date > start_date) {
+                        start_date = issue._date;
+                    }
+                }
+
+                auto now = std::chrono::system_clock::now();
+                auto time_t_now = std::chrono::system_clock::to_time_t(now);
+                std::string end_date = ToString(time_t_now, "%Y-%m-%d");
+
+                String csv_path;
+                bool ok = DownloadFundamentalCsv(
+                    symbol, category, start_date, end_date,
+                    PythonEnv::fromConfig(_config->GetRawConfig()).resolve(""),
+                    db_path, csv_path);
+
+                if (!ok) {
+                    WARN("[RetryFundamentalData] 下载失败: {} {}", symbol, category);
+                    total_failed++;
+                    continue;
+                }
+
+                // 导入 CSV
+                if (!csv_path.empty() && std::filesystem::exists(csv_path)) {
+                    int imported = financeDB.importCsv(csv_path, category);
+                    if (imported > 0) {
+                        total_downloaded += imported;
+                        std::filesystem::remove(csv_path);
+                    } else {
+                        WARN("[RetryFundamentalData] 导入失败: {}", csv_path);
+                        total_failed++;
+                    }
+                }
+            }
+
+            INFO("[RetryFundamentalData] 完成: 导入 {} 行, 失败 {} 次", total_downloaded, total_failed);
+
+            SendSSE(threadSock, "fundamental_retry", {
+                {"status", "completed"},
+                {"imported", std::to_string(total_downloaded)},
+                {"failed", std::to_string(total_failed)}
+            });
+
+        } catch (const std::exception& e) {
+            WARN("[RetryFundamentalData] 异常: {}", e.what());
+            SendSSE(threadSock, "fundamental_retry", {
+                {"status", "error"},
+                {"message", e.what()}
+            });
+        }
+    });
 }
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {

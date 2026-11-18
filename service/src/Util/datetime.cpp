@@ -2,6 +2,7 @@
 #include "Util/datetime.h"
 // BarFreqToSeconds 需要 BarFreq 的枚举成员；datetime.h 中仅前置声明以避免循环包含
 #include "KBarBuilder.h"
+#include "Util/HolidayCalendar.h"
 #include "Util/string_algorithm.h"
 #include <cstdio>
 #include <sstream>
@@ -106,6 +107,72 @@ time_t DateOnly(time_t ts) {
     tm_val.tm_min = 0;
     tm_val.tm_sec = 0;
     return mktime(&tm_val);
+}
+
+time_t ShiftDay(time_t day, int n) {
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &day);
+#else
+    localtime_r(&day, &tm_val);
+#endif
+    tm_val.tm_hour = 0;
+    tm_val.tm_min = 0;
+    tm_val.tm_sec = 0;
+    tm_val.tm_isdst = -1;
+    tm_val.tm_mday += n;
+    return mktime(&tm_val);
+}
+
+bool IsTradingDay(time_t day) {
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &day);
+#else
+    localtime_r(&day, &tm_val);
+#endif
+    if (tm_val.tm_wday == 0 || tm_val.tm_wday == 6) return false;
+    return !HolidayCalendar::instance().isHoliday(1900 + tm_val.tm_year,
+                                                 1 + tm_val.tm_mon, tm_val.tm_mday);
+}
+
+int DaysBetween(const String& from, const String& to) {
+    time_t a = FromStr(from, "%Y-%m-%d");
+    time_t b = FromStr(to, "%Y-%m-%d");
+    if (a == -1 || b == -1) return 0;
+    return static_cast<int>((b - a) / 86400);
+}
+
+Vector<String> TradingDaysBetween(const String& from, const String& to, int max_count) {
+    Vector<String> result;
+    time_t day = FromStr(from, "%Y-%m-%d");
+    time_t end = FromStr(to, "%Y-%m-%d");
+    if (day == -1 || end == -1) return result;
+    for (int i = 0; i < max_count; i++) {
+        day = ShiftDay(day, 1);
+        if (day > end) break;
+        if (IsTradingDay(day)) result.push_back(ToString(day, "%Y-%m-%d"));
+    }
+    return result;
+}
+
+String LastSettledTradingDay(time_t t) {
+    if (t == 0) t = Now();
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &t);
+#else
+    localtime_r(&t, &tm_val);
+#endif
+    // 收盘前（15:05 之前）当天还没有完整日线，从前一天开始找
+    bool settled = tm_val.tm_hour > 15 || (tm_val.tm_hour == 15 && tm_val.tm_min >= 5);
+    time_t day = DateOnly(t);
+    if (!settled) day = ShiftDay(day, -1);
+    for (int i = 0; i < 40; i++) {
+        if (IsTradingDay(day)) return ToString(day, "%Y-%m-%d");
+        day = ShiftDay(day, -1);
+    }
+    return ToString(day, "%Y-%m-%d");
 }
 
 int IsoWeekId(time_t ts) {

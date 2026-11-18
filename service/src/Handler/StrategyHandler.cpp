@@ -371,6 +371,9 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
         return;
     }
 
+    // Stop 流程可能异步产生日志（如 Shadow mode deactivated），等待落盘后再清理
+    DuckDBLogger::instance().flush_logs();
+
     String erase_file(SCRIPTS_DIR);
     erase_file += "/" + name;
     std::filesystem::remove(erase_file);

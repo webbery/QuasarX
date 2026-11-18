@@ -184,6 +184,13 @@ public:
     // ========== 节点输入输出日志 ==========
 
     /**
+     * 阻塞等待策略日志队列排空（确保所有待写日志已落盘）
+     * @param timeout_ms 最大等待毫秒数
+     * @return 队列是否已清空
+     */
+    bool flush_logs(int timeout_ms = 2000);
+
+    /**
      * 关闭日志器（服务退出时调用）
      */
     void shutdown();

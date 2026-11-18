@@ -6,6 +6,7 @@
 #include "json.hpp"
 #include "HttpHandler.h"
 #include "Bridge/exchange.h"
+#include <atomic>
 #include <ctime>
 #include <nng/nng.h>
 #include <nng/supplemental/http/http.h>
@@ -259,6 +260,19 @@ private:
     /// 抓取失败不发邮件（当前策略；需要邮件时在此处补 SendEmail）。
     void RefreshMarginData(nng_socket sseSock);
 
+    /// 20:00 调度入口：刷新基本面（财务）数据
+    ///
+    /// 后台线程执行，不阻塞定时器循环。从策略池收集标的，按类目覆盖率自适应
+    /// 选择要下载的类目（覆盖率 ≥50% 的类目才拉，避免 dupont 这类稀疏类目天天误报）。
+    /// 下载后体检 CSV，异常记入全局队列，凌晨 03:00 补下载时取用。
+    void RefreshFundamentalData(nng_socket sseSock);
+
+    /// 03:00 调度入口：补下载体检发现异常的基本面数据
+    ///
+    /// 从全局队列取异常清单，只补不合格的标的，只下对应日期区间。
+    /// 补完后再体检一次，确认修复。
+    void RetryFundamentalData(nng_socket sseSock);
+
     void TimerWorker(nng_socket sock);
 
     void UpdateQuoteQueryStatus(time_t);
@@ -318,4 +332,7 @@ private:
     std::thread* _timer;
 
     Map<ExchangeName, Set<time_range>> _working_times;
+
+    // 基本面数据刷新防重入标志（20:00 与 03:00 互斥）
+    std::atomic<bool> _fundamentalRefreshing{false};
 };

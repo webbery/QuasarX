@@ -358,6 +358,7 @@ void DuckDBLogger::worker_loop() {
         if (!batch.empty()) {
             batch_insert(batch);
             batch.clear();
+            queue_cv_.notify_all();
         }
 
         if (!tick_batch.empty()) {
@@ -926,6 +927,22 @@ DuckDBLogger::DeleteResult DuckDBLogger::delete_strategy_logs(
     result.deleted_count = count;
     SPDLOG_INFO("[DuckDBLogger] Deleted {} strategy logs", count);
     return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 刷新：阻塞等待队列排空
+// ──────────────────────────────────────────────────────────────────────
+
+bool DuckDBLogger::flush_logs(int timeout_ms) {
+    if (!initialized_ || !running_) return true;
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (!queue_.empty()) {
+        if (queue_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
+            return queue_.empty();
+        }
+    }
+    return true;
 }
 
 // ──────────────────────────────────────────────────────────────────────

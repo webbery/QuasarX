@@ -373,7 +373,7 @@ class TestMarginArithmetic:
         assert entry["borrowedCash"] == pytest.approx(borrow)
         assert entry["credit"]["financedAmount"][SYMBOL] == pytest.approx(borrow)
 
-        pos = _position_of(entry, margin_strategy)
+        pos = _position_of(entry, SYMBOL)
         assert pos["quantity"] == 10_000
         assert pos["isMargin"] is True
         assert pos["marginRatio"] == pytest.approx(0.5)

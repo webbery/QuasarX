@@ -128,16 +128,42 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
                 continue;
             }
 
-            // 就地导入该标的的 CSV：按标的精确定位，不扫全目录，
-            // 避免并发任务互相吞掉对方还没导入的 CSV
+            // 解析 manifest 获取实际的文件路径
+            // manifest 格式: @@QUASARX_MANIFEST@@{"ok":true,"files":[...]}
             int rows = 0;
-            for (const auto& cat : categories) {
-                auto path = csv_dir + "/" + cat + "/" + sym + ".csv";
-                if (!fs::exists(path)) continue;
-                int n = financeDB.importCsv(path, cat);
-                if (n > 0) rows += n;
-                fs::remove(path);
+            auto manifest_pos = output.find("@@QUASARX_MANIFEST@@");
+            if (manifest_pos != String::npos) {
+                try {
+                    auto manifest_str = output.substr(manifest_pos + 20);
+                    auto manifest = nlohmann::json::parse(manifest_str);
+                    
+                    if (manifest.contains("files") && manifest["files"].is_array()) {
+                        for (const auto& file_info : manifest["files"]) {
+                            auto path = file_info.value("path", "");
+                            auto cat = file_info.value("category", "");
+                            auto file_rows = file_info.value("rows", 0);
+                            
+                            if (!path.empty() && fs::exists(path) && !cat.empty()) {
+                                int n = financeDB.importCsv(path, cat);
+                                if (n > 0) rows += n;
+                                fs::remove(path);
+                            }
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    WARN("[FinanceHandler] {} manifest parse failed: {}", sym, e.what());
+                }
+            } else {
+                // 兼容旧版本：按标的精确定位
+                for (const auto& cat : categories) {
+                    auto path = csv_dir + "/" + cat + "/" + sym + ".csv";
+                    if (!fs::exists(path)) continue;
+                    int n = financeDB.importCsv(path, cat);
+                    if (n > 0) rows += n;
+                    fs::remove(path);
+                }
             }
+            
             total_rows += rows;
 
             INFO("[FinanceHandler] {} done: {} rows", sym, rows);
