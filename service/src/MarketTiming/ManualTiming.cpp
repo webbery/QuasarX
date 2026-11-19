@@ -535,6 +535,10 @@ void ManualTiming::ClearRun() {
     _positionSnapshots.clear();
 }
 
+void ManualTiming::SetWorkingTime(const day_time_t& time) {
+    _workingTime = time;
+}
+
 void ManualTiming::PushDecisionSse(const DecisionSet& set, const Map<symbol_t, int>& decisionIds) {
     nlohmann::json ssePayload;
     ssePayload["strategy"] = set._strategy;

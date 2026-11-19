@@ -924,6 +924,7 @@ int main(int argc, char* argv[])
 
     // 打印 CPU 向量化指令支持情况
     print_cpu_features();
+    INFO("VERSION: %s\n", QS_VERSION);
 
     // 初始化 DuckDB 策略日志（表不存在则自动创建）
     if (!DuckDBLogger::instance().init("logs/strategy_logs.db")) {
@@ -950,10 +951,6 @@ int main(int argc, char* argv[])
     std::thread metrics_thread(metrics_monitor_loop);
 
     server.Run();
-
-    // 停止下载线程池：先不再接新任务，再等在跑的下载收尾，
-    // 否则后台 python 会在 DuckDB 关闭后继续写库
-    QuoteDownloadHandler::ShutdownDownloads();
 
     g_metrics_stop.store(true);
     if (metrics_thread.joinable()) metrics_thread.join();

@@ -1,9 +1,8 @@
 #pragma once
 #include "MarketTiming.h"
-#include "json.hpp"
-#include "RiskContext.h"
 #include "Nodes/ProtectionNode.h"
 #include "Util/DecisionSet.h"
+#include "Util/datetime.h"
 
 class Server;
 struct EodDebugReport;
@@ -46,6 +45,9 @@ public:
     void SetRiskEvents(const Vector<ProtectionNode::ProtectionEvent>& events) { _riskEvents = events; }
     const Vector<ProtectionNode::ProtectionEvent>& GetRiskEvents() const { return _riskEvents; }
 
+    day_time_t GetWorkingTime() { return _workingTime; }
+
+    void SetWorkingTime(const day_time_t& time);
 private:
     // 逐决策 bar 记录持仓快照：daily_positions 的连续序列来源
     void recordPositionSnapshot(symbol_t symbol, TradeAction action, int64_t quantity,
@@ -66,9 +68,12 @@ private:
     // 触发条件：费率档案未配置或当日无成交时返回空字符串（整块不显示）
     String renderFeeDetailSection(const DecisionSet& set) const;
 
+private:
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;  // 风控触发事件（日终策略用）
     // 重放期间的运行中持仓 + 逐 bar 快照（只在本轮重放内有意义）
     Map<symbol_t, int64_t> _positions;
     Vector<DecisionSet::PositionSnapshot> _positionSnapshots;
+
+    day_time_t _workingTime;
 };

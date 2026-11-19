@@ -180,6 +180,12 @@ private:
     time_t _end;
 };
 
+// 表示一日中的某个时间点
+struct day_time_t {
+    char _hour;
+    char _minute;
+};
+
 namespace std {
     template<>
     struct hash<time_range> {

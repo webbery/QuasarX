@@ -45,7 +45,7 @@ bool DownloadBase::RunScript(const String& interpreter, const String& script,
                              const String& args, String& output) {
     // 脚本都放在 tools 目录下，且脚本内部按「相对脚本目录」读写数据文件，
     // 所以工作目录固定切到 tools。解释器由调用方按配置解析后传进来。
-    String cmd = "cd ../tools && " + interpreter + " " + script;
+    String cmd = "tools/" + interpreter + " " + script;
     if (!args.empty()) {
         cmd += " " + args;
     }

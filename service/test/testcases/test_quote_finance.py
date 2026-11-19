@@ -800,7 +800,7 @@ class TestDownloadEndpoints:
 
     @pytest.mark.timeout(10)
     def test_quote_download_valid(self, auth_token):
-        """POST /v0/quote 合法请求 → 返回 started + groups"""
+        """POST /v0/quote 合法请求 → 返回 started + 受理标的计数"""
         kwargs = self._kwargs(auth_token)
         kwargs['json'] = {
             'symbols': '600000.SH',
@@ -809,13 +809,13 @@ class TestDownloadEndpoints:
         response = requests.post(f"{BASE_URL}/quote", **kwargs)
         data = check_response(response)
         assert data['status'] == 'started'
-        assert 'groups' in data
-        assert isinstance(data['groups'], list)
-        assert len(data['groups']) > 0
-        grp = data['groups'][0]
-        assert 'asset_type' in grp
-        assert 'table' in grp
-        assert 'symbols' in grp
+        assert data['freq'] == 'daily'
+        assert data['symbols'] == '600000.SH'
+        # 600000 是股票不是 ETF → 股票 1 只、ETF 0 只
+        assert data['stock_count'] == 1
+        assert data['etf_count'] == 0
+        assert data['table_stock'] == 'stock_1d'
+        assert data['table_etf'] == 'etf_1d'
 
     @pytest.mark.timeout(10)
     def test_quote_download_missing_symbols(self, auth_token):

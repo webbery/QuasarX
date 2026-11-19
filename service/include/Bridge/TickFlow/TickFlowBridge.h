@@ -92,6 +92,17 @@ private:
     // 收盘数据写入 stock_1d（15:00 后的第一个 tick 触发）
     void WriteCloseDataToStock1d(const QuoteInfo& quote);
 
+    // ── 收盘数据写入熔断 ──────────────────────────────────────
+    // stock_1d 写不进去时（最典型：DuckDB 实例被 invalidated），日终策略永远等不到
+    // MarkSymbolReady，会一路静默到收盘结束 —— 上层既不报错也不发通知。
+    // 这里连续失败达到阈值就熔断：停止每 10 秒重试 33 个标的（否则日志会被
+    // "Failed to write close data" 刷满），并主动发邮件告警，把故障暴露出来。
+    void HandleCloseWriteFailure(const String& symbol);
+    void HandleCloseWriteSuccess(const String& symbol);
+    // 熔断中且未到探测时间 → 返回 true，调用方应直接跳过写入
+    bool CloseWriteBreakerBlocking();
+    void SendCloseWriteAlert(int failCount, const String& lastSymbol, bool recovered);
+
     // 后复权因子: 从 stock_1d 最新 bar 查 adj_close/close，更新 _adjFactorCache
     void refreshAdjFactor(symbol_t sym);
     // 读缓存因子（无缓存时返回 1.0）
@@ -152,4 +163,18 @@ private:
     // 后复权因子缓存: symbol → adj_close/close（收盘 recalc 后刷新，盘中用旧值近似）
     Map<symbol_t, double> _adjFactorCache;
     mutable std::mutex _adjFactorMtx;
+
+    // ── 收盘数据写入熔断状态 ──────────────────────────────────
+    // 阈值：连续这么多次写库失败即熔断。DuckDB 整体失效时一轮 5 个标的就会
+    // 失败 5 次，两轮（~20s）就该触顶，再往下刷只是噪声。
+    static constexpr int kCloseWriteFailThreshold = 10;
+    // 熔断后每隔多久放行一次探测写入：库被修好（重启 service）后能自愈
+    static constexpr int kCloseWriteProbeIntervalSec = 300;
+    // 持续故障时的重复告警间隔，避免每小时一封变成骚扰
+    static constexpr int kCloseWriteAlertIntervalSec = 3600;
+    std::mutex _closeWriteMtx;
+    int _closeWriteFailCount = 0;
+    bool _closeWriteBreakerOpen = false;
+    std::chrono::steady_clock::time_point _closeWriteNextProbe;
+    time_t _closeWriteLastAlert = 0;
 };

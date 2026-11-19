@@ -92,11 +92,10 @@ export const dataTool = tool(
             ...(start ? { start } : {}),
             ...(end ? { end } : {}),
           })
-          const groups = res.data?.groups ?? []
+          const data = res.data ?? {}
           const lines = [`**行情下载已触发** — 标的: ${symbols}，频率: ${freq ?? "daily"}`]
-          for (const g of groups) {
-            lines.push(`  - ${g.asset_type} → ${g.table}: ${g.symbols?.length ?? 0} 个标的`)
-          }
+          lines.push(`  - 股票 → ${data.table_stock}: ${data.stock_count ?? 0} 个标的`)
+          lines.push(`  - ETF → ${data.table_etf}: ${data.etf_count ?? 0} 个标的`)
           lines.push("\n数据在后台异步下载，可通过 list_tables 查看进度。")
           return lines.join("\n")
         }

@@ -571,6 +571,11 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     std::tm* ltm = localtime(&now);
     if (ltm->tm_hour < 15) return;
 
+    // 熔断中：stock_1d 写不进去，继续重试只会刷屏（实测一次故障刷出 142 条
+    // "Failed to write close data"），而且日终策略必然等不到数据。
+    // 这里直接短路，连 refreshAdjFactor 的查询也一并省掉。
+    if (CloseWriteBreakerBlocking()) return;
+
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         WARN("[TickFlow] QuoteDB not initialized, cannot write close data");
@@ -599,7 +604,7 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     if (!events.empty()) {
         // 路径 A：有分红事件 → 先写入 raw bar，再精算全部历史 adj_*
         if (!quoteDB.upsertBar("stock_1d", bar)) {
-            WARN("[TickFlow] Failed to write close data for {}", bar.symbol);
+            HandleCloseWriteFailure(bar.symbol);
             return;
         }
         int recalcResult = financeDB.recalcSymbolAdjPrices(bar.symbol, events);
@@ -614,13 +619,16 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
         bar.adj_low   = bar.low   * factor;
 
         if (!quoteDB.upsertBar("stock_1d", bar)) {
-            WARN("[TickFlow] Failed to write close data for {}", bar.symbol);
+            HandleCloseWriteFailure(bar.symbol);
             return;
         }
         INFO("[TickFlow] WriteCloseData: {} | path=cache-factor | factor={:.6f} "
              "close={:.4f} adj_close={:.4f}",
              bar.symbol, factor, bar.close, bar.adj_close);
     }
+
+    // 写成功 → 连续失败计数清零 / 熔断关闭
+    HandleCloseWriteSuccess(bar.symbol);
 
     // 刷新复权因子缓存（次日盘中 QuoteInfo._adj_close 用新因子）
     refreshAdjFactor(quote._symbol);
@@ -631,6 +639,124 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
         if (strategySys) {
             strategySys->MarkSymbolReady(to_symbol(bar.symbol));
         }
+    }
+}
+
+// ==================== 收盘数据写入熔断 ====================
+
+void TickFlowBridge::HandleCloseWriteFailure(const String& symbol) {
+    int failCount = 0;
+    bool needAlert = false;
+    bool reopened = false;
+
+    {
+        std::lock_guard<std::mutex> lock(_closeWriteMtx);
+        failCount = ++_closeWriteFailCount;
+
+        if (failCount < kCloseWriteFailThreshold) {
+            WARN("[TickFlow] Failed to write close data for {} ({} consecutive failures)",
+                 symbol, failCount);
+            return;
+        }
+
+        time_t nowTs = Now();
+        if (!_closeWriteBreakerOpen) {
+            // 首次触顶：熔断打开
+            _closeWriteBreakerOpen = true;
+            _closeWriteNextProbe = std::chrono::steady_clock::now()
+                                   + std::chrono::seconds(kCloseWriteProbeIntervalSec);
+            _closeWriteLastAlert = nowTs;
+            needAlert = true;
+            reopened = true;
+        } else if (nowTs - _closeWriteLastAlert >= kCloseWriteAlertIntervalSec) {
+            // 持续故障：按小时重复告警，别让第一次邮件被淹没
+            _closeWriteLastAlert = nowTs;
+            needAlert = true;
+        } else {
+            // 熔断中的探测失败：已被告警覆盖，这里只留 DEBUG 痕迹，不刷屏
+            DEBUG_INFO("[TickFlow] close write still failing ({} consecutive), breaker open",
+                      failCount);
+        }
+    }
+
+    if (needAlert) {
+        // 邮件在锁外发：SendEmail 会阻塞几秒（跑 python + TLS），别占着锁
+        if (reopened) {
+            SPDLOG_ERROR("[TickFlow] 收盘数据写入连续失败 {} 次，已熔断（停止写入 stock_1d）。"
+                         "日终策略将等不到行情数据，不会产出决策与通知邮件。"
+                         "请检查 QuoteDB（data/quote）是否可用，必要时重启 service。",
+                         failCount);
+        } else {
+            SPDLOG_ERROR("[TickFlow] 收盘数据写入仍然失败（累计 {} 次），熔断未解除。", failCount);
+        }
+        SendCloseWriteAlert(failCount, symbol, false);
+    }
+}
+
+void TickFlowBridge::HandleCloseWriteSuccess(const String& symbol) {
+    bool recovered = false;
+    {
+        std::lock_guard<std::mutex> lock(_closeWriteMtx);
+        if (_closeWriteBreakerOpen) {
+            _closeWriteBreakerOpen = false;
+            _closeWriteLastAlert = 0;
+            recovered = true;
+        }
+        _closeWriteFailCount = 0;
+    }
+    if (recovered) {
+        // 恢复也告警：运维需要确认「已恢复」而不只是「曾经坏过」
+        SPDLOG_INFO("[TickFlow] 收盘数据写入已恢复（探测写入成功），熔断关闭。");
+        SendCloseWriteAlert(0, symbol, true);
+    }
+}
+
+bool TickFlowBridge::CloseWriteBreakerBlocking() {
+    std::lock_guard<std::mutex> lock(_closeWriteMtx);
+    if (!_closeWriteBreakerOpen) return false;
+
+    auto now = std::chrono::steady_clock::now();
+    if (now < _closeWriteNextProbe) return true;
+
+    // 到探测时间：放行一次写入尝试。成功 → HandleCloseWriteSuccess 关熔断；
+    // 失败 → HandleCloseWriteFailure 继续熔断，并顺延下次探测时间。
+    _closeWriteNextProbe = now + std::chrono::seconds(kCloseWriteProbeIntervalSec);
+    return false;
+}
+
+void TickFlowBridge::SendCloseWriteAlert(int failCount, const String& lastSymbol, bool recovered) {
+    String msg = std::format(
+        "[TickFlow] 收盘数据写入熔断告警{}\n"
+        "\n"
+        "状态: {}\n"
+        "连续失败次数: {}\n"
+        "最近失败标的: {}\n"
+        "时间: {}\n"
+        "\n"
+        "影响:\n"
+        "  - 当日 stock_1d 缺失收盘 bar\n"
+        "  - 日终策略等不到行情数据（MarkSymbolReady 不会被调用），\n"
+        "    因此不会产出决策，也不会发出日终决策通知邮件\n"
+        "  - 行情列表接口 (/v0/quote) 可能返回空\n"
+        "\n"
+        "常见原因:\n"
+        "  1. DuckDB 实例已失效（invalidated）—— 日志中会出现\n"
+        "     \"[QuoteDB] ★ DuckDB 实例已失效\"，后续所有行情读写都失败\n"
+        "  2. stock_1d 表缺失或索引损坏（ART index corrupted）\n"
+        "\n"
+        "处置:\n"
+        "  1. 重启 service 重新打开 quote.db（服务会每 {} 秒自动探测恢复）\n"
+        "  2. 若重启后仍失败，需重建索引（DROP INDEX + CREATE INDEX）\n"
+        "  3. 确认 data/quote 目录存在且可写\n",
+        recovered ? "（已恢复）" : "",
+        recovered ? "已恢复" : "已熔断，停止写入 stock_1d",
+        failCount,
+        lastSymbol,
+        ToString(Now(), "%Y-%m-%d %H:%M:%S"),
+        kCloseWriteProbeIntervalSec);
+
+    if (_server) {
+        _server->SendEmail(msg.c_str());
     }
 }
 

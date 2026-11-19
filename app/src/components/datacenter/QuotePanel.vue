@@ -56,55 +56,19 @@ const quoteLogs = ref<any[]>([])
 const quoteLogRef = ref<HTMLElement | null>(null)
 const quoteProgress = reactive({ downloaded: 0, total: 0, phase: '' as '' | 'downloading' | 'importing' })
 
-// SSE 进度是按「分组」下发的，每组各自从 0 重新计数，所以要按组记录再求和。
-// 「更新到最新」/「批量更新」会对每个 (table, startDate) 各发一次 POST，于是同一
-// asset_type 会有多个先后相继的分组 —— 用递增序号区分，并记住每种 asset_type
-// 当前活跃的那个分组，symbol_* 事件才知道该记到哪一组头上
-const quoteGroupProgress = reactive<Record<string, { downloaded: number; total: number }>>({})
-const quoteActiveGroup = new Map<string, string>()
-let quoteGroupSeq = 0
-
-const sumGroupProgress = (key: 'downloaded' | 'total') =>
-    Object.values(quoteGroupProgress).reduce((sum, g) => sum + (g[key] || 0), 0)
-
+// SSE 只推进状态（开始 / 结束），分母以 POST 响应为准
 const resetQuoteProgress = () => {
-    Object.keys(quoteGroupProgress).forEach(k => { delete quoteGroupProgress[k] })
-    quoteActiveGroup.clear()
     quoteProgress.downloaded = 0
     quoteProgress.total = 0
     quoteProgress.phase = ''
 }
 
-// 总数只认 POST /v0/quote 响应里的 groups —— 服务端返回的是本次请求实际受理的标的清单，
-// 是权威值。SSE 事件可能因重连被重复投递，拿它累加分母会让 42 显示成 252
-const applyGroupsTotal = (groups: any) => {
-    if (!Array.isArray(groups)) return
-    const n = groups.reduce((sum, g) =>
-        sum + String(g?.symbols ?? '').split(',').filter(s => s.trim()).length, 0)
+// 总数只认 POST /v0/quote 响应里的标的计数 —— 服务端返回的是本次请求实际受理的
+// 标的数（stock_count + etf_count），是权威值。SSE 事件可能因重连被重复投递，
+// 拿它累加分母会让 42 显示成 252
+const applyRequestTotal = (data: any) => {
+    const n = (Number(data?.stock_count) || 0) + (Number(data?.etf_count) || 0)
     if (n > 0) quoteProgress.total += n
-}
-
-const openQuoteGroup = (d: any) => {
-    const at = d.asset_type || 'default'
-    const key = `${at}#${++quoteGroupSeq}`
-    quoteGroupProgress[key] = { downloaded: 0, total: Number(d.total) || 0 }
-    quoteActiveGroup.set(at, key)
-}
-
-// 服务端已下发权威的 downloaded，直接赋值而不是 ++：
-// 同一事件被重复投递时结果不变，进度不会成倍虚高
-const applyGroupDownloaded = (d: any) => {
-    const at = d.asset_type || 'default'
-    let key = quoteActiveGroup.get(at)
-    if (!key) {
-        // 漏了 started（重连中途接入等），就地补一个分组，别让这批计数丢失
-        openQuoteGroup({ asset_type: at, total: d.total })
-        key = quoteActiveGroup.get(at)!
-    }
-    const g = quoteGroupProgress[key]
-    if (!g) return
-    g.downloaded = Number(d.downloaded) || 0
-    quoteProgress.downloaded = sumGroupProgress('downloaded')
 }
 
 // 按策略下载行情（与 dividend tab 同样思路：取最新版本 flowData → 提取 symbols）
@@ -142,7 +106,9 @@ const updateLatestTimer = ref<number | null>(null)
 const expectedDones = ref(0)
 const completedDones = ref(0)
 const onUpdateLatestDone = (msg: any) => {
-    if (msg.data.status !== 'done') return
+    // failed 也算这一组结束了 —— 否则失败的组永远等不到 done，
+    // 只能靠 30 分钟超时兜底，界面会一直卡在"更新中"
+    if (msg.data.status !== 'done' && msg.data.status !== 'failed') return
     completedDones.value++
     if (completedDones.value >= expectedDones.value) {
         if (updateLatestTimer.value !== null) {
@@ -151,7 +117,7 @@ const onUpdateLatestDone = (msg: any) => {
         }
         sseService.off('quote_download', onUpdateLatestDone)
         activeDownloadScenario.value = 'idle'
-        addQuoteLog(`✓ 全部组下载完成，刷新列表`, 'done')
+        addQuoteLog(`✓ 全部组下载结束，刷新列表`, 'done')
         loadQuoteData()
         isUpdatingLatest.value = false
     }
@@ -376,34 +342,12 @@ const onQuoteDownloadEvent = (msg: any) => {
     const d = msg.data
     switch (d.status) {
         case 'started':
-            // 只登记分组，不动全局 total —— total 由 POST 响应决定（见 applyGroupsTotal）
-            openQuoteGroup(d)
+            // total 由 POST 响应决定（见 applyRequestTotal），SSE 只推进状态
             quoteProgress.phase = 'downloading'
-            addQuoteLog(`📥 开始下载: ${d.total} 只标的 (${d.asset_type})`)
-            break
-        case 'symbol_downloaded':
-            applyGroupDownloaded(d)
-            addQuoteLog(`✅ ${d.symbol}: ${d.rows} 行 (${d.downloaded}/${d.total})`, 'success')
-            break
-        case 'symbol_failed':
-            applyGroupDownloaded(d)
-            addQuoteLog(`❌ ${d.symbol}: 下载失败 (${d.error})`, 'error')
-            break
-        case 'downloaded':
-            addQuoteLog(`📥 下载完成: ${d.downloaded} 成功，${d.failed} 失败，开始导入...`)
-            quoteProgress.phase = 'importing'
-            break
-        case 'download_failed':
-            addQuoteLog('脚本执行失败', 'error')
-            if (d.output) {
-                const lines = d.output.split(/\r?\n/).filter((l: string) => l.trim())
-                lines.forEach((line: string) => addQuoteLog(line, 'error'))
-            }
-            break
-        case 'importing':
-            addQuoteLog(`导入 ${d.table}: ${d.symbol} (${d.rows} 行)`, 'success')
+            addQuoteLog(`📥 开始下载: ${d.total} 只标的 (${d.freq ?? '-'})`)
             break
         case 'done':
+        case 'failed': {
             // 仅当本 SSE 事件来自当前激活场景时，才重置对应按钮的标志位
             // （避免「更新到最新」运行中，单/策略按钮被错误关闭）
             if (activeDownloadScenario.value === 'single') {
@@ -414,17 +358,26 @@ const onQuoteDownloadEvent = (msg: any) => {
                 quoteProgress.phase = ''
             }
             // 'updateLatest' / 'idle' 不在这里重置标志位（各自有专门的 done 处理）
-            if (d.success === 'true') {
-                addQuoteLog(`✅ 完成: 共导入 ${d.total_rows} 行 → ${d.table}`, 'done')
+            if (d.status === 'done' && d.success === 'true') {
+                quoteProgress.downloaded = quoteProgress.total
+                addQuoteLog(`✅ 完成: 共导入 ${d.total_rows} 行 (${d.freq ?? '-'})`, 'done')
                 if (activeDownloadScenario.value === 'single' || activeDownloadScenario.value === 'strategy') {
-                    quoteStatus.value = `下载完成，${d.total_rows} 行已导入 ${d.table}`
+                    quoteStatus.value = `下载完成，${d.total_rows} 行已导入 (${d.freq ?? '-'})`
                 }
             } else {
-                addQuoteLog(`❌ ${d.table} 下载失败`, 'error')
+                addQuoteLog(`❌ 下载失败 (${d.freq ?? '-'})`, 'error')
                 if (activeDownloadScenario.value === 'single' || activeDownloadScenario.value === 'strategy') {
                     quoteStatus.value = '下载失败'
                 }
             }
+            break
+        }
+        case 'completed':
+            // 定时刷新链路：每个频率一条
+            addQuoteLog(`✅ 定时刷新完成: 导入 ${d.imported} 行 (${d.freq ?? '-'})`, 'done')
+            break
+        case 'error':
+            addQuoteLog(`❌ 定时刷新失败 (${d.freq ?? '-'})`, 'error')
             break
     }
 }
@@ -517,8 +470,8 @@ const onHandleQuoteDownload = async () => {
         }, {
             headers: { 'Authorization': token || '' }
         })
-        // 总数取响应里的 groups；SSE 只负责推进分子
-        applyGroupsTotal(resp.data?.groups)
+        // 总数取响应里的标的计数（服务端受理的清单），不用 SSE 反推
+        applyRequestTotal(resp.data)
         // POST 立即返回，进度通过 SSE 推送
     } catch (err: any) {
         quoteDownloading.value = false
@@ -577,8 +530,8 @@ const onDownloadQuoteByStrategy = async () => {
         }, {
             headers: { 'Authorization': token || '' }
         })
-        // 总数取响应里的 groups（服务端受理的标的清单），不用 SSE 反推
-        applyGroupsTotal(resp.data?.groups)
+        // 总数取响应里的标的计数（服务端受理的标的清单），不用 SSE 反推
+        applyRequestTotal(resp.data)
         addQuoteLog(`✓ 已提交下载请求：${quoteStrategySymbolCount.value} 个标的 (${quoteStrategyFreq.value})`)
     } catch (err: any) {
         quoteStrategyDownloading.value = false
@@ -885,7 +838,7 @@ const onBatchUpdateSymbols = async () => {
             const resp = await axios.post(`https://${server}/v0/quote`, params, {
                 headers: { 'Authorization': token || '' }
             })
-            applyGroupsTotal(resp.data?.groups)
+            applyRequestTotal(resp.data)
             successCount += symbols.length  // 该组所有标的都算成功
         } catch (err: any) {
             failCount += symbols.length
@@ -1017,7 +970,7 @@ const onUpdateToLatest = async () => {
             const resp = await axios.post(`https://${server}/v0/quote`, params, {
                 headers: { 'Authorization': token || '' }
             })
-            applyGroupsTotal(resp.data?.groups)
+            applyRequestTotal(resp.data)
             successCount += symbols.length
             expectedDones.value++  // POST 成功 = 期望收到 1 个 done 事件
         } catch (err: any) {
