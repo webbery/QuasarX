@@ -51,10 +51,17 @@ public:
 
         if (std::isnan(atr) || atr <= 0) return RiskTriggerType::None;
 
-        double sl_price = entry_info._avg_price - _multiplier * atr;
-        if (current_price <= sl_price) {
-            INFO("[Guard:AtrStopLoss] TRIGGERED! symbol={} entry={:.2f} current={:.2f} atr={:.2f} sl_price={:.2f}",
-                 get_symbol(symbol), entry_info._avg_price, current_price, atr, sl_price);
+        // 空头方向取反：价格上涨是亏损，止损线在成本价上方
+        double sl_price = entry_info._isShort
+            ? entry_info._avg_price + _multiplier * atr
+            : entry_info._avg_price - _multiplier * atr;
+        const bool hit = entry_info._isShort
+            ? (current_price >= sl_price)
+            : (current_price <= sl_price);
+        if (hit) {
+            INFO("[Guard:AtrStopLoss] TRIGGERED! symbol={} {} entry={:.2f} current={:.2f} atr={:.2f} sl_price={:.2f}",
+                 get_symbol(symbol), entry_info._isShort ? "SHORT" : "LONG",
+                 entry_info._avg_price, current_price, atr, sl_price);
             return RiskTriggerType::AtrStopLoss;
         }
         return RiskTriggerType::None;
@@ -113,9 +120,12 @@ public:
 
         if (std::isnan(ma)) return RiskTriggerType::None;
 
-        if (current_price <= ma) {
-            INFO("[Guard:MaStopLoss] TRIGGERED! symbol={} current={:.2f} ma={:.2f}",
-                 get_symbol(symbol), current_price, ma);
+        // 多头跌破均线止损；空头涨破均线止损
+        const bool hit = entry_info._isShort ? (current_price >= ma)
+                                             : (current_price <= ma);
+        if (hit) {
+            INFO("[Guard:MaStopLoss] TRIGGERED! symbol={} {} current={:.2f} ma={:.2f}",
+                 get_symbol(symbol), entry_info._isShort ? "SHORT" : "LONG", current_price, ma);
             return RiskTriggerType::MaStopLoss;
         }
         return RiskTriggerType::None;
@@ -212,22 +222,32 @@ public:
             return RiskTriggerType::None;
         }
 
-        double lowest = entry_info._lowest_price > 0 ? entry_info._lowest_price : entry_info._avg_price;
-        double mae = (entry_info._avg_price - lowest) / entry_info._avg_price;
+        // 多头看最低价回撤，空头看最高价反弹
+        double adverse = entry_info._isShort
+            ? (entry_info._highest_price > 0 ? entry_info._highest_price : entry_info._avg_price)
+            : (entry_info._lowest_price > 0 ? entry_info._lowest_price : entry_info._avg_price);
+        double mae = entry_info._isShort
+            ? (adverse - entry_info._avg_price) / entry_info._avg_price
+            : (entry_info._avg_price - adverse) / entry_info._avg_price;
         
         if (mae >= _percent) {
-            INFO("[Guard:MaeStopLoss] TRIGGERED! symbol={} entry={:.2f} lowest={:.2f} mae={:.2f} threshold={:.2f}",
-                 get_symbol(symbol), entry_info._avg_price, lowest, mae, _percent);
+            INFO("[Guard:MaeStopLoss] TRIGGERED! symbol={} {} entry={:.2f} adverse={:.2f} mae={:.2f} threshold={:.2f}",
+                 get_symbol(symbol), entry_info._isShort ? "SHORT" : "LONG",
+                 entry_info._avg_price, adverse, mae, _percent);
             return RiskTriggerType::MaeStopLoss;
         }
         return RiskTriggerType::None;
     }
 
     void update(symbol_t symbol, DataContext& context, EntryInfo& entry_info) override {
-        // 更新最低价（用于 MAE 计算）
+        // 多头跟踪最低价，空头跟踪最高价（用于 MAE 计算）
         double current_price = getCurrentPrice(symbol, context);
         if (current_price > 0) {
-            if (entry_info._lowest_price == 0 || current_price < entry_info._lowest_price) {
+            if (entry_info._isShort) {
+                if (entry_info._highest_price == 0 || current_price > entry_info._highest_price) {
+                    entry_info._highest_price = current_price;
+                }
+            } else if (entry_info._lowest_price == 0 || current_price < entry_info._lowest_price) {
                 entry_info._lowest_price = current_price;
             }
         }

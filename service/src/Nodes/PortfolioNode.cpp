@@ -184,52 +184,6 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     applyRiskContext(context, decisions);
 
     const bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
-    // 2. 获取可用资金
-    // live/日终：走 StrategyCapital（统一账本，含持仓市值与两融口径）
-    // 回测：保持原有 BacktestContext 资金口径，避免改变回测结果
-    double targetCapital = 0.0;
-    if (!isBacktest) {
-        auto* broker = _server->GetBrokerSubSystem();
-        auto* strategyCapital = broker->GetStrategyCapital(strategy);
-
-        // 先把本 bar 的最新价格灌进资金账本，否则权益口径的持仓市值为 0
-        // （StrategyCapital 只在日终开始时同步数量，不持有行情）。
-        for (const auto& symbol : _pool) {
-            const QuoteInfo* q = context.GetQuote(symbol);
-            if (q && q->_close > 0) {
-                strategyCapital->updatePrice(symbol, q->_close);
-            } else if (q && q->_open > 0) {
-                strategyCapital->updatePrice(symbol, q->_open);
-            }
-        }
-
-        // SpendableBudget 已按 positionRatio 折算，不能再乘一次 _positionRatio。
-        Set<symbol_t> sellSymbols;
-        for (const auto& [symbol, action] : decisions) {
-            if (action == TradeAction::SELL) {
-                sellSymbols.insert(symbol);
-            }
-        }
-        targetCapital = strategyCapital->SpendableBudget(_positionRatio, _allowShort, sellSymbols);
-    } else {
-        targetCapital = context.getAvailableCapital() * _positionRatio;
-    }
-
-    // 负预算 = 超额占用，今天没有可买入的资金。
-    // DataContext::getAvailableCapital() 现在会把负余额原样返回（不再被兜底值吞掉），
-    // 这里收敛成 0， 0 预算本来就会让所有买单
-    // 走 quantity < 100 分支被丢弃 —— 行为一致，但信号清楚得多。
-    if (targetCapital < 0.0) {
-        if (!isBacktest) {
-            STRATEGY_WARN(strategy, "Budget is negative ({}), over-committed; "
-                          "treating today's buy budget as 0", targetCapital);
-        } else {
-            WARN("[PortfolioNode] Budget is negative ({}), over-committed; "
-                 "treating today's buy budget as 0", targetCapital);
-        }
-        targetCapital = 0.0;
-    }
-
     // ── 价格 / 持仓来源 adapter ──
     // live 与 backtest 各一套，通过 adapter 注入 generatePlan。
     // 必须提到 applySizingWeights 之前 —— MVO 要读当前持仓判定"新买入"，
@@ -296,6 +250,86 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             // 点查：不要为了取一个数量把整张持仓表拷一遍
             return capital->getHoldingQuantity(symbol);
         };
+    }
+
+    // 2. 获取可用资金
+    // live/日终：走 StrategyCapital（统一账本，含持仓市值与两融口径）
+    // 回测：多空策略以"权益 - 已有总敞口"为预算，而非可用现金。
+    //   空头卖出所得会计入可用现金，若直接拿现金当预算，开空本身会抬高下一根
+    //   bar 的预算（单只新开仓甚至能吃掉全部现金），形成杠杆正反馈：实测 33 只
+    //   标的做空时，4 个月内权益转负、名义敞口放大到百亿级。改用权益减总敞口后，
+    //   新开仓只会把总敞口推到 positionRatio * 权益，不再自我放大。
+    //   纯多头策略保持原现金口径，避免改变历史回测结果。
+    double targetCapital = 0.0;
+    if (!isBacktest) {
+        auto* broker = _server->GetBrokerSubSystem();
+        auto* strategyCapital = broker->GetStrategyCapital(strategy);
+
+        // 先把本 bar 的最新价格灌进资金账本，否则权益口径的持仓市值为 0
+        // （StrategyCapital 只在日终开始时同步数量，不持有行情）。
+        for (const auto& symbol : _pool) {
+            const QuoteInfo* q = context.GetQuote(symbol);
+            if (q && q->_close > 0) {
+                strategyCapital->updatePrice(symbol, q->_close);
+            } else if (q && q->_open > 0) {
+                strategyCapital->updatePrice(symbol, q->_open);
+            }
+        }
+
+        // SpendableBudget 已按 positionRatio 折算，不能再乘一次 _positionRatio。
+        Set<symbol_t> sellSymbols;
+        for (const auto& [symbol, action] : decisions) {
+            if (action == TradeAction::SELL) {
+                sellSymbols.insert(symbol);
+            }
+        }
+        targetCapital = strategyCapital->SpendableBudget(_positionRatio, _allowShort, sellSymbols);
+    } else if (_allowShort) {
+        // 上日收盘权益：快照在每根 bar 收盘后记录，当日决策时最新一条即上一根 bar。
+        double equity = context.getInitialCapital();
+        if (btContext) {
+            const auto& pv = btContext->getPortfolioValues();
+            if (!pv.empty()) {
+                equity = pv.back();
+            }
+        }
+
+        // 已有总敞口（多空合并按绝对值）。已决定平仓的多头不计入 —— 与实盘
+        // SpendableBudget 的 sellSymbols 口径一致，卖出回款当天可以再用。
+        double gross = 0.0;
+        for (const auto& symbol : _pool) {
+            const int64_t qty = getPositionQuantity(symbol);
+            if (qty == 0) continue;
+            if (qty > 0) {
+                auto it = decisions.find(symbol);
+                if (it != decisions.end() && it->second == TradeAction::SELL) {
+                    continue;
+                }
+            }
+            const double price = getQuotePrice(symbol);
+            if (price > 0.0) {
+                gross += std::abs(static_cast<double>(qty) * price);
+            }
+        }
+
+        targetCapital = std::max(0.0, equity - gross) * _positionRatio;
+    } else {
+        targetCapital = context.getAvailableCapital() * _positionRatio;
+    }
+
+    // 负预算 = 超额占用，今天没有可买入的资金。
+    // DataContext::getAvailableCapital() 现在会把负余额原样返回（不再被兜底值吞掉），
+    // 这里收敛成 0， 0 预算本来就会让所有买单
+    // 走 quantity < 100 分支被丢弃 —— 行为一致，但信号清楚得多。
+    if (targetCapital < 0.0) {
+        if (!isBacktest) {
+            STRATEGY_WARN(strategy, "Budget is negative ({}), over-committed; "
+                          "treating today's buy budget as 0", targetCapital);
+        } else {
+            WARN("[PortfolioNode] Budget is negative ({}), over-committed; "
+                 "treating today's buy budget as 0", targetCapital);
+        }
+        targetCapital = 0.0;
     }
 
     // ── 组合计算模型调整仓位权重 ──

@@ -5,7 +5,8 @@
 
 /**
  * @brief 固定百分比止损
- * 触发条件: current_price <= entry_price * (1 - percent)
+ * 触发条件: 多头 current_price <= entry_price * (1 - percent)
+ *           空头 current_price >= entry_price * (1 + percent)
  */
 class StopLossGuard : public Guard {
 public:
@@ -22,10 +23,17 @@ public:
         double current_price = getCurrentPrice(symbol, context);
         if (current_price <= 0) return RiskTriggerType::None;
 
-        double sl_price = entry_info._avg_price * (1.0 - _percent);
-        if (current_price <= sl_price) {
-            INFO("[Guard:StopLoss] TRIGGERED! symbol={} entry={:.2f} current={:.2f} sl_price={:.2f}",
-                 get_symbol(symbol), entry_info._avg_price, current_price, sl_price);
+        // 空头方向取反：价格上涨才是亏损，止损线在成本价上方
+        double sl_price = entry_info._isShort
+            ? entry_info._avg_price * (1.0 + _percent)
+            : entry_info._avg_price * (1.0 - _percent);
+        const bool hit = entry_info._isShort
+            ? (current_price >= sl_price)
+            : (current_price <= sl_price);
+        if (hit) {
+            INFO("[Guard:StopLoss] TRIGGERED! symbol={} {} entry={:.2f} current={:.2f} sl_price={:.2f}",
+                 get_symbol(symbol), entry_info._isShort ? "SHORT" : "LONG",
+                 entry_info._avg_price, current_price, sl_price);
             return RiskTriggerType::StopLoss;
         }
         return RiskTriggerType::None;
@@ -42,7 +50,8 @@ private:
 
 /**
  * @brief 止盈
- * 触发条件: current_price >= entry_price * (1 + percent)
+ * 触发条件: 多头 current_price >= entry_price * (1 + percent)
+ *           空头 current_price <= entry_price * (1 - percent)
  */
 class TakeProfitGuard : public Guard {
 public:
@@ -59,10 +68,17 @@ public:
         double current_price = getCurrentPrice(symbol, context);
         if (current_price <= 0) return RiskTriggerType::None;
 
-        double tp_price = entry_info._avg_price * (1.0 + _percent);
-        if (current_price >= tp_price) {
-            INFO("[Guard:TakeProfit] TRIGGERED! symbol={} entry={:.2f} current={:.2f} tp_price={:.2f}",
-                 get_symbol(symbol), entry_info._avg_price, current_price, tp_price);
+        // 空头方向取反：价格下跌才是盈利，止盈线在成本价下方
+        double tp_price = entry_info._isShort
+            ? entry_info._avg_price * (1.0 - _percent)
+            : entry_info._avg_price * (1.0 + _percent);
+        const bool hit = entry_info._isShort
+            ? (current_price <= tp_price)
+            : (current_price >= tp_price);
+        if (hit) {
+            INFO("[Guard:TakeProfit] TRIGGERED! symbol={} {} entry={:.2f} current={:.2f} tp_price={:.2f}",
+                 get_symbol(symbol), entry_info._isShort ? "SHORT" : "LONG",
+                 entry_info._avg_price, current_price, tp_price);
             return RiskTriggerType::TakeProfit;
         }
         return RiskTriggerType::None;
@@ -78,11 +94,12 @@ private:
 
 /**
  * @brief 追踪止损（Trailing Stop）
- * 触发条件: current_price <= highest_price * (1 - percent)
+ * 触发条件: 多头 current_price <= highest_price * (1 - percent)
+ *           空头 current_price >= lowest_price  * (1 + percent)
  * 
  * 与 StopLoss 的区别：
- * - StopLoss: 固定止损线（entry_price * (1 - percent)）
- * - TrailingStop: 动态止损线（highest_price * (1 - percent)），跟随最高价上涨
+ * - StopLoss: 固定止损线（多头 entry*(1-percent)，空头 entry*(1+percent)）
+ * - TrailingStop: 动态止损线，多头跟随最高价、空头跟随最低价
  */
 class TrailingStopGuard : public Guard {
 public:
@@ -99,12 +116,25 @@ public:
         double current_price = getCurrentPrice(symbol, context);
         if (current_price <= 0) return RiskTriggerType::None;
 
+        if (entry_info._isShort) {
+            // 空头：最低价回撤（上涨）触发止损
+            double lowest = entry_info._lowest_price > 0
+                ? entry_info._lowest_price : entry_info._avg_price;
+            double ts_price = lowest * (1.0 + _percent);
+            if (current_price >= ts_price) {
+                INFO("[Guard:TrailingStop] TRIGGERED! symbol={} SHORT lowest={:.2f} current={:.2f} ts_price={:.2f}",
+                     get_symbol(symbol), lowest, current_price, ts_price);
+                return RiskTriggerType::TrailingStop;
+            }
+            return RiskTriggerType::None;
+        }
+
         // 使用持仓期间的最高价（复权口径）
         double highest = entry_info._highest_price > 0 ? entry_info._highest_price : entry_info._avg_price;
         double ts_price = highest * (1.0 - _percent);
         
         if (current_price <= ts_price) {
-            INFO("[Guard:TrailingStop] TRIGGERED! symbol={} highest={:.2f} current={:.2f} ts_price={:.2f}",
+            INFO("[Guard:TrailingStop] TRIGGERED! symbol={} LONG highest={:.2f} current={:.2f} ts_price={:.2f}",
                  get_symbol(symbol), highest, current_price, ts_price);
             return RiskTriggerType::TrailingStop;
         }
@@ -112,10 +142,14 @@ public:
     }
 
     void update(symbol_t symbol, DataContext& context, EntryInfo& entry_info) override {
-        // 更新最高价（无论是否触发都要更新）
+        // 更新极值（无论是否触发都要更新）：多头跟踪最高价，空头跟踪最低价
         double current_price = getCurrentPrice(symbol, context);
         if (current_price > 0) {
-            if (current_price > entry_info._highest_price) {
+            if (entry_info._isShort) {
+                if (entry_info._lowest_price <= 0 || current_price < entry_info._lowest_price) {
+                    entry_info._lowest_price = current_price;
+                }
+            } else if (current_price > entry_info._highest_price) {
                 entry_info._highest_price = current_price;
             }
         }

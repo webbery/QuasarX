@@ -138,8 +138,9 @@ int64_t ProtectionNode::get_position_qty(const String& strategy, DataContext& co
 }
 
 void ProtectionNode::syncPositions(const String& strategy, DataContext& context) {
-    // 获取当前所有有持仓的标的
+    // 获取当前所有有持仓的标的（同时记录数量符号：负 = 空头）
     Set<symbol_t> current_symbols;
+    Map<symbol_t, int64_t> current_qty;
     if (_server->GetRunningMode() == RuningType::Backtest) {
         auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
@@ -151,6 +152,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                     int64_t pos = btCtx->getPosition(sym);
                     if (pos != 0) {
                         current_symbols.insert(sym);
+                        current_qty[sym] = pos;
                     }
                 }
             }
@@ -174,6 +176,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                 continue;
             }
             current_symbols.insert(symbol);
+            current_qty[symbol] = pos._quantity;
         }
     }
 
@@ -189,9 +192,19 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
 
     // 新增持仓：记录入场信息
     for (const auto& symbol : current_symbols) {
+        auto qit = current_qty.find(symbol);
+        const bool isShort = (qit != current_qty.end() && qit->second < 0);
+
+        auto infoIt = _entry_info.find(symbol);
+        if (infoIt != _entry_info.end() && infoIt->second._isShort != isShort) {
+            // 多空翻转：旧方向的成本价/极值全部失效，按新仓重新初始化
+            _entry_info.erase(infoIt);
+        }
+
         if (!_entry_info.count(symbol)) {
             EntryInfo info;
             info._entry_bar = context.GetEpoch();
+            info._isShort = isShort;
 
             double factor = context.GetAdjFactor(symbol);
             double cost = get_position_cost(strategy, context, symbol);
@@ -229,8 +242,8 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
 
             _entry_info[symbol] = info;
             if (_server->GetRunningMode() != RuningType::Backtest) {
-                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} cost={}",
-                             get_symbol(symbol), info._raw_cost);
+                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} {} cost={}",
+                             get_symbol(symbol), isShort ? "SHORT" : "LONG", info._raw_cost);
             }
         }
     }

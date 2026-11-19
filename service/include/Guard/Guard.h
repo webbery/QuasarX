@@ -73,4 +73,5 @@ struct EntryInfo {
     double _highest_price = 0.0;   // 持仓期间最高价（复权口径）
     double _lowest_price = 0.0;    // 持仓期间最低价（复权口径）
     int    _entry_bar = 0;         // 入场 Bar 索引
+    bool   _isShort = false;       // 空头持仓：止损/止盈/追踪方向全部取反
 };
