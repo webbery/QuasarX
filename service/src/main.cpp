@@ -772,19 +772,18 @@ void print_cpu_features() {
 
 // C++ terminate handler（捕获 std::terminate，通常是未捕获异常）
 void on_terminate() {
-    // 重入保护：若信号处理函数已经在处理崩溃，这里不再重复解析符号
-    // （每个 addr2line 都要几百 MB，重复解析会把小内存机器打到 OOM）。
-    if (g_crashing.exchange(true)) {
-        const char again[] = "[TERMINATE] already handling a crash, exit now\n";
-        write(STDERR_FILENO, again, sizeof(again) - 1);
-        _exit(EXIT_FAILURE);
-    }
-
 #ifdef WIN32
     // Windows: 使用 fprintf 输出到 stderr
     fprintf(stderr, "\n========== std::terminate called ==========\n");
     fprintf(stderr, "Attempting to print stack trace...\n\n");
 #else
+    // 重入保护：若信号处理函数已经在处理崩溃，这里不再重复解析符号
+// （每个 addr2line 都要几百 MB，重复解析会把小内存机器打到 OOM）。
+    if (g_crashing.exchange(true)) {
+        const char again[] = "[TERMINATE] already handling a crash, exit now\n";
+        write(STDERR_FILENO, again, sizeof(again) - 1);
+        _exit(EXIT_FAILURE);
+    }
     // Linux: 使用 write() 直接输出（async-signal-safe）
     const char msg[] = "\n========== std::terminate called ==========\n";
     write(STDERR_FILENO, msg, sizeof(msg) - 1);

@@ -215,6 +215,7 @@ const refreshing = ref(false)
 
 /** 重新拉取最新一批决策（日终回放跑完后不用切 Tab 也能刷新） */
 const refreshDecisions = async () => {
+  console.log('[OrderDesk] refreshDecisions clicked')
   if (refreshing.value) return
   refreshing.value = true
   try {
@@ -290,11 +291,13 @@ const handleClose = async () => {
 }
 
 onMounted(() => {
+  console.log('[OrderDesk] onMounted: fetching decisions and registering SSE')
   fetchDecisions()
   registerSSE()
 })
 
 onUnmounted(() => {
+  console.log('[OrderDesk] onUnmounted: unregistering SSE')
   unregisterSSE()
 })
 </script>

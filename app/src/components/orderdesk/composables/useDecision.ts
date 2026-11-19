@@ -62,9 +62,17 @@ export function useDecision() {
    * 传 date → 查指定归属日（历史查询用）。
    */
   const fetchDecisions = async (date?: string) => {
+    console.log('[Decision] fetchDecisions called, date=', date)
     try {
       const res = await axios.get('/v0/trade/decisions', date ? { params: { date } } : {})
       const list: DecisionItem[] = Array.isArray(res.data) ? res.data : []
+      console.log('[Decision] fetchDecisions response:', {
+        status: res.status,
+        count: list.length,
+        firstItem: list[0],
+        lastItem: list[list.length - 1],
+        raw: res.data
+      })
       decisions.value = list
       decisionDate.value = list[0]?.date ?? ''
     } catch (error) {
@@ -113,16 +121,20 @@ export function useDecision() {
   }
 
   const onManualDecision = (messageData: any) => {
+    console.log('[Decision] SSE manual_decision received:', messageData)
     try {
       const payload = JSON.parse(messageData.payload || messageData.data)
+      console.log('[Decision] SSE parsed payload:', payload)
       // SSE 带的是归属日（as_of），与 REST 返回的 date 同一口径
       if (payload.as_of) {
         decisionDate.value = payload.as_of
       }
       if (payload.decisions && Array.isArray(payload.decisions)) {
+        console.log('[Decision] SSE decisions count:', payload.decisions.length)
         for (const d of payload.decisions) {
           const exists = decisions.value.find(item => item.id === d.id)
           if (!exists) {
+            console.log('[Decision] SSE adding new decision:', d)
             decisions.value.push({
               id: d.id,
               strategy: payload.strategy || '',
@@ -139,6 +151,8 @@ export function useDecision() {
               executedPrice: 0,
               closed: false
             })
+          } else {
+            console.log('[Decision] SSE decision already exists, id=', d.id)
           }
         }
       }
@@ -148,10 +162,12 @@ export function useDecision() {
   }
 
   const registerSSE = () => {
+    console.log('[Decision] registerSSE: subscribing to manual_decision')
     sseService.on('manual_decision', onManualDecision)
   }
 
   const unregisterSSE = () => {
+    console.log('[Decision] unregisterSSE: unsubscribing from manual_decision')
     sseService.off('manual_decision', onManualDecision)
   }
 

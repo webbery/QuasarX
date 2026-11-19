@@ -6,7 +6,7 @@
   "main": "build/electron/main.js",
   "type": "module",
   "author": {
-    "name": "Heliomar P. Marques",
+    "name": "Webberg",
     "email": "heliomarpm@proton.me",
     "url": "https://navto.me/heliomarpm"
   },
