@@ -4,7 +4,6 @@
 #include "Util/system.h"
 #include "server.h"
 #include <algorithm>
-#include <thread>
 
 namespace {
 const char* kMarginTable = "margin_daily";
@@ -33,7 +32,7 @@ bool MarginHandler::ensureDB(httplib::Response& res) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  POST /v0/margin — 下载并导入（后台线程）
+//  POST /v0/margin — 下载并导入（提交到数据线程池）
 // ═══════════════════════════════════════════════════════════
 
 void MarginHandler::post(const httplib::Request& req, httplib::Response& res) {
@@ -60,36 +59,10 @@ void MarginHandler::post(const httplib::Request& req, httplib::Response& res) {
     }
     String env = params.value("env", String(""));
 
-    Server* server = _server;
-
-    // 抓取要联网、耗时 1~3 分钟，不能阻塞 HTTP 线程
-    std::thread([server, date, env]() {
-        SetCurrentThreadName("MarginDownload");
-        // GetSocket() 是 thread_local：socket 必须在实际使用它的线程里创建，
-        // 并由 ScopedSocket 在工作线程结束时关闭
-        ScopedSocket sse(Server::GetSocket());
-
-        SendSSE(sse.get(), "margin_download", {
-            {"status", "started"},
-            {"date", date.empty() ? "latest" : date}
-        });
-
-        String error;
-        int rows = server->DownloadMarginData(date, env, error);
-        if (rows < 0) {
-            WARN("[MarginHandler] 下载失败: {}", error);
-            SendSSE(sse.get(), "margin_download", {
-                {"status", "failed"},
-                {"error", error}
-            });
-            return;
-        }
-
-        SendSSE(sse.get(), "margin_download", {
-            {"status", "completed"},
-            {"rows", std::to_string(rows)}
-        });
-    }).detach();
+    // 抓取要联网、耗时 1~3 分钟：交给 Server 的数据线程池，不阻塞 HTTP 线程。
+    // 同一日期重复提交会被 DispatchDataJob 按 key 去重；SSE（margin_download）
+    // 由统一提交骨架发送，这里不再自己起 detached 线程。
+    _server->SubmitMarginDownload(date, env);
 
     nlohmann::json resp;
     resp["status"] = "started";

@@ -727,6 +727,33 @@ std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::st
     return result;
 }
 
+int64_t QuoteDB::countInvalidBars(const std::string& table) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[QuoteDB] countInvalidBars({}): QuoteDB not initialized", table);
+        return -1;
+    }
+
+    // 停牌 bar（ext bit0 置位，或全价为 0）不参与判定 —— 那几天本来就填 0
+    String sql = fmt::format(
+        "SELECT COUNT(*) FROM {} "
+        "WHERE (ext & 1) = 0 "
+        "  AND (open > 0 OR close > 0) "
+        "  AND (high < open OR high < close OR low > open OR low > close OR high < low)",
+        table);
+
+    duckdb_result result;
+    if (duckdb_query(conn(), sql.c_str(), &result) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&result);
+        reportDuckDbError(fmt::format("countInvalidBars({})", table), err ? err : "unknown");
+        duckdb_destroy_result(&result);
+        return -1;
+    }
+    int64_t n = (duckdb_row_count(&result) > 0) ? duckdb_value_int64(&result, 0, 0) : -1;
+    duckdb_destroy_result(&result);
+    return n;
+}
+
 int QuoteDB::updateAdjPrices(const std::string& table, int64_t encoded_symbol,
                              const std::vector<AdjPriceUpdate>& updates) {
     std::lock_guard<std::recursive_mutex> lock(mtx());

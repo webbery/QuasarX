@@ -8,12 +8,15 @@
 #include "Bridge/exchange.h"
 #include <atomic>
 #include <ctime>
+#include <mutex>
 #include <nng/nng.h>
 #include <nng/supplemental/http/http.h>
 #include "nng/nng.h"
 #include "Handler/RecordHandler.h"
 #include "StrategySubSystem.h"
 #include "Util/TickMap.h"
+#include "Data/DataPipeline.h"
+#include "Util/ThreadPool.h"
 
 // 策略验证结果结构
 struct StrategyValidationResult {
@@ -186,25 +189,37 @@ public:
     // pair.second 包含错误信息（如果有）
     std::pair<bool, String> ValidateStrategyConfig(const nlohmann::json& config);
 
-    /// 下载并导入两融明细（逐标的融资/融券余额）
+    /// 两融明细下载并入库（供 REST 的 MarginHandler 调用）
     ///
-    /// 拉 tools/fetch_margin_data.py → 写 {db_path}/margin/detail_<YYYYMMDD>.<ex>.csv
-    /// → 走通用类目通道 FinanceDB::importCsv(csv, "margin_daily") 入库
-    /// （表结构按类目自动创建，ON CONFLICT 保证重跑幂等）。
-    ///
+    /// 走 Data/MarginData 这条公共链路：下载 → CSV 级体检 → 分块入库 → DB 级复查。
     /// date 为空表示由脚本自动取最近有数据的交易日；env 是配置里的 python 环境名。
-    /// 返回导入行数；<0 表示失败，原因写入 error。不发射 SSE，由调用方决定事件。
-    /// 定时任务（Schedules）和 REST（MarginHandler）共用这一条链路。
+    /// 返回导入行数；<0 表示失败，原因写入 error。
     int DownloadMarginData(const String& date, const String& env, String& error);
 
-    /// 把抓取脚本产出的 CSV 导入 margin_daily 表。
+    /// 下载并导入一批标的的行情（供 REST 的 QuoteDownloadHandler / OptionDataHandler 调用）
     ///
-    /// manifest 是 fetch_margin_data.py 打印的那行 JSON。一个交易日可能有多个文件
-    /// —— 每个交易所一个（detail_<date>.sh.csv / detail_<date>.sz.csv）：沪/深任何
-    /// 一家接口抖动都会让那天只剩另一半；补齐时脚本只重下缺的那个交易所。
-    /// 逐个导入即可，upsert 键是 (symbol, stat_date)，重复导入同一文件没有副作用。
-    /// 返回导入行数；<0 表示失败，原因写入 error。
-    int ImportMarginDetailCsvs(const nlohmann::json& manifest, String& error);
+    /// 走 Data/QuoteData 这条公共链路。symbols 用内部格式（sh.600519），
+    /// freq 是 "daily"/"5m"/"15m"/"30m"/"60m"。overwrite=true 时无视库里的最新日期全量重下。
+    /// 返回导入行数；<0 表示失败。
+    int DownloadQuoteData(const Vector<symbol_t>& symbols, const String& freq,
+                          bool overwrite, const String& env);
+
+    /// 异步下载并导入一批标的的行情（内部提交到数据线程池）。
+    /// REST 的 QuoteDownloadHandler / OptionDataHandler 用这个，不阻塞请求线程。
+    void SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
+                             bool overwrite, const String& env);
+
+    /// 异步下载并导入两融明细（供 REST 的 MarginHandler）。
+    /// date 为空 = 由脚本自动取最近有数据的交易日。
+    void SubmitMarginDownload(const String& date, const String& env);
+
+    /// 异步下载并导入基本面数据（供 REST 的 FinanceHandler）。
+    /// categories 为空表示全部六个类目；start/end 用脚本原生格式
+    /// （"2022" 或 "2022-Q1"），空 = 脚本默认。
+    void SubmitFundamentalDownload(const Vector<symbol_t>& symbols,
+                                   const Vector<DataCategory>& categories,
+                                   const String& start, const String& end,
+                                   const String& env);
 
     // type 0-股票
     // StockHistorySimulation* CreateSimulation(const String& name, const String& strategy, int type = 0);
@@ -234,16 +249,58 @@ private:
 
     void Schedules(time_t t);
 
-    /**
-     * @brief 20:00 调度：增量下载所有活跃策略涉及的不复权/后复权行情
-     *
-     * 遍历已加载策略的标的池，按 (asset_type, freq) 拆表，
-     * 对每只标的查询 QuoteDB 当前 end_time，按 (freq, end_time) 分组，
-     * 复用 QuoteDownloadHandler::runDownloadJob 拉取增量数据。
-     *
-     * 单 symbol 失败由下载脚本内部跳过；组级失败跳过整组。
-     */
-    void updateActiveStrategiesQuote(bool overwrite = false);
+    /// 日终数据刷新入口：行情 / 两融 / 基本面三条链路
+    ///
+    /// 触发条件不再是「到了 20:00 这一分钟」，而是「目标交易日还没刷过」：
+    /// 昨天失败、进程晚启动、20:00 那分钟重启过，都会在下一个 tick 自动补上。
+    /// 具体三条链路各自提交到数据线程池，不阻塞定时器线程。
+    void RefreshDailyData();
+
+    /// 凌晨补数据入口：把上一轮体检遗留的异常重新下载并入库
+    void RepairDailyData();
+
+    /// 三类数据依次补一遍（由 RepairDailyData 在数据线程池里调用）
+    void RunDataRepair(const String& targetDay);
+
+    /// 把一条数据任务交给数据线程池，同一 key 不允许并发重复派发。
+    /// 返回 false 表示这条链路已经在跑（调用方不用再管）。
+    bool DispatchDataJob(const String& key, std::function<void()> job);
+
+    /// 数据任务结果：三条链路共用，避免 SubmitXxx 各写一套 int/error/issues 约定
+    struct DataJobResult {
+        int    rows = -1;    ///< 导入行数，<0 = 失败
+        size_t issues = 0;   ///< 本轮体检异常数
+        String error;        ///< 失败原因（rows < 0 时使用）
+    };
+
+    /// 数据任务的统一提交骨架：数据线程池（同 key 去重）+ SSE 开始/结束事件
+    /// + 异常兜底。
+    ///
+    /// 具体链路差异（构造哪个 Data 子类、配置哪些参数、跑哪个目录、事件
+    /// payload 长什么样）由 run / finished 两个回调承载 —— 这正是为什么
+    /// 这里用回调而不是模板类：差异在配置与事件协议，不在数据类型本身。
+    ///
+    /// @param key      去重键（同一 key 同时只允许一个任务）
+    /// @param event    SSE 事件名（quote_download / margin_download / ...）
+    /// @param started  开始事件 payload；空表示不发开始事件
+    /// @param finished 结束事件 payload；rows < 0 时由各链路映射成自己的失败格式
+    /// @param run      真正干活：跑完返回 DataJobResult
+    void SubmitDataJob(const String& key, const String& event,
+                       Map<String, String> started,
+                       std::function<Map<String, String>(const DataJobResult&)> finished,
+                       std::function<DataJobResult()> run);
+
+    /// 行情链路（按频率逐个跑 QuoteData，串行以免同时拉起多个 python 进程）
+    void RunQuoteRefresh(const String& targetDay);
+
+    /// 两融链路
+    void RunMarginRefresh(const String& targetDay);
+
+    /// 基本面链路
+    void RunFundamentalRefresh(const String& targetDay);
+
+    /// 收集所有活跃策略的标的池（去重）
+    Vector<symbol_t> CollectStrategySymbols();
 
     /// 刷新融资融券（可做空）标的名单：拉 tools/fetch_shortable_stocks.py 并全量重写
     /// FinanceDB::margin_stock。由 Schedules 在每周六的日终时点调用。
@@ -252,26 +309,6 @@ private:
     /// 必须由服务进程写：DuckDB 单写者，服务持有 finance.db 后外部脚本打不开。
     /// 抓取或解析失败时保留原名单（importMarginStocks 对空输入不清表）。
     void RefreshMarginStockList(nng_socket sseSock);
-
-    /// 20:00 调度入口：调用 DownloadMarginData，失败只记日志 + SSE 告警。
-    ///
-    /// 与可做空标的名单不同：两融明细是「每个交易日的存量数据」，必须按日增量落库；
-    /// 名单是「每月调整一次的名单」，按周全量重写。
-    /// 抓取失败不发邮件（当前策略；需要邮件时在此处补 SendEmail）。
-    void RefreshMarginData(nng_socket sseSock);
-
-    /// 20:00 调度入口：刷新基本面（财务）数据
-    ///
-    /// 后台线程执行，不阻塞定时器循环。从策略池收集标的，按类目覆盖率自适应
-    /// 选择要下载的类目（覆盖率 ≥50% 的类目才拉，避免 dupont 这类稀疏类目天天误报）。
-    /// 下载后体检 CSV，异常记入全局队列，凌晨 03:00 补下载时取用。
-    void RefreshFundamentalData(nng_socket sseSock);
-
-    /// 03:00 调度入口：补下载体检发现异常的基本面数据
-    ///
-    /// 从全局队列取异常清单，只补不合格的标的，只下对应日期区间。
-    /// 补完后再体检一次，确认修复。
-    void RetryFundamentalData(nng_socket sseSock);
 
     void TimerWorker(nng_socket sock);
 
@@ -333,6 +370,17 @@ private:
 
     Map<ExchangeName, Set<time_range>> _working_times;
 
-    // 基本面数据刷新防重入标志（20:00 与 03:00 互斥）
-    std::atomic<bool> _fundamentalRefreshing{false};
+    // ── 数据刷新（下载 / 体检 / 导入）──
+    //
+    // 独立线程池：基本面刷新要按 类目 × 标的 串行跑几百个 python 进程，
+    // 和行情下载共用一个池会把队列占死。
+    //
+    // hardware_concurrency 个 worker，再开多了就是多个 python3 抢 CPU。
+    // 规则：≤4 核固定 1 个（三条链路串行排队），更多核才给 2 个。
+    std::unique_ptr<ThreadPool> _dataPool;
+    // 每条链路最后刷新的目标交易日（持久化，进程重启后仍能判断要不要补）
+    std::unique_ptr<RefreshState> _refreshState;
+    // 已在跑的链路 key，避免 5 秒一个 tick 把同一个任务反复派发
+    std::mutex _dataInflightMtx;
+    Set<String> _dataInflight;
 };

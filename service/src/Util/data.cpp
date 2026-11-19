@@ -939,608 +939,94 @@ std::pair<bool, String> CleanupDBData(
 
 } // namespace DataUtil
 
-// ============================================================
-// BaoStock 单标的下载 + 导入
-// ============================================================
+// === ResolveUnderlying 实现 ===
 
 namespace {
 
-/// 行情频率字符串 → 体检子类别
-DataCheckCategory quote_category(const String& freq) {
-    if (freq == "daily" || freq == "1d") return DataCheckCategory::Day;
-    if (freq == "5m")  return DataCheckCategory::Min5;
-    if (freq == "15m") return DataCheckCategory::Min15;
-    if (freq == "30m") return DataCheckCategory::Min30;
-    if (freq == "60m") return DataCheckCategory::Min60;
-    return DataCheckCategory::Day;
+// 产品名 → 实际代码映射表
+// SSE ETF 期权标的
+const std::map<String, String>& sseProductToCode() {
+    static const std::map<String, String> m = {
+        {"50ETF", "510050"},
+        {"300ETF", "510300"},
+        {"500ETF", "510500"},
+        {"创业板ETF", "159915"},
+        {"科创50ETF", "588000"},
+        {"中证1000ETF", "512100"},
+    };
+    return m;
 }
 
-}  // namespace
-
-DownloadSymbolResult DownloadAndImportSymbol(
-    const String& symbol,
-    const String& freq,
-    const String& start,
-    const String& end,
-    const String& interpreter,
-    const String& quote_dir,
-    bool overwrite)
-{
-    namespace fs = std::filesystem;
-    DownloadSymbolResult result;
-
-    // 从 symbol 推断 asset_type: sh.5xxxxx / sh.58xxxx → etf, 其余 → stock
-    String asset_type = "stock";
-    {
-        auto dot = symbol.find('.');
-        if (dot != String::npos && dot <= 3) {
-            String code = symbol.substr(dot + 1);
-            if (!code.empty() && (code[0] == '5')) {
-                asset_type = "etf";
-            }
-        }
-    }
-
-    // 构建下载命令
-    String cmd = interpreter + " tools/download_quote_bs.py "
-                    + symbol + " " + quote_dir
-                    + " --freq " + freq
-                    + " --asset-type " + asset_type;
-    if (!start.empty()) cmd += " --start " + start;
-    if (!end.empty())   cmd += " --end "   + end;
-
-    // 执行下载
-    String output;
-    bool ok = RunCommand(cmd, output);
-    if (!ok) {
-        WARN("[DownloadAndImport] {} download failed: {}", symbol, output);
-        return result;  // download_ok=false
-    }
-    result.download_ok = true;
-
-    // baostock 格式 → CODE.EXCHANGE (sh.510050 → 510050.SH)
-    String csv_name = symbol;
-    {
-        auto dot = symbol.find('.');
-        if (dot != String::npos && dot <= 3) {
-            String market = symbol.substr(0, dot);
-            String code = symbol.substr(dot + 1);
-            std::transform(market.begin(), market.end(), market.begin(), ::toupper);
-            csv_name = code + "." + market;
-        }
-    }
-
-    String org_path = quote_dir + "/" + asset_type + "_org/" + freq + "/" + csv_name + ".csv";
-    String hfq_path = quote_dir + "/" + asset_type + "_hfq/" + freq + "/" + csv_name + ".csv";
-
-    const bool has_org = fs::exists(org_path);
-    const bool has_hfq = fs::exists(hfq_path);
-
-    if (!has_org && !has_hfq) {
-        WARN("[DownloadAndImport] {} CSV not found after download", symbol);
-        return result;  // download_ok=true, import_ok=false
-    }
-
-    // 不复权(org)才是原始价的唯一来源，缺一不可。
-    // org 下载失败时不能把"后复权价"写进 close 列，
-    // 宁可不导入这根 bar，也不能用后复权价冒充原始价。
-    if (!has_org) {
-        WARN("[DownloadAndImport] {} 不复权(org)数据缺失，跳过导入以免用后复权价污染原始价: "
-             "org={} hfq={}", symbol, org_path, hfq_path);
-        // 清掉残留的 hfq CSV：留着会被下一次运行误当成 org 顶替原始价
-        if (has_hfq) fs::remove(hfq_path);
-        result.download_ok = false;
-        result.import_ok = false;
-        return result;
-    }
-
-    // 从 CSV 文件获取行数
-    {
-        String count_path = org_path;
-        std::ifstream ifs(count_path);
-        if (ifs.is_open()) {
-            int csv_rows = 0;
-            String line;
-            bool header_skipped = false;
-            while (std::getline(ifs, line)) {
-                if (line.empty()) continue;
-                if (!header_skipped) { header_skipped = true; continue; }
-                csv_rows++;
-            }
-            result.rows = csv_rows;
-        }
-    }
-
-    // 入库前体检：行数、最新日期、公告日合法性。
-    // 异常记下来，凌晨补下载时按这份清单重下。
-    {
-        CsvSpec spec;
-        spec._type = DataCheckType::Quote;
-        spec._category = quote_category(freq);
-        spec._symbol = toInternalSymbol(csv_name);
-        spec._path = org_path;
-        RecordDataIssues(CheckCsvs({spec}));
-    }
-
-    // 导入 QuoteDB（未初始化则自动初始化）
-    auto& quoteDB = QuoteDB::instance();
-    if (!quoteDB.isInitialized()) {
-        INFO("[DownloadAndImport] Auto-initializing QuoteDB at {}/quote.db", quote_dir);
-        if (!quoteDB.init(quote_dir, "quote.db")) {
-            WARN("[DownloadAndImport] QuoteDB init failed, skipping import for {}", symbol);
-            return result;
-        }
-    }
-
-    // org 已保证存在（上面缺 org 直接跳过），hfq 缺失时退化为 org：
-    // 此时 adj_* 暂时等于原始价，随后 validateAndReconcileAdj 的
-    // recalcSymbolAdjPrices 会按 dividend 表重算复权列。
-    String org_p = org_path;
-    String hfq_p = has_hfq ? hfq_path : org_path;
-    String table = QuoteDB::tableName(asset_type, freq);
-    String internal_sym = toInternalSymbol(csv_name);
-
-    auto t0 = std::chrono::steady_clock::now();
-    int imported = quoteDB.importCsv(org_p, hfq_p, table, internal_sym, overwrite);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
-
-    INFO("[DownloadAndImport] {} import done: {} rows in {} ms", internal_sym, imported, ms);
-
-    // 清理 CSV
-    fs::remove(org_p);
-    fs::remove(hfq_p);
-
-    if (imported > 0) {
-        result.imported = imported;
-        result.import_ok = true;
-    }
-
-    return result;
+// SZSE ETF 期权标的
+const std::map<String, String>& szseProductToCode() {
+    static const std::map<String, String> m = {
+        {"300ETF", "159919"},
+        {"500ETF", "159922"},
+        {"创业板ETF", "159915"},
+        {"深证100ETF", "159901"},
+    };
+    return m;
 }
 
-// ============================================================
-// 标的 → QuoteDB 查询
-// ============================================================
+// 交易所前缀
+String exchangePrefix(const String& exchange) {
+    if (exchange == "SSE") return "sh";
+    if (exchange == "SZSE") return "sz";
+    if (exchange == "CFFEX") return "cffex";
+    return "";
+}
+
+} // anonymous namespace
 
 UnderlyingQuoteInfo ResolveUnderlying(const String& underlying, const String& exchange,
                                       const String& product) {
-    UnderlyingQuoteInfo info;
+    UnderlyingQuoteInfo result;
+    result.latest_close = 0.0;
+
     if (underlying.empty()) {
-        INFO("[ResolveUnderlying] underlying is empty, returning empty");
-        return info;
+        WARN("[ResolveUnderlying] underlying is empty");
+        return result;
     }
 
-    // SSE: underlying 可能是产品名 ("50ETF") 而非 ETF 代码 ("510050")
-    // 通过 product 参数做映射; 如果 underlying 本身是纯数字代码则直接用
-    static const std::map<String, String> SSE_PRODUCT_TO_CODE = {
-        {"50ETF",     "510050"},
-        {"300ETF",    "510300"},
-        {"500ETF",    "510500"},
-        {"STAR50ETF", "588000"},
-    };
-
+    // 1. 解析实际代码：如果 underlying 是产品名，先映射到代码
     String code = underlying;
-    if (exchange == "SSE" && !product.empty()) {
-        auto it = SSE_PRODUCT_TO_CODE.find(product);
-        if (it != SSE_PRODUCT_TO_CODE.end()) {
+    
+    // 尝试从产品名映射表查找
+    if (exchange == "SSE") {
+        const auto& m = sseProductToCode();
+        auto it = m.find(underlying);
+        if (it != m.end()) {
+            code = it->second;
+        }
+    } else if (exchange == "SZSE") {
+        const auto& m = szseProductToCode();
+        auto it = m.find(underlying);
+        if (it != m.end()) {
             code = it->second;
         }
     }
+    // CFFEX 股指期权：underlying 通常是指数代码如 "000300"，不需要映射
 
-    // 构造 baostock 格式 symbol
-    String prefix = (exchange == "SSE" || exchange == "CFFEX") ? "sh." : "sz.";
-    info.symbol = prefix + code;
+    // 2. 构造 QuoteDB 内部 symbol 格式: "sh.510050" / "sz.159919"
+    String prefix = exchangePrefix(exchange);
+    result.symbol = prefix + "." + code;
 
-    // 自动判断 asset_type
-    symbol_t sym = to_symbol(info.symbol);
-    bool etf = is_etf(sym);
-    String asset_type = etf ? "etf" : "stock";
-    info.table = QuoteDB::tableName(asset_type, "daily");
+    // 3. 判断资产类型，确定表名
+    // ETF: 51xxxx/58xxxx (SSE), 15xxxx/16xxxx (SZSE)
+    bool is_etf = is_etf_symbol(code);
+    result.table = is_etf ? "etf_1d" : "stock_1d";
 
-    INFO("[ResolveUnderlying] underlying='{}' product='{}' exchange='{}' → code='{}' symbol='{}' is_etf={} table='{}'",
-         underlying, product, exchange, code, info.symbol, etf, info.table);
-
-    // 取最新收盘价
-    auto& quoteDB = QuoteDB::instance();
-    if (!quoteDB.isInitialized()) {
-        WARN("[ResolveUnderlying] QuoteDB NOT initialized!");
-        return info;
-    }
-
-    info.latest_close = quoteDB.getLatestClose(info.table, info.symbol);
-    INFO("[ResolveUnderlying] getLatestClose({}, {}) = {}",
-         info.table, info.symbol, info.latest_close);
-    return info;
-}
-
-
-// ============================================================
-//  数据完整性体检（行情 / 两融 / 基本面）
-//
-// 体检对象是「下载好的 CSV」而不是库里的表：下载刚落盘时数据最新，
-// 还没被导入，异常能在入库前就发现并记录下来。
-// ============================================================
-
-const char* check_category_name(DataCheckCategory c) {
-    switch (c) {
-        case DataCheckCategory::Day:         return "daily";
-        case DataCheckCategory::Min5:        return "5m";
-        case DataCheckCategory::Min15:       return "15m";
-        case DataCheckCategory::Min30:       return "30m";
-        case DataCheckCategory::Min60:       return "60m";
-        case DataCheckCategory::MarginDaily: return "margin_daily";
-        case DataCheckCategory::Profit:      return "profit";
-        case DataCheckCategory::Operation:   return "operation";
-        case DataCheckCategory::Growth:      return "growth";
-        case DataCheckCategory::Balance:     return "balance";
-        case DataCheckCategory::Cashflow:    return "cashflow";
-        case DataCheckCategory::Dupont:      return "dupont";
-    }
-    return "unknown";
-}
-
-namespace {
-
-// 数据类型 / 原因 的可读名字
-const char* check_type_name(DataCheckType t) {
-    switch (t) {
-        case DataCheckType::Quote:       return "quote";
-        case DataCheckType::Margin:      return "margin";
-        case DataCheckType::Fundamental: return "fundamental";
-    }
-    return "unknown";
-}
-
-const char* check_reason_name(DataCheckReason r) {
-    switch (r) {
-        case DataCheckReason::Missing:      return "missing";
-        case DataCheckReason::Stale:        return "stale";
-        case DataCheckReason::Invalid:      return "invalid";
-        case DataCheckReason::Insufficient: return "insufficient";
-    }
-    return "unknown";
-}
-
-/// 切分一行 CSV（去掉引号）
-Vector<String> split_csv_line(const String& line) {
-    Vector<String> cols;
-    String cur;
-    bool in_quote = false;
-    for (char c : line) {
-        if (c == '"') {
-            in_quote = !in_quote;
-            continue;
+    // 4. 从 QuoteDB 获取最新收盘价
+    auto& quoteDb = QuoteDB::instance();
+    if (quoteDb.isInitialized()) {
+        result.latest_close = quoteDb.getLatestClose(result.table, result.symbol);
+        if (result.latest_close == 0.0) {
+            WARN("[ResolveUnderlying] getLatestClose returned 0 for {} in {}", 
+                 result.symbol, result.table);
         }
-        if (c == ',' && !in_quote) {
-            cols.push_back(cur);
-            cur.clear();
-            continue;
-        }
-        cur += c;
-    }
-    cols.push_back(cur);
-    return cols;
-}
-
-/// 取一行的日期：财务类是 "YYYY-MM-DD"，行情是 "YYYY-MM-DD HH:MM:SS" 或 Unix 时间戳
-String row_date(DataCheckType type, const String& raw) {
-    if (raw.empty()) return "";
-    if (type == DataCheckType::Quote && raw.find('-') == String::npos) {
-        try {
-            return ToString(static_cast<time_t>(std::stoll(raw)), "%Y-%m-%d");
-        } catch (...) {
-            return "";
-        }
-    }
-    return raw.substr(0, 10);
-}
-
-/// 该类别的 CSV 有没有公告日列（财务类有，行情没有）
-bool has_pub_date_column(DataCheckType type) {
-    return type == DataCheckType::Fundamental || type == DataCheckType::Margin;
-}
-
-/// 一个 CSV 的体检中间结果
-struct CsvInfo {
-    DataCheckType     _type = DataCheckType::Quote;
-    DataCheckCategory _category = DataCheckCategory::Day;
-    String            _symbol;
-    int               _rows = 0;
-    String            _last_date;      ///< 文件里最新的日期
-    String            _last_pub_date;  ///< 最新一行的公告日
-};
-
-/// 已记录的异常（下载链路统一入口，凌晨补下载时取用）
-std::mutex g_issueMtx;
-Vector<DataCheckIssue> g_issues;
-
-}  // namespace
-
-String DataCheckIssue::toLine() const {
-    String line = fmt::format("{}/{} {} {}", check_type_name(_type),
-                               check_category_name(_category),
-                               _symbol.empty() ? "-" : _symbol, _date);
-    return line + " " + check_reason_name(_reason);
-}
-
-const char* DataCheckIssue::tool() const {
-    switch (_type) {
-        case DataCheckType::Quote:       return "download_quote_bs.py";
-        case DataCheckType::Margin:      return "fetch_margin_data.py";
-        case DataCheckType::Fundamental: return "fetch_finance_data.py";
-    }
-    return "unknown";
-}
-
-Vector<DataCheckIssue> CheckCsvs(const Vector<CsvSpec>& specs, int lag_days) {
-    Vector<DataCheckIssue> issues;
-    Vector<CsvInfo> infos;
-    String today = ToString(Now(), "%Y-%m-%d");
-
-    for (const auto& spec : specs) {
-        CsvInfo info;
-        info._type = spec._type;
-        info._category = spec._category;
-        info._symbol = spec._symbol;
-
-        DataCheckIssue issue;
-        issue._type = spec._type;
-        issue._category = spec._category;
-        issue._symbol = spec._symbol;
-
-        std::ifstream ifs(spec._path);
-        if (!ifs.is_open()) {
-            issue._reason = DataCheckReason::Missing;
-            issues.push_back(issue);
-            continue;
-        }
-
-        String header;
-        if (!std::getline(ifs, header)) {
-            issue._reason = DataCheckReason::Missing;
-            issues.push_back(issue);
-            continue;
-        }
-        // 去 BOM
-        if (header.size() >= 3 && header[0] == '\xEF' && header[1] == '\xBB' &&
-            header[2] == '\xBF') {
-            header = header.substr(3);
-        }
-
-        int date_idx = -1;
-        int pub_idx = -1;
-        auto cols = split_csv_line(header);
-        for (size_t i = 0; i < cols.size(); i++) {
-            if (cols[i] == "statDate" || cols[i] == "datetime") date_idx = static_cast<int>(i);
-            if (cols[i] == "pubDate") pub_idx = static_cast<int>(i);
-        }
-        if (date_idx < 0) {
-            WARN("[DataCheck] {} 没有日期列，跳过", spec._path);
-            continue;
-        }
-
-        // 逐行扫：统计行数、找最新日期、记下第一行非法数据
-        bool invalid_reported = false;
-        String line;
-        while (std::getline(ifs, line)) {
-            if (line.empty()) continue;
-            auto row = split_csv_line(line);
-            if (date_idx >= static_cast<int>(row.size())) continue;
-            String date = row_date(spec._type, row[date_idx]);
-            if (date.empty()) continue;
-
-            info._rows++;
-            if (date > info._last_date) {
-                info._last_date = date;
-                info._last_pub_date =
-                    (pub_idx >= 0 && pub_idx < static_cast<int>(row.size())) ? row[pub_idx] : "";
-            }
-
-            // 公告日缺失（节点永远看不到这条）/ 早于报告期（不可能）/ 报告期在未来
-            if (has_pub_date_column(spec._type) && !invalid_reported) {
-                String pub = (pub_idx >= 0 && pub_idx < static_cast<int>(row.size()))
-                                 ? row[pub_idx] : "";
-                if (pub.empty() || pub < date || date > today) {
-                    issue._date = date;
-                    issue._reason = DataCheckReason::Invalid;
-                    issues.push_back(issue);
-                    invalid_reported = true;
-                }
-            }
-        }
-
-        if (info._rows == 0) {
-            issue._reason = DataCheckReason::Missing;
-            issues.push_back(issue);
-        } else if (info._rows < spec._min_rows) {
-            issue._date = info._last_date;
-            issue._reason = DataCheckReason::Insufficient;
-            issues.push_back(issue);
-        }
-
-        infos.push_back(info);
+    } else {
+        WARN("[ResolveUnderlying] QuoteDB not initialized");
     }
 
-    // 同一类目里各标的的最新日期应当接近：明显掉队的那个 = 那次下载漏了
-    Map<String, String> reference;
-    for (const auto& info : infos) {
-        String key = check_key(info._type, info._category);
-        if (info._last_date > reference[key]) reference[key] = info._last_date;
-    }
-    for (const auto& info : infos) {
-        const String& ref = reference[check_key(info._type, info._category)];
-        if (ref.empty() || info._last_date.empty()) continue;
-        if (DaysBetween(info._last_date, ref) <= lag_days) continue;
-
-        DataCheckIssue issue;
-        issue._type = info._type;
-        issue._category = info._category;
-        issue._symbol = info._symbol;
-        issue._date = info._last_date;
-        issue._reason = DataCheckReason::Stale;
-        issues.push_back(issue);
-    }
-
-    return issues;
-}
-
-void RecordDataIssues(const Vector<DataCheckIssue>& issues) {
-    if (issues.empty()) return;
-    std::lock_guard<std::mutex> lock(g_issueMtx);
-    for (const auto& issue : issues) {
-        g_issues.push_back(issue);
-        WARN("[DataCheck] 异常: {}  (补数据用 {})", issue.toLine(), issue.tool());
-    }
-}
-
-Vector<DataCheckIssue> TakeDataIssues() {
-    std::lock_guard<std::mutex> lock(g_issueMtx);
-    Vector<DataCheckIssue> result;
-    result.swap(g_issues);
     return result;
 }
-
-// ============================================================
-//  基本面数据下载工具
-// ============================================================
-
-namespace {
-
-// 从脚本输出里抠出 JSON manifest（参考 server.cpp 中的 ExtractJsonManifest）
-bool extract_manifest(const String& output, nlohmann::json& out) {
-    auto begin = output.find('{');
-    auto end = output.rfind('}');
-    if (begin == String::npos || end == String::npos || end <= begin) {
-        return false;
-    }
-    try {
-        out = nlohmann::json::parse(output.substr(begin, end - begin + 1));
-        return true;
-    } catch (const std::exception& e) {
-        WARN("[extract_manifest] parse failed: {}", e.what());
-        return false;
-    }
-}
-
-}  // namespace
-
-bool DownloadFundamentalCsv(
-    const String& symbol,
-    const String& category,
-    const String& start_date,
-    const String& end_date,
-    const String& interpreter,
-    const String& finance_dir,
-    String& out_csv_path)
-{
-    namespace fs = std::filesystem;
-
-    // CSV 目录用绝对路径
-    String csv_dir = fs::absolute(finance_dir + "/csv").string();
-    std::error_code mk_ec;
-    fs::create_directories(csv_dir, mk_ec);
-
-    // 构建命令（参考 server.cpp 中的 DownloadMarginData）
-    String cmd = "cd ../tools && " + interpreter + " fetch_finance_data.py"
-                 " --code " + symbol +
-                 " --category " + category +
-                 " --download" +
-                 " --data-dir " + csv_dir;
-    if (!start_date.empty()) cmd += " --start " + start_date;
-    if (!end_date.empty()) cmd += " --end " + end_date;
-
-    INFO("[DownloadFundamentalCsv] {} {} cmd: {}", symbol, category, cmd);
-
-    // 执行下载
-    String output;
-    bool ok = RunCommand(cmd, output);
-    if (!ok) {
-        WARN("[DownloadFundamentalCsv] {} {} download failed: {}", symbol, category, output.substr(0, 200));
-        return false;
-    }
-
-    // 从 manifest 提取 CSV 路径
-    nlohmann::json manifest;
-    if (!extract_manifest(output, manifest)) {
-        WARN("[DownloadFundamentalCsv] {} {} manifest not found", symbol, category);
-        return false;
-    }
-
-    if (!manifest.contains("files") || !manifest["files"].is_array()) {
-        WARN("[DownloadFundamentalCsv] {} {} manifest.files not found", symbol, category);
-        return false;
-    }
-
-    // 找到对应类目的 CSV 路径
-    for (const auto& file : manifest["files"]) {
-        if (file.value("category", "") == category) {
-            String path = file.value("path", "");
-            if (!path.empty() && fs::exists(path)) {
-                out_csv_path = path;
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-bool DownloadMarginCsv(
-    const String& date,
-    const String& interpreter,
-    const String& finance_dir,
-    String& out_csv_path)
-{
-    namespace fs = std::filesystem;
-
-    // CSV 目录用绝对路径
-    String margin_dir = fs::absolute(finance_dir + "/margin").string();
-    std::error_code mk_ec;
-    fs::create_directories(margin_dir, mk_ec);
-
-    // 构建命令（参考 server.cpp 中的 DownloadMarginData）
-    String cmd = "cd ../tools && " + interpreter + " fetch_margin_data.py";
-    if (!date.empty()) {
-        cmd += " --date " + date;
-    }
-    cmd += " --out-dir " + margin_dir;
-
-    INFO("[DownloadMarginCsv] cmd: {}", cmd);
-
-    // 执行下载
-    String output;
-    bool ok = RunCommand(cmd, output);
-    if (!ok) {
-        WARN("[DownloadMarginCsv] download failed: {}", output.substr(0, 200));
-        return false;
-    }
-
-    // 从 manifest 提取 CSV 路径
-    nlohmann::json manifest;
-    if (!extract_manifest(output, manifest)) {
-        WARN("[DownloadMarginCsv] manifest not found");
-        return false;
-    }
-
-    // manifest["files"] 是 CSV 文件列表
-    if (manifest.contains("files") && manifest["files"].is_array() && !manifest["files"].empty()) {
-        String path = manifest["files"][0].get<String>();
-        if (!path.empty() && fs::exists(path)) {
-            out_csv_path = path;
-            return true;
-        }
-    }
-
-    // 兼容老版本：manifest["file"] 单数
-    if (manifest.contains("file")) {
-        String path = manifest["file"].get<String>();
-        if (!path.empty() && fs::exists(path)) {
-            out_csv_path = path;
-            return true;
-        }
-    }
-
-    return false;
-}
-

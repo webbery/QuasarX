@@ -16,16 +16,6 @@
 #include <map>
 #include <set>
 #include <chrono>
-#include <atomic>
-
-namespace fs = std::filesystem;
-
-namespace {
-
-// 使用通用线程池替代原有的 DownloadExecutor
-using DownloadExecutor = QuasarX::ThreadPool;
-
-}  // namespace
 
 void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
@@ -45,14 +35,12 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     }
 
     auto freq = params.value("freq", "5m");
-    auto start = params.value("start", std::string(""));
-    auto end = params.value("end", std::string(""));
     auto env_name = params.value("env", std::string(""));
     bool overwrite = params.value("overwrite", false);
     auto db_path = _server->GetConfig().GetDatabasePath();
     auto quote_dir = db_path + "/quote";
 
-    // 初始化 QuoteDB
+    // 初始化 QuoteDB（下载/导入都在数据线程池里跑，这里只保证库可用）
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         if (!quoteDB.init(quote_dir, "quote.db")) {
@@ -62,257 +50,40 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
         }
     }
 
-    // Python 环境
-    auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
-    auto interpreter = pyEnv.resolve(env_name);
-
-    // 按标的类型分组（ETF vs Stock）
+    // CSV 格式的标的列表 → symbol_t
     auto sym_list = split_list(symbols);
+    Vector<symbol_t> parsed;
     std::vector<std::string> etf_syms, stock_syms;
     for (auto& s : sym_list) {
         std::string bs_sym = toInternalSymbol(s);
-        if (is_etf(to_symbol(bs_sym))) etf_syms.push_back(bs_sym);
-        else                            stock_syms.push_back(bs_sym);
+        symbol_t sym = to_symbol(bs_sym);
+        parsed.push_back(sym);
+        if (is_etf(sym)) etf_syms.push_back(bs_sym);
+        else             stock_syms.push_back(bs_sym);
     }
 
-    std::vector<DownloadGroup> groups;
-    if (!etf_syms.empty()) {
-        std::string joined;
-        for (auto& s : etf_syms) { if (!joined.empty()) joined += ","; joined += s; }
-        groups.push_back({"etf", joined, etf_syms});
-    }
-    if (!stock_syms.empty()) {
-        std::string joined;
-        for (auto& s : stock_syms) { if (!joined.empty()) joined += ","; joined += s; }
-        groups.push_back({"stock", joined, stock_syms});
-    }
-
-    if (groups.empty()) {
+    if (parsed.empty()) {
         res.status = 400;
         res.set_content(R"({"message":"no valid symbols"})", "application/json");
         return;
     }
 
-    // 复用核心下载逻辑（异步）
-    runDownloadJob(groups, freq, start, end, interpreter, quote_dir, overwrite);
+    // 异步执行：下载 → CSV 体检 → 分块入库 → DB 级复查 → 补数据
+    _server->SubmitQuoteDownload(parsed, freq, overwrite, env_name);
 
-    // 立即返回（返回所有分组的信息）
     nlohmann::json resp;
     resp["status"] = "started";
-    nlohmann::json groups_json = nlohmann::json::array();
-    for (auto& g : groups) {
-        nlohmann::json g_info;
-        g_info["asset_type"] = g.asset_type;
-        g_info["table"] = QuoteDB::tableName(g.asset_type, freq);
-        g_info["symbols"] = g.symbols_str;
-        groups_json.push_back(g_info);
-    }
-    resp["groups"] = groups_json;
+    resp["freq"] = freq;
+    resp["table_stock"] = QuoteDB::tableName("stock", freq);
+    resp["table_etf"] = QuoteDB::tableName("etf", freq);
+    resp["symbols"] = symbols;
+    resp["stock_count"] = stock_syms.size();
+    resp["etf_count"] = etf_syms.size();
     res.set_content(resp.dump(), "application/json");
 }
 
-void QuoteDownloadHandler::runDownloadJob(std::vector<DownloadGroup> groups,
-                                          const std::string& freq,
-                                          const std::string& start,
-                                          const std::string& end,
-                                          const std::string& interpreter,
-                                          const std::string& quote_dir,
-                                          bool overwrite) {
-    // 投递到下载线程池，而不是"每个 group 起一个 detached 线程"。
-    //
-    // 旧实现的问题：updateActiveStrategiesQuote 每晚按 (asset, freq, end_date)
-    // 拆出 50+ 个 group，每个 group 起一个线程，每个线程里再为每只股票
-    // fork 一个 python3 下载进程 —— 峰值 50+ 个 python3 同时跑，
-    // 每个 25~30MB，1.6GB 的机器直接 global OOM，QuantService 被 OOM killer 杀。
-    //
-    // 现在：固定 worker 数（= 硬件线程数）跑一个任务队列，
-    // 并发 python3 数量有硬上限，内存不会再被打爆；
-    // 代价是 50 组的夜间更新会变慢（按队列排队执行）。
-    DownloadExecutor::instance().submit([groups, quote_dir, freq, start, end, interpreter, overwrite]() {
-        SetCurrentThreadName("QuoteDownload");
-        // SSE socket 必须在当前工作线程创建并关闭
-        ScopedSocket sse(Server::GetSocket());
-
-        for (auto& group : groups) {
-            auto t_group_start = std::chrono::steady_clock::now();
-            const auto& asset_type = group.asset_type;
-            auto sym_list = group.symbols;
-
-            std::string table = QuoteDB::tableName(asset_type, freq);
-
-            INFO("[QuoteDownload] === {} group start: {} symbols, freq={}, start={}, end={} ===",
-                 asset_type, sym_list.size(), freq, start.empty() ? "max" : start, end.empty() ? "today" : end);
-
-            SendSSE(sse.get(), "quote_download", {
-                {"status", "started"}, {"asset_type", asset_type},
-                {"symbols", group.symbols_str}, {"total", std::to_string(sym_list.size())}
-            });
-
-            // 串行逐个标的下载 + 导入（实时推送进度）
-            int downloaded = 0;
-            int failed = 0;
-            int total_rows = 0;
-
-            for (size_t i = 0; i < sym_list.size(); i++) {
-                const auto& sym = sym_list[i];
-
-                auto t_sym_start = std::chrono::steady_clock::now();
-                INFO("[QuoteDownload] [{}/{}] Downloading {} ...", i + 1, sym_list.size(), sym);
-
-                auto dlResult = DownloadAndImportSymbol(
-                    sym, freq, start, end, interpreter, quote_dir, overwrite);
-
-                auto sym_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - t_sym_start).count();
-
-                if (!dlResult.download_ok) {
-                    failed++;
-                    WARN("[QuoteDownload] [{}/{}] {} FAILED in {} ms",
-                         i + 1, sym_list.size(), sym, sym_ms);
-                    SendSSE(sse.get(), "quote_download", {
-                        {"status", "symbol_failed"},
-                        {"asset_type", asset_type},
-                        {"symbol", sym},
-                        {"error", "download script failed"},
-                        {"downloaded", std::to_string(downloaded + failed)},
-                        {"total", std::to_string(sym_list.size())},
-                    });
-                    continue;
-                }
-
-                downloaded++;
-
-                INFO("[QuoteDownload] [{}/{}] {} done: {} rows ({} imported) in {} ms",
-                     i + 1, sym_list.size(), sym, dlResult.rows, dlResult.imported, sym_ms);
-                SendSSE(sse.get(), "quote_download", {
-                    {"status", "symbol_downloaded"},
-                    {"asset_type", asset_type},
-                    {"symbol", sym},
-                    {"rows", std::to_string(dlResult.rows)},
-                    {"downloaded", std::to_string(downloaded + failed)},
-                    {"total", std::to_string(sym_list.size())},
-                });
-
-                if (dlResult.import_ok) {
-                    total_rows += dlResult.imported;
-                    SendSSE(sse.get(), "quote_download", {
-                        {"status", "importing"},
-                        {"table", table},
-                        {"symbol", sym},
-                        {"rows", std::to_string(dlResult.imported)}
-                    });
-
-                    // 股票除权校验
-                    if (table == "stock_1d") {
-                        auto t_adj_start = std::chrono::steady_clock::now();
-                        validateAndReconcileAdj(sse.get(), table, sym);
-                        auto adj_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now() - t_adj_start).count();
-                        INFO("[QuoteDownload] validateAndReconcileAdj {} done in {} ms", sym, adj_ms);
-                    }
-                }
-            }
-
-            auto t_group_end = std::chrono::steady_clock::now();
-            auto group_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_group_end - t_group_start).count();
-            INFO("[QuoteDownload] === {} group done: {} symbols ({} ok, {} failed), {} rows, total {} ms ===",
-                 asset_type, sym_list.size(), downloaded, failed, total_rows, group_ms);
-
-            SendSSE(sse.get(), "quote_download", {
-                {"status", "done"},
-                {"asset_type", asset_type},
-                {"table", table},
-                {"total_rows", std::to_string(total_rows)},
-                {"success", failed == 0 ? "true" : "false"}
-            });
-        }
-    });
-}
-
 void QuoteDownloadHandler::ShutdownDownloads() {
-    DownloadExecutor::instance().shutdown();
-}
-
-void QuoteDownloadHandler::validateAndReconcileAdj(nng_socket sseSock,
-                                                   const std::string& table,
-                                                   const std::string& symbol) {
-    auto& quoteDB = QuoteDB::instance();
-    auto& financeDB = FinanceDB::instance();
-    if (!quoteDB.isInitialized() || !financeDB.isInitialized()) return;
-
-    constexpr double REL_TOLERANCE = 0.01;  // 1% 相对差异阈值
-    auto sym = toInternalSymbol(symbol);
-    // 1. 读取下载的 adj_close（importCsv 已写入）
-    auto downloadedBars = quoteDB.query(table, sym, "", "", 1);
-    if (downloadedBars.empty()) return;
-    const auto& downloaded = downloadedBars.back();
-
-    bool downloadedValid = downloaded.adj_close > 0 && std::isfinite(downloaded.adj_close);
-
-    // 2. 重算（基于 dividend 表，baostock 公式）
-    symbol_t internalSym = to_symbol(sym);
-    int64_t encodedSym = QuoteDB::encodeSymbol(sym);
-    auto events = financeDB.getDividendEvents(get_symbol(internalSym));
-    financeDB.recalcSymbolAdjPrices(get_symbol(internalSym), events);
-
-    // 3. 读取重算后的 adj_close
-    auto recalcBars = quoteDB.query(table, sym, "", "", 1);
-    if (recalcBars.empty()) return;
-    const auto& recalc = recalcBars.back();
-    bool recalcValid = recalc.adj_close > 0 && std::isfinite(recalc.adj_close);
-
-    // 4. 验证：下载值正常 → 优先使用
-    if (downloadedValid) {
-        if (recalcValid) {
-            double maxVal = std::max(downloaded.adj_close, recalc.adj_close);
-            double relDiff = std::abs(downloaded.adj_close - recalc.adj_close) / maxVal;
-            if (relDiff > REL_TOLERANCE) {
-                WARN("[Schedule] Adj mismatch for {}: downloaded={:.4f} recalc={:.4f} "
-                     "(rel diff={:.4f}), using downloaded",
-                     symbol, downloaded.adj_close, recalc.adj_close, relDiff);
-                SendSSE(sseSock, "adj_reconcile", {
-                    {"symbol", symbol},
-                    {"downloaded", fmt::format("{:.6f}", downloaded.adj_close)},
-                    {"recalc", fmt::format("{:.6f}", recalc.adj_close)},
-                    {"rel_diff", fmt::format("{:.6f}", relDiff)},
-                    {"action", "use_downloaded"}
-                });
-                restoreDownloadedAdj(table, encodedSym, downloaded);
-            }
-        } else {
-            WARN("[Schedule] Recalc adj invalid for {}, keeping downloaded adj_close={:.4f}",
-                 symbol, downloaded.adj_close);
-            SendSSE(sseSock, "adj_reconcile", {
-                {"symbol", symbol},
-                {"downloaded", fmt::format("{:.6f}", downloaded.adj_close)},
-                {"recalc", "0"},
-                {"action", "use_downloaded"}
-            });
-            restoreDownloadedAdj(table, encodedSym, downloaded);
-        }
-    } else if (recalcValid) {
-        INFO("[Schedule] Downloaded adj invalid for {}, keeping recalc adj_close={:.4f}",
-             symbol, recalc.adj_close);
-        SendSSE(sseSock, "adj_reconcile", {
-            {"symbol", symbol},
-            {"downloaded", "0"},
-            {"recalc", fmt::format("{:.6f}", recalc.adj_close)},
-            {"action", "use_recalc"}
-        });
-    }
-}
-
-void QuoteDownloadHandler::restoreDownloadedAdj(const std::string& table,
-                                                int64_t encoded_symbol,
-                                                const QuoteBar& downloaded) {
-    auto& quoteDB = QuoteDB::instance();
-    QuoteDB::AdjPriceUpdate u;
-    u.datetime = downloaded.datetime;
-    u.adj_open = downloaded.adj_open;
-    u.adj_high = downloaded.adj_high;
-    u.adj_low = downloaded.adj_low;
-    u.adj_close = downloaded.adj_close;
-    quoteDB.updateAdjPrices(table, encoded_symbol, {u});
+    ThreadPool::instance().shutdown();
 }
 
 void QuoteDownloadHandler::get(const httplib::Request& req, httplib::Response& res) {

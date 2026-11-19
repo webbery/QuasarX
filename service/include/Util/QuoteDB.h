@@ -64,6 +64,13 @@ public:
 
     double getLatestClose(const std::string& table, const std::string& symbol_str);
 
+    /// 统计 OHLC 不自洽的 bar 数（入库体检用）
+    ///
+    /// 判据：high 低于 open/close、low 高于 open/close、high < low。
+    /// 停牌 bar（ext 置位或全价为 0）不算 —— 那几天本来就填 0。
+    /// 表不存在或查询失败返回 -1。
+    int64_t countInvalidBars(const std::string& table);
+
     struct AdjPriceUpdate {
         std::string datetime;
         double adj_open, adj_close, adj_high, adj_low;

@@ -6,9 +6,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "Util/datetime.h"
 #include "Util/log.h"
-
-namespace QuasarX {
 
 // ── 通用线程池（固定 worker 数的队列）────────────────────────
 //
@@ -23,9 +22,23 @@ namespace QuasarX {
 //   - 夜间批量更新会变慢（排队执行），这是用内存换稳定性的自觉取舍
 class ThreadPool {
 public:
+    /// 默认池：worker 数 = 硬件线程数，行情/算法任务共用
     static ThreadPool& instance() {
         static ThreadPool inst;
         return inst;
+    }
+
+    /// 显式指定 worker 数，用于互不干扰的独立池。
+    ///
+    /// 数据刷新（基本面要按 类目 × 标的 串行跑几百个 python 进程）和
+    /// 行情下载如果共用一个池，长任务会把队列占住，行情下载只能排队。
+    explicit ThreadPool(size_t workerCount) : _workerCount(workerCount) {
+        if (_workerCount == 0) _workerCount = 1;
+        _workers.reserve(_workerCount);
+        for (size_t i = 0; i < _workerCount; ++i) {
+            _workers.emplace_back([this] { workerLoop(); });
+        }
+        INFO("[ThreadPool] thread pool started: {} worker(s)", _workerCount);
     }
 
     void submit(std::function<void()> task) {
@@ -55,6 +68,13 @@ public:
         _workers.clear();
     }
 
+    /// 析构时自动 shutdown。
+    /// 必须是 public：Server 用 unique_ptr<ThreadPool> 持有数据刷新专用池，
+    /// 私有析构会让 unique_ptr 编不过。
+    ~ThreadPool() {
+        shutdown();
+    }
+
     size_t workerCount() const { return _workers.size(); }
     size_t pendingCount() const {
         std::lock_guard<std::mutex> lk(_mtx);
@@ -64,16 +84,12 @@ public:
 private:
     ThreadPool() {
         unsigned int hc = std::thread::hardware_concurrency();
-        size_t n = (hc > 0) ? static_cast<size_t>(hc) : 1;
-        _workers.reserve(n);
-        for (size_t i = 0; i < n; ++i) {
+        _workerCount = (hc > 0) ? static_cast<size_t>(hc) : 1;
+        _workers.reserve(_workerCount);
+        for (size_t i = 0; i < _workerCount; ++i) {
             _workers.emplace_back([this] { workerLoop(); });
         }
-        INFO("[ThreadPool] thread pool started: {} worker(s)", n);
-    }
-
-    ~ThreadPool() {
-        shutdown();
+        INFO("[ThreadPool] thread pool started: {} worker(s)", _workerCount);
     }
 
     void workerLoop() {
@@ -103,7 +119,6 @@ private:
     std::condition_variable _cv;
     std::deque<std::function<void()>> _queue;
     std::vector<std::thread> _workers;
+    size_t _workerCount = 1;
     bool _stopping = false;
 };
-
-}  // namespace QuasarX

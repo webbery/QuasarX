@@ -27,8 +27,10 @@
 按文件精确入库，不用猜 CSV 路径。
 """
 import argparse
+import calendar
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -72,7 +74,7 @@ CATEGORIES = {
             "code", "pubDate", "statDate",
             "NRTurnRatio", "NRTurnDays",
             "INVTurnRatio", "INVTurnDays",
-            "CATurnRatio", "ASTurnRatio",
+            "CATurnRatio", "AssetTurnRatio",
         ],
         "display_cols": [
             ("statDate", "报告期"),
@@ -80,7 +82,7 @@ CATEGORIES = {
             ("NRTurnDays", "应收周转天数"),
             ("INVTurnRatio", "存货周转率"),
             ("INVTurnDays", "存货周转天数"),
-            ("ASTurnRatio", "总资产周转率"),
+            ("AssetTurnRatio", "总资产周转率"),
         ],
     },
     "growth": {
@@ -106,14 +108,15 @@ CATEGORIES = {
         "fields": [
             "code", "pubDate", "statDate",
             "currentRatio", "quickRatio",
-            "cashRatio", "debtToAsset",
+            "cashRatio", "YOYLiability",
+            "liabilityToAsset", "assetToEquity",
         ],
         "display_cols": [
             ("statDate", "报告期"),
             ("currentRatio", "流动比率"),
             ("quickRatio", "速动比率"),
             ("cashRatio", "现金比率"),
-            ("debtToAsset", "资产负债率(%)"),
+            ("liabilityToAsset", "资产负债率(%)"),
         ],
     },
     "cashflow": {
@@ -121,17 +124,18 @@ CATEGORIES = {
         "api": "query_cash_flow_data",
         "fields": [
             "code", "pubDate", "statDate",
-            "netProfit", "salesService", "taxSurcharge",
-            "cashPayAcquire", "netCashFlowAct",
-            "netCashFlowInv", "netCashFlowFin",
+            "CAToAsset", "NCAToAsset",
+            "tangibleAssetToAsset", "ebitToInterest",
+            "CFOToOR", "CFOToNP", "CFOToGr",
         ],
         "display_cols": [
             ("statDate", "报告期"),
-            ("netCashFlowAct", "经营现金流净额"),
-            ("netCashFlowInv", "投资现金流净额"),
-            ("netCashFlowFin", "筹资现金流净额"),
-            ("salesService", "销售商品收到现金"),
-            ("cashPayAcquire", "购买商品支付现金"),
+            ("CFOToOR", "经营现金流/营业收入"),
+            ("CFOToNP", "经营现金流/净利润"),
+            ("CFOToGr", "经营现金流/营业收入同比"),
+            ("CAToAsset", "流动资产/总资产"),
+            ("NCAToAsset", "非流动资产/总资产"),
+            ("ebitToInterest", "息税前利润/利息"),
         ],
     },
     "dupont": {
@@ -139,15 +143,18 @@ CATEGORIES = {
         "api": "query_dupont_data",
         "fields": [
             "code", "pubDate", "statDate",
-            "dupontROE", "dupontNetProfit",
-            "dupontAssetTurn", "dupontEquityMultiplier",
+            "dupontROE", "dupontAssetStoEquity",
+            "dupontAssetTurn", "dupontPnitoni",
+            "dupontNitogr", "dupontTaxBurden",
+            "dupontIntburden", "dupontEbittogr",
         ],
         "display_cols": [
             ("statDate", "报告期"),
             ("dupontROE", "ROE(%)"),
-            ("dupontNetProfit", "净利率(%)"),
+            ("dupontAssetStoEquity", "总资产/净资产"),
             ("dupontAssetTurn", "总资产周转率"),
-            ("dupontEquityMultiplier", "权益乘数"),
+            ("dupontPnitoni", "归母净利/净利润"),
+            ("dupontNitogr", "净利润/营业总收入"),
         ],
     },
 }
@@ -217,11 +224,65 @@ def to_display_code(bs_code: str) -> str:
 
 
 # ============================================================
+# 时间窗口解析
+# ============================================================
+#
+# --start / --end 统一接受三种写法：
+#   "2022"        年份
+#   "2024-Q1"     年 + 季度
+#   "2024-07-01"  完整日期（服务端按「最近一个季度」算出来的起始日）
+# 内部统一归一成 (year, quarter) 再去请求 baostock，并用
+# statDate 区间做二次过滤 —— baostock 的接口只按 (year, quarter) 取数，
+# 不传季度边界就会把整年四个季度全拉下来。
+
+def parse_year_quarter(value: str, is_end: bool):
+    """把用户传入的窗口起点/终点归一成 (year, quarter)"""
+    text = value.strip()
+    if not text:
+        return None
+
+    # "2024-Q1" / "2024Q1"
+    m = re.match(r"^(\d{4})[-]?[Qq]([1-4])$", text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    # "2024-07-01" -> 所在季度
+    m = re.match(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$", text)
+    if m:
+        year = int(m.group(1))
+        month = int(m.group(2))
+        quarter = (month - 1) // 3 + 1
+        return year, quarter
+
+    # "2022"
+    m = re.match(r"^(\d{4})$", text)
+    if m:
+        year = int(m.group(1))
+        return year, (4 if is_end else 1)
+
+    raise ValueError(f"无法解析时间窗口: {value}（支持 2022 / 2024-Q1 / 2024-07-01）")
+
+
+def quarter_date_range(yq_start, yq_end):
+    """(year, quarter) 区间 -> ("YYYY-MM-DD", "YYYY-MM-DD")，用于按 statDate 过滤"""
+    if not yq_start:
+        return None, None
+    sy, sq = yq_start
+    ey, eq = yq_end if yq_end else yq_start
+    start_month = (sq - 1) * 3 + 1
+    end_month = eq * 3
+    last_day = calendar.monthrange(ey, end_month)[1]
+    return (f"{sy}-{start_month:02d}-01",
+            f"{ey}-{end_month:02d}-{last_day:02d}")
+
+
+# ============================================================
 # 下载逻辑
 # ============================================================
 
 def download_category(code: str, category: str, data_dir: str,
-                      start_year: int = None, end_year: int = None):
+                      start_year: int = None, end_year: int = None,
+                      stat_start: str = None, stat_end: str = None):
     """
     下载某个类别的全部季度数据
 
@@ -259,6 +320,16 @@ def download_category(code: str, category: str, data_dir: str,
     result = pd.concat(all_rows, ignore_index=True)
     result = result.drop_duplicates(subset=["statDate"]).sort_values("statDate").reset_index(drop=True)
 
+    # 按 statDate 收窗口：baostock 只按 (year, quarter) 取数，
+    # 不做这一步的话 --start 2024-Q3 也会把 2024 全年四个季度都拉下来。
+    if stat_start:
+        result = result[result["statDate"] >= stat_start]
+    if stat_end:
+        result = result[result["statDate"] <= stat_end]
+    if result.empty:
+        print(f"  [{category}] 窗口内无数据 ({stat_start} ~ {stat_end})")
+        return pd.DataFrame(), None, 0
+
     # 保存 CSV（文件名使用显示格式 600519.SH.csv）
     out_dir = os.path.join(data_dir, category)
     os.makedirs(out_dir, exist_ok=True)
@@ -270,7 +341,8 @@ def download_category(code: str, category: str, data_dir: str,
 
 
 def download_all(code: str, data_dir: str, categories: list,
-                 start_year: int = None, end_year: int = None):
+                 start_year: int = None, end_year: int = None,
+                 stat_start: str = None, stat_end: str = None):
     """下载指定类别（或全部）的财务数据，返回下载结果列表"""
     display_code = to_display_code(code)
     print(f"\n{'=' * 60}")
@@ -286,7 +358,8 @@ def download_all(code: str, data_dir: str, categories: list,
     ok_count = 0
     for cat in categories:
         print(f"\n下载 {CATEGORIES[cat]['name']}...")
-        df, filepath, row_count = download_category(code, cat, data_dir, start_year, end_year)
+        df, filepath, row_count = download_category(
+            code, cat, data_dir, start_year, end_year, stat_start, stat_end)
         if not df.empty:
             ok_count += 1
             results.append({
@@ -499,21 +572,19 @@ def main():
     else:
         categories = list(CATEGORIES.keys())
 
-    # 解析年份范围
-    start_year = None
-    end_year = None
-    start_str = None
-    end_str = None
+    # 解析时间窗口：统一成 (year, quarter)，再折算成 statDate 区间
+    try:
+        yq_start = parse_year_quarter(args.start, is_end=False) if args.start else None
+        yq_end = parse_year_quarter(args.end, is_end=True) if args.end else None
+    except ValueError as e:
+        print(f"错误: {e}")
+        return
 
-    if args.start:
-        # 支持 "2022" 或 "2024-Q1" 格式
-        y = args.start.split("-")[0] if "-" in args.start else args.start
-        start_year = int(y)
-        start_str = args.start.replace("-", "")  # "2024-Q1" -> "2024Q1"
-    if args.end:
-        y = args.end.split("-")[0] if "-" in args.end else args.end
-        end_year = int(y)
-        end_str = args.end.replace("-", "")
+    if yq_start and not yq_end:
+        yq_end = yq_start
+    start_year = yq_start[0] if yq_start else None
+    end_year = yq_end[0] if yq_end else None
+    stat_start, stat_end = quarter_date_range(yq_start, yq_end)
 
     if args.download:
         # 下载模式
@@ -530,7 +601,8 @@ def main():
             for code in codes:
                 baostock_code = convert_to_baostock_code(code)
                 try:
-                    results = download_all(baostock_code, args.data_dir, categories, start_year, end_year)
+                    results = download_all(baostock_code, args.data_dir, categories,
+                                           start_year, end_year, stat_start, stat_end)
                     all_results.extend(results)
                 except Exception as e:
                     print(f"错误: 下载 {code} 失败: {e}")
@@ -560,10 +632,10 @@ def main():
         # 查询模式只取第一个类别
         cat = categories[0]
         if args.json:
-            result = query_json(code, cat, args.data_dir, start_str, end_str)
+            result = query_json(code, cat, args.data_dir, stat_start, stat_end)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
-            query_print(code, cat, args.data_dir, start_str, end_str)
+            query_print(code, cat, args.data_dir, stat_start, stat_end)
 
 
 if __name__ == "__main__":

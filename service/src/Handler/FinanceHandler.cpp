@@ -1,4 +1,5 @@
 #include "Handler/FinanceHandler.h"
+#include "Data/FundamentalData.h"
 #include "Util/FinanceDB.h"
 #include "Util/PythonRunner.h"
 #include "Util/string_algorithm.h"
@@ -55,132 +56,32 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto env_name = params.value("env", std::string(""));
 
     auto db_path = _server->GetConfig().GetDatabasePath();
-    auto finance_dir = db_path + "/finance";
-    auto csv_dir = finance_dir + "/csv";
 
-    // 初始化 FinanceDB
-    auto& financeDB = FinanceDB::instance();
-    if (!financeDB.isInitialized()) {
-        if (!financeDB.init(finance_dir, "finance.db")) {
-            res.status = 500;
-            res.set_content(R"({"message":"Failed to init FinanceDB"})", "application/json");
+    // ── 类目：all 展开成六类，否则按名字精确匹配 ──
+    Vector<DataCategory> categories;
+    if (category == "all") {
+        categories = FundamentalData::AllCategories();
+    } else {
+        DataCategory cat;
+        if (!FundamentalData::CategoryFromKey(category, cat)) {
+            res.status = 400;
+            res.set_content(fmt::format(R"({{"message":"Unknown category: {}"}})", category),
+                            "application/json");
             return;
         }
+        categories.push_back(cat);
     }
 
-    if (category != "all" && !FinanceDB::isValidCategory(category)) {
-        res.status = 400;
-        res.set_content(fmt::format(R"({{"message":"Unknown category: {}"}})", category),
-                        "application/json");
-        return;
+    // 标的：外部格式 600000.SH / sh.600000 都接受
+    Vector<symbol_t> sym_list;
+    for (const auto& c : codes) {
+        sym_list.push_back(to_symbol(toInternalSymbol(c)));
     }
 
-    auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
-    auto interpreter = pyEnv.resolve(env_name);
     auto task_id = next_task_id();
 
-    // 后台线程：逐标的下载 + 就地导入（结构同 QuoteDownloadHandler::runDownloadJob）
-    std::thread([codes, category, start, end, interpreter, csv_dir, task_id]() {
-        SetCurrentThreadName("FinanceDownload");
-        // SSE socket 必须在当前工作线程创建并关闭
-        ScopedSocket sse(Server::GetSocket());
-
-        // 确定要导入的类别
-        std::vector<std::string> categories;
-        if (category == "all") {
-            categories = {"profit", "operation", "growth", "balance", "cashflow", "dupont"};
-        } else {
-            categories = {category};
-        }
-
-        auto& financeDB = FinanceDB::instance();
-        auto total = std::to_string(codes.size());
-
-        SendSSE(sse.get(), "finance_download", {
-            {"status", "started"}, {"task_id", task_id}, {"total", total}
-        });
-
-        int total_rows = 0;
-        int processed = 0;
-        int failed = 0;
-
-        for (const auto& sym : codes) {
-            std::string cmd = interpreter + " tools/fetch_finance_data.py"
-                            + " --code " + sym
-                            + " --download"
-                            + " --data-dir " + csv_dir;
-            if (category != "all") cmd += " --category " + category;
-            if (!start.empty()) cmd += " --start " + start;
-            if (!end.empty()) cmd += " --end " + end;
-
-            String output;
-            bool ok = RunCommand(cmd, output);
-            processed++;
-
-            if (!ok || !financeDB.isInitialized()) {
-                failed++;
-                WARN("[FinanceHandler] {} download failed: {}", sym, output);
-                SendSSE(sse.get(), "finance_download", {
-                    {"status", "symbol_failed"}, {"task_id", task_id},
-                    {"code", sym}, {"error", "download failed"},
-                    {"downloaded", std::to_string(processed)}, {"total", total}
-                });
-                continue;
-            }
-
-            // 解析 manifest 获取实际的文件路径
-            // manifest 格式: @@QUASARX_MANIFEST@@{"ok":true,"files":[...]}
-            int rows = 0;
-            auto manifest_pos = output.find("@@QUASARX_MANIFEST@@");
-            if (manifest_pos != String::npos) {
-                try {
-                    auto manifest_str = output.substr(manifest_pos + 20);
-                    auto manifest = nlohmann::json::parse(manifest_str);
-                    
-                    if (manifest.contains("files") && manifest["files"].is_array()) {
-                        for (const auto& file_info : manifest["files"]) {
-                            auto path = file_info.value("path", "");
-                            auto cat = file_info.value("category", "");
-                            auto file_rows = file_info.value("rows", 0);
-                            
-                            if (!path.empty() && fs::exists(path) && !cat.empty()) {
-                                int n = financeDB.importCsv(path, cat);
-                                if (n > 0) rows += n;
-                                fs::remove(path);
-                            }
-                        }
-                    }
-                } catch (const std::exception& e) {
-                    WARN("[FinanceHandler] {} manifest parse failed: {}", sym, e.what());
-                }
-            } else {
-                // 兼容旧版本：按标的精确定位
-                for (const auto& cat : categories) {
-                    auto path = csv_dir + "/" + cat + "/" + sym + ".csv";
-                    if (!fs::exists(path)) continue;
-                    int n = financeDB.importCsv(path, cat);
-                    if (n > 0) rows += n;
-                    fs::remove(path);
-                }
-            }
-            
-            total_rows += rows;
-
-            INFO("[FinanceHandler] {} done: {} rows", sym, rows);
-            SendSSE(sse.get(), "finance_download", {
-                {"status", "symbol_downloaded"}, {"task_id", task_id},
-                {"code", sym}, {"rows", std::to_string(rows)},
-                {"downloaded", std::to_string(processed)}, {"total", total}
-            });
-        }
-
-        SendSSE(sse.get(), "finance_download", {
-            {"status", "done"}, {"task_id", task_id},
-            {"total_rows", std::to_string(total_rows)},
-            {"failed", std::to_string(failed)},
-            {"success", failed == 0 ? "true" : "false"}
-        });
-    }).detach();
+    // 后台执行：下载 → CSV 体检（列名/季末/公告日）→ 分块入库 → DB 级复查 → 补数据
+    _server->SubmitFundamentalDownload(sym_list, categories, start, end, env_name);
 
     nlohmann::json resp;
     resp["status"] = "started";

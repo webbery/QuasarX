@@ -20,6 +20,9 @@
 #include "Handler/ReplayHandler.h"
 #include "HttpHandler.h"
 #include "StrategyNode.h"
+#include "Data/QuoteData.h"
+#include "Data/MarginData.h"
+#include "Data/FundamentalData.h"
 #include "Util/QuoteDB.h"
 #include "Util/DecisionDB.h"
 #include "Util/DuckDBLogger.h"
@@ -99,6 +102,9 @@
 #include "nng/nng.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 #include <boost/algorithm/string.hpp>
+
+// 定义在文件末尾（与邮件发送共用）
+static String ShellQuote(const String& s);
 
 #define THREAD_URL  "inproc://thread"
 #define ERROR_RESPONSE  "not a valid request"
@@ -268,6 +274,11 @@ _defaultPortfolio(1), _timer(nullptr)
 }
 
 Server::~Server() {
+    // 先让数据线程池收尾：刷新任务会写 DuckDB，必须在库关闭之前结束
+    if (_dataPool) {
+        _dataPool->shutdown();
+        _dataPool.reset();
+    }
     if (_exchangeMgr) {
         delete _exchangeMgr;
     }
@@ -539,6 +550,19 @@ void Server::InitDefault() {
             WARN("[InitDefault] Failed to initialize DecisionDB at {}/decisions", db_path);
         }
     }
+
+    // 数据刷新状态（记录每条链路刷到哪个交易日，进程重启后仍能判断要不要补）
+    _refreshState = std::make_unique<RefreshState>(db_path);
+
+    // 数据线程池：worker 数必须压住。
+    // 远程机器只有 2 核，主线程池已经占满 hardware_concurrency 个 worker，
+    // 这里再多开就是几个 python3 抢 CPU。≤4 核固定 1 个（三条链路串行排队），
+    // 更多核才给 2 个。历史上 50+ 并发 python（每个 25~30MB）把 1.6G 的机器
+    // 直接 OOM 掉过，宁可慢也不能再爆。
+    unsigned hc = std::thread::hardware_concurrency();
+    size_t dataWorkers = (hc >= 8) ? 2 : 1;
+    _dataPool = std::make_unique<ThreadPool>(dataWorkers);
+    INFO("[InitDefault] 数据刷新线程池: {} worker(s), 硬件线程 {}", dataWorkers, hc);
 
     if (!_config->HasDefault())
         return;
@@ -1193,7 +1217,6 @@ void Server::Schedules(time_t t) {
     static bool daily_init_done = false;
     // static bool daily_force_done = false;
     static bool yearly_refresh_done = false;
-    static bool retry_fundamental_done = false;
     if (prev_day == -1) {
         prev_day = ltm->tm_wday;
     }
@@ -1202,7 +1225,6 @@ void Server::Schedules(time_t t) {
         daily_init_done = false;
         // daily_force_done = false;
         yearly_refresh_done = false;
-        retry_fundamental_done = false;
         prev_day = ltm->tm_wday;
     }
 
@@ -1259,19 +1281,24 @@ void Server::Schedules(time_t t) {
     //     }
     // }
 
-    // 20:00 更新分红数据（为第二天准备）
-    auto time = _config->GetDailyTime();
-    if (!daily_once && ltm->tm_hour == time.first && ltm->tm_min == time.second) { // 20:00(default) run once
+    // ── 日终任务（到点或过点触发）──
+    //
+    // 触发条件从「正好落在 20:00 这一分钟」改成「到了或过了这个点」：
+    // 5 秒一个 tick，进程在 20:00 那一分钟重启、或者 23:00 才起来，
+    // 以前那一整天的任务就直接丢了。daily_once 在午夜重置，不会重复执行。
+    auto dailyTime = _config->GetDailyTime();
+    bool pastDaily = (ltm->tm_hour > dailyTime.first) ||
+                     (ltm->tm_hour == dailyTime.first && ltm->tm_min >= dailyTime.second);
+    if (!daily_once && pastDaily) {
         daily_once = true;
         LOG("run once script");
         nng_socket sseSock = GetSocket();
 
-        // 增量更新活跃策略行情（upsert：key 匹配则更新，范围外数据保留）
-        if (_strategySystem) {
-            updateActiveStrategiesQuote(false);
-        }
+        // 数据刷新（行情 / 两融 / 基本面）：判据是「目标交易日刷过没有」，
+        // 所以晚启动、昨天失败、20:00 那分钟重启过都会自动补上。
+        RefreshDailyData();
 
-        // 更新分红除权数据（每周日 20:00 触发）：分红数据是历史事实，
+        // 更新分红除权数据（每周日）：分红数据是历史事实，
         //    公告后基本不变，避免每日全量 upsert 触发 DuckDB ART 索引崩溃
         if (ltm->tm_wday == 0 && _strategySystem) {
             Set<String> allSymbols;
@@ -1286,11 +1313,24 @@ void Server::Schedules(time_t t) {
                 String symbolsStr = boost::algorithm::join(allSymbols, ",");
                 INFO("[Schedules] Sunday dividend update: {} symbols from {} strategies",
                      allSymbols.size(), names.size());
-                String cmd = "cd ../tools && " + std::string(PYTHON_CMD) + " fetch_dividend_data.py \""
-                           + symbolsStr + "\" --download --data-dir data";
+
+                // 下载目录必须和导入目录是同一个绝对路径。
+                // 以前写的是 --data-dir data 配 cd ../tools，脚本落在
+                // service/tools/data/dividend/，导入却读 {dbPath}/dividend ——
+                // 结果每周都在导入一批陈年 CSV。
+                String dbPath = _config->GetDatabasePath();
+                String dividendDir =
+                    std::filesystem::absolute(dbPath + "/dividend").string();
+                std::error_code mk_ec;
+                std::filesystem::create_directories(dividendDir, mk_ec);
+
+                String interpreter =
+                    PythonEnv::fromConfig(_config->GetRawConfig()).resolve("");
+                String cmd = "cd ../tools && " + interpreter +
+                             " fetch_dividend_data.py " + ShellQuote(symbolsStr) +
+                             " --download --data-dir " + ShellQuote(dividendDir);
                 String output;
                 bool ok = RunCommand(cmd, output);
-                String dbPath = _config->GetDatabasePath();
 
                 // 下载失败就不导入。此前"无论下载是否成功都尝试导入已有文件"，
                 // 会把目录里遗留的旧 CSV（还包含池外标的）写进 dividend 表，
@@ -1302,14 +1342,15 @@ void Server::Schedules(time_t t) {
                     WARN("[Schedules] fetch_dividend_data.py 执行失败，跳过分红导入与复权重算");
                 } else {
                     // 只导入名单内的标的：目录里可能躺着别的任务留下的 CSV
-                    imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend", allSymbols, &failedFiles);
+                    imported = FinanceDB::instance().importAllDividends(
+                        dividendDir, allSymbols, &failedFiles);
                     if (failedFiles > 0) {
                         WARN("[Schedules] 分红导入有 {} 个文件失败，事件表不完整", failedFiles);
                     }
                 }
 
                 if (!ok) {
-                    String msg = fmt::format("fetch_dividend_data.py 执行失败，已跳过分红导入与复权重算");
+                    String msg = "fetch_dividend_data.py 执行失败，已跳过分红导入与复权重算";
                     WARN("[Schedules] {}", msg);
                     SendSSE(sseSock, "schedule_error", {
                         {"task", "fetch_dividend_data.py"},
@@ -1319,7 +1360,8 @@ void Server::Schedules(time_t t) {
                         {"output", output}
                     });
                 } else if (imported == 0) {
-                    String msg = fmt::format("分红数据下载成功但未导入任何记录（{} 个标的）", allSymbols.size());
+                    String msg = fmt::format("分红数据下载成功但未导入任何记录（{} 个标的）",
+                                             allSymbols.size());
                     WARN("[Schedules] {}", msg);
                     SendSSE(sseSock, "schedule_error", {
                         {"task", "fetch_dividend_data.py"},
@@ -1339,10 +1381,10 @@ void Server::Schedules(time_t t) {
 
         if (prev_day == 6) {
             // every week 6 run once
-            //RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
-            // 每周末更新一次
             String output;
-            bool ok = RunCommand("cd ../tools && " + std::string(PYTHON_CMD) + " run_task.py 3", output);
+            String interpreter =
+                PythonEnv::fromConfig(_config->GetRawConfig()).resolve("");
+            bool ok = RunCommand("cd ../tools && " + interpreter + " run_task.py 3", output);
             if (!ok) {
                 String msg = "run_task.py 3 执行失败";
                 WARN("[Schedules] {}", msg);
@@ -1355,35 +1397,19 @@ void Server::Schedules(time_t t) {
             ReloadMarketData(_config->GetDatabasePath());
         }
 
-        // TODO: run daily forecast with newest data
-        // SendCloseFeatures();
-
-        // 每日 20:00 清理过期数据，防止 DuckDB 无限膨胀
-        // 清理 30 天前的 tick 数据
+        // 每日清理过期数据，防止 DuckDB 无限膨胀
         int64_t tick_cutoff = static_cast<int64_t>(t) - 30 * 86400;
         int64_t tick_deleted = DuckDBLogger::instance().delete_tick_data_before(tick_cutoff);
         if (tick_deleted > 0) {
             INFO("[Schedules] Cleaned {} tick records older than 30 days", tick_deleted);
         }
-        // 清理 90 天前的策略日志
         DuckDBLogger::instance().cleanup_old_logs(90);
-
-        // 两融明细（逐标的融资/融券余额）：每交易日更新。
-        // 放在最后：抓取要联网、耗时 1~3 分钟，失败只记日志不影响上面的日终流程。
-        RefreshMarginData(sseSock);
-        
-        // 基本面数据：每交易日更新。
-        // 使用线程池避免创建过多线程，socket 在线程内部创建。
-        RefreshFundamentalData(sseSock);
     }
-    
-    // 03:00 补下载基本面数据异常
-    // 体检发现的问题（下载失败 / 数据缺失 / 数据滞后）在这里补一次，
-    // 避免 20:00 那次网络抖动导致整天的基本面数据停在旧报告期。
-    if (!retry_fundamental_done && ltm->tm_hour == 3 && ltm->tm_min == 0) {
-        retry_fundamental_done = true;
-        nng_socket sseSock = GetSocket();
-        RetryFundamentalData(sseSock);
+
+    // 03:00 之后补数据：把上一轮体检遗留的异常重新下载
+    // 同样用「到点或过点」而不是「正好 03:00」，进程晚启动也能补。
+    if (ltm->tm_hour >= 3) {
+        RepairDailyData();
     }
 }
 
@@ -1437,391 +1463,411 @@ void Server::RefreshMarginStockList(nng_socket sseSock) {
 }
 
 // 定义在文件下方（与邮件发送共用）
-static String ShellQuote(const String& s);
+// ═══════════════════════════════════════════════════════════
+//  数据刷新：行情 / 两融 / 基本面
+//
+//  三条链路都走 Data/ 下的公共骨架，链路内部顺序固定：
+//    下载 → CSV 级体检 → 分块入库 → DB 级复查 → 补数据
+//    Data/QuoteData        行情
+//    Data/MarginData       两融
+//    Data/FundamentalData  基本面
+//
+//  调度判据不是「到了 20:00 这一分钟」，而是「目标交易日还没刷过」：
+//  昨天失败、进程晚启动、20:00 那分钟重启过，都会在下一个 tick 自动补上。
+// ═══════════════════════════════════════════════════════════
 
-// 从脚本输出里抠出 JSON manifest。
-// 脚本 stdout 只有 JSON，但 RunCommand 把 stderr 也重定向到同一管道，
-// 所以 JSON 前后可能夹着诊断行 —— 取第一个 '{' 到最后一个 '}' 之间的内容。
-static bool ExtractJsonManifest(const String& output, nlohmann::json& out) {
-    auto begin = output.find('{');
-    auto end = output.rfind('}');
-    if (begin == String::npos || end == String::npos || end <= begin) {
-        return false;
+namespace {
+
+// 数据线程池里的任务自己开 socket，不走 GetSocket()。
+// GetSocket() 是 thread_local 且被 ScopedSocket 关掉后不会把 id 归零，
+// 同一 worker 上跑第二个任务就会拿到一个已关闭的 socket。
+ScopedSocket OpenSseSocket() {
+    ScopedSocket sock;
+    Pusher(URI_SERVER_EVENT, sock.get());
+    return sock;
+}
+
+}  // namespace
+
+Vector<symbol_t> Server::CollectStrategySymbols() {
+    Vector<symbol_t> result;
+    if (!_strategySystem) return result;
+
+    Set<symbol_t> seen;
+    for (auto& name : _strategySystem->GetStrategyNames()) {
+        try {
+            for (auto sym : _strategySystem->GetPools(name)) {
+                if (seen.insert(sym).second) {
+                    result.push_back(sym);
+                }
+            }
+        } catch (...) {
+            WARN("[DataRefresh] GetPools({}) failed", name);
+        }
     }
-    try {
-        out = nlohmann::json::parse(output.substr(begin, end - begin + 1));
-        return true;
-    } catch (const std::exception& e) {
-        WARN("[ExtractJsonManifest] parse failed: {}", e.what());
-        return false;
+    return result;
+}
+
+bool Server::DispatchDataJob(const String& key, std::function<void()> job) {
+    if (!_dataPool) return false;
+    {
+        std::lock_guard<std::mutex> lock(_dataInflightMtx);
+        if (_dataInflight.count(key) > 0) {
+            return false;   // 已经在跑，别重复派发
+        }
+        _dataInflight.insert(key);
+    }
+
+    _dataPool->submit([this, key, job = std::move(job)]() {
+        try {
+            job();
+        } catch (const std::exception& e) {
+            WARN("[DataRefresh] {} 异常: {}", key, e.what());
+        } catch (...) {
+            WARN("[DataRefresh] {} 未知异常", key);
+        }
+        std::lock_guard<std::mutex> lock(_dataInflightMtx);
+        _dataInflight.erase(key);
+    });
+    return true;
+}
+
+void Server::SubmitDataJob(
+        const String& key, const String& event,
+        Map<String, String> started,
+        std::function<Map<String, String>(const DataJobResult&)> finished,
+        std::function<DataJobResult()> run) {
+    auto job = [this, key, event,
+                started = std::move(started),
+                finished = std::move(finished),
+                run = std::move(run)]() {
+        // 数据线程池的 worker 是共享的，socket 必须在本线程创建并随任务关闭
+        ScopedSocket sse = OpenSseSocket();
+        if (!started.empty()) {
+            SendSSE(sse.get(), event, started);
+        }
+
+        DataJobResult result;
+        try {
+            result = run();
+        } catch (const std::exception& e) {
+            result.rows = -1;
+            result.error = e.what();
+            WARN("[DataJob] {} 异常: {}", key, e.what());
+        } catch (...) {
+            result.rows = -1;
+            result.error = "unknown exception";
+            WARN("[DataJob] {} 未知异常", key);
+        }
+
+        if (finished) {
+            SendSSE(sse.get(), event, finished(result));
+        }
+    };
+
+    if (!DispatchDataJob(key, std::move(job))) {
+        WARN("[DataJob] {} 已在运行，忽略重复提交", key);
     }
 }
 
-int Server::ImportMarginDetailCsvs(const nlohmann::json& manifest, String& error) {
-    auto& financeDB = FinanceDB::instance();
+int Server::DownloadQuoteData(const Vector<symbol_t>& symbols, const String& freq,
+                              bool overwrite, const String& env) {
+    String dbPath = _config->GetDatabasePath();
+    String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve(env);
 
-    // manifest["files"] 是本次要导入的 CSV 列表（每个交易所一个文件）。
-    // 老版本脚本只给 "file" 单数，兼容一下。
-    Vector<String> csvPaths;
-    if (manifest.contains("files") && manifest["files"].is_array()) {
-        for (const auto& f : manifest["files"]) {
-            if (f.is_string()) {
-                String p = f.get<String>();
-                if (!p.empty()) csvPaths.push_back(p);
+    QuoteData data(interpreter, freq);
+    data.SetSymbols(symbols);
+    data.SetOverwrite(overwrite);
+
+    DataPipeline pipeline(data);
+    return pipeline.Run(dbPath + "/quote");
+}
+
+void Server::SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
+                                 bool overwrite, const String& env) {
+    SubmitDataJob(
+        "download:" + freq, "quote_download",
+        {
+            {"status", "started"},
+            {"freq", freq},
+            {"total", std::to_string(symbols.size())}
+        },
+        [freq](const DataJobResult& r) -> Map<String, String> {
+            const bool ok = r.rows >= 0;
+            return {
+                {"status", ok ? "done" : "failed"},
+                {"freq", freq},
+                {"total_rows", std::to_string(r.rows)},
+                {"success", ok ? "true" : "false"}
+            };
+        },
+        [this, symbols, freq, overwrite, env]() -> DataJobResult {
+            return {DownloadQuoteData(symbols, freq, overwrite, env), 0, {}};
+        });
+}
+
+void Server::SubmitMarginDownload(const String& date, const String& env) {
+    const String shownDate = date.empty() ? "latest" : date;
+    SubmitDataJob(
+        "margin:" + shownDate, "margin_download",
+        {
+            {"status", "started"},
+            {"date", shownDate}
+        },
+        [](const DataJobResult& r) -> Map<String, String> {
+            if (r.rows < 0) {
+                return {{"status", "failed"}, {"error", r.error}};
             }
-        }
-    }
-    if (csvPaths.empty()) {
-        String p = manifest.value("file", "");
-        if (!p.empty()) csvPaths.push_back(p);
-    }
-    if (csvPaths.empty()) {
-        error = "manifest 里没有 CSV 文件路径";
-        return -1;
-    }
+            return {{"status", "completed"}, {"rows", std::to_string(r.rows)}};
+        },
+        [this, date, env]() -> DataJobResult {
+            String error;
+            int n = DownloadMarginData(date, env, error);
+            return {n, 0, error};
+        });
+}
 
-    int imported = 0;
-    for (const auto& p : csvPaths) {
-        std::error_code fs_ec;
-        if (!std::filesystem::exists(p, fs_ec)) {
-            WARN("[ImportMarginDetailCsvs] CSV 不存在，跳过: {}", p);
-            continue;
-        }
-        int n = financeDB.importCsv(p, "margin_daily");
-        if (n < 0) {
-            error = fmt::format("导入失败: {}", p);
-            return -1;
-        }
-        imported += n;
-        // 文件名带交易所后缀（detail_<date>.sh.csv），日志里一眼能看出这批是哪个所
-        INFO("[ImportMarginDetailCsvs] 已导入 {} 行两融明细（{}）",
-             n, std::filesystem::path(p).filename().string());
-    }
-    INFO("[ImportMarginDetailCsvs] 交易日 {} 合计导入 {} 行，{} 个文件",
-         manifest.value("date", "?"), imported, csvPaths.size());
-    return imported;
+void Server::SubmitFundamentalDownload(const Vector<symbol_t>& symbols,
+                                       const Vector<DataCategory>& categories,
+                                       const String& start, const String& end,
+                                       const String& env) {
+    SubmitDataJob(
+        "fundamental", "fundamental_refresh",
+        {},   // 基本面任务本来就不发 started 事件
+        [](const DataJobResult& r) -> Map<String, String> {
+            return {
+                {"status", r.rows >= 0 ? "completed" : "error"},
+                {"imported", std::to_string(r.rows)},
+                {"issues", std::to_string(r.issues)}
+            };
+        },
+        [this, symbols, categories, start, end, env]() -> DataJobResult {
+            String dbPath = _config->GetDatabasePath();
+            String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve(env);
+
+            FundamentalData data(dbPath + "/finance", interpreter);
+            data.SetSymbols(symbols);
+            if (!categories.empty()) {
+                data.SetCategories(categories);
+            }
+            data.SetWindow(start, end);
+
+            DataPipeline pipeline(data);
+            int n = pipeline.Run(dbPath + "/finance");
+            return {n, pipeline.issues().size(), {}};
+        });
 }
 
 int Server::DownloadMarginData(const String& date, const String& env, String& error) {
-    auto& financeDB = FinanceDB::instance();
+    String dbPath = _config->GetDatabasePath();
+    String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve(env);
 
-    // FinanceDB 是懒初始化的（各消费方自己 init），这里必须自己确保打开过
-    if (!financeDB.isInitialized() &&
-        !financeDB.init(_config->GetDatabasePath() + "/finance", "finance.db")) {
-        error = "FinanceDB init failed";
-        return -1;
-    }
-
-    // CSV 目录用绝对路径：脚本写入与服务端导入必须落在同一个目录
-    // （db_path 是相对路径，脚本被 cd 到 ../tools 执行，相对路径会跑偏）
-    String marginDir =
-        std::filesystem::absolute(_config->GetDatabasePath() + "/margin").string();
-    std::error_code mk_ec;
-    std::filesystem::create_directories(marginDir, mk_ec);
-
-    // 解释器走配置里的 python 段（与 DividendHandler / MLHandler 同一套解析）
-    auto pyEnv = PythonEnv::fromConfig(_config->GetRawConfig());
-    String interpreter = pyEnv.resolve(env);
-
-    String cmd = "cd ../tools && " + interpreter + " fetch_margin_data.py";
+    MarginData data(dbPath + "/finance", interpreter);
     if (!date.empty()) {
-        cmd += " --date " + ShellQuote(date);
-    }
-    cmd += " --out-dir " + ShellQuote(marginDir);
-
-    INFO("[DownloadMarginData] 拉取两融明细（全市场，交易所接口没有逐标的查询的口子）: {}",
-         cmd);
-
-    String output;
-    bool runOk = RunCommand(cmd, output);
-
-    nlohmann::json manifest;
-    bool parsed = ExtractJsonManifest(output, manifest);
-    int rows = manifest.value("rows", 0);
-
-    if (!parsed || rows <= 0) {
-        error = fmt::format("抓取失败（runOk={} parsed={} rows={}）：{}",
-                            runOk, parsed, rows,
-                            manifest.value("error", output.substr(0, 200)));
-        return -1;
+        data.SetTargetDay(date);
     }
 
-    // 部分数据源失败：CSV 里只有成功部分的数据，照常入库，缺口在日志里说明
-    if (!manifest.value("fetch_ok", true)) {
-        WARN("[DownloadMarginData] 部分数据源失败，本次仅入库 {} 行：{}",
-             rows, manifest.value("error", ""));
+    DataPipeline pipeline(data);
+    int n = pipeline.Run(dbPath + "/margin");
+    if (n < 0) {
+        error = "两融明细抓取或入库失败";
     }
-
-    // 走通用类目通道：类目决定表结构，ON CONFLICT 保证重跑幂等
-    int imported = ImportMarginDetailCsvs(manifest, error);
-    if (imported < 0) return -1;
-
-    // 滚动清理 30 天前的 CSV（约 450KB/日，留一个月足够排查）
-    //
-    // 判据用**文件修改时间**，不是文件名里的交易日。回补历史时文件名里的日期
-    // 可能是一两年前（detail_20220104.csv），但文件是刚写出来的，还得留着给
-    // 补齐脚本复用 —— 少一个交易所时只重下那一个即可，不必把另一家也重拉一遍。
-    // 按文件名日期删会把刚写好的文件立刻删掉，导致每次补齐都变成全量重下。
-    const int kKeepDays = 30;
-    int removed = 0;
-    std::error_code it_ec;
-    for (auto& entry : std::filesystem::directory_iterator(marginDir, it_ec)) {
-        if (it_ec) break;
-        if (!entry.is_regular_file()) continue;
-        String filename = entry.path().filename().string();
-        if (filename.rfind("detail_", 0) != 0) continue;
-        if (filename.size() < 12 + 4) continue;
-        if (filename.compare(filename.size() - 4, 4, ".csv") != 0) continue;
-
-        std::error_code lmt_ec;
-        auto mtime = std::filesystem::last_write_time(entry.path(), lmt_ec);
-        if (lmt_ec) continue;
-        int64_t ageDays = std::chrono::duration_cast<std::chrono::hours>(
-                              std::filesystem::file_time_type::clock::now() - mtime)
-                              .count() / 24;
-        if (ageDays <= kKeepDays) continue;
-
-        std::error_code rm_ec;
-        if (std::filesystem::remove(entry.path(), rm_ec)) {
-            removed++;
-        }
-    }
-    if (removed > 0) {
-        INFO("[DownloadMarginData] 清理 {} 天未修改的两融 CSV: {} 个", kKeepDays, removed);
-    }
-
-    return imported;
+    return n;
 }
 
-void Server::RefreshMarginData(nng_socket sseSock) {
-    String error;
-    int imported = DownloadMarginData("", "", error);
-    if (imported < 0) {
-        String msg = "两融明细更新失败：" + error;
-        WARN("[RefreshMarginData] {}", msg);
-        SendSSE(sseSock, "schedule_error", {
-            {"task", "fetch_margin_data.py"},
-            {"message", msg}
-        });
-        // 按当前策略：失败只记日志，不发邮件
+void Server::RunQuoteRefresh(const String& targetDay) {
+    String dbPath = _config->GetDatabasePath();
+    String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve("");
+    String quoteDir = dbPath + "/quote";
+
+    Vector<symbol_t> symbols = CollectStrategySymbols();
+    if (symbols.empty()) {
+        WARN("[DataRefresh] 没有策略池标的，跳过行情刷新");
         return;
     }
-    INFO("[RefreshMarginData] 两融明细更新完成，{} 行", imported);
+
+    ScopedSocket sse = OpenSseSocket();
+
+    // 逐个频率串行跑：一台机器同时拉起多个 python3 下载进程的代价
+    // 远大于并行省下的那点时间（历史上有过 OOM）。
+    static const char* kFreqs[] = {"daily", "5m", "15m", "30m", "60m"};
+    bool allOk = true;
+
+    for (const char* freq : kFreqs) {
+        QuoteData data(interpreter, freq);
+        data.SetSymbols(symbols);
+        data.SetEndDate(targetDay);
+
+        DataPipeline pipeline(data);
+        int n = pipeline.Run(quoteDir);
+
+        INFO("[DataRefresh] 行情 {} 完成: 导入 {} 行, 异常 {} 条",
+             freq, n, pipeline.issues().size());
+
+        SendSSE(sse.get(), "quote_download", {
+            {"status", n >= 0 ? "completed" : "error"},
+            {"freq", freq},
+            {"imported", std::to_string(n)},
+            {"issues", std::to_string(pipeline.issues().size())}
+        });
+
+        if (n < 0) allOk = false;
+    }
+
+    if (allOk) {
+        _refreshState->MarkDone("quote", targetDay);
+    } else {
+        SendSSE(sse.get(), "schedule_error", {
+            {"task", "download_quote_bs.py"},
+            {"message", "行情刷新有频率失败，下一轮会重试"},
+            {"date", targetDay}
+        });
+    }
 }
 
-void Server::RefreshFundamentalData(nng_socket sseSock) {
-    // 提交到线程池，避免创建过多线程
-    QuasarX::ThreadPool::instance().submit([this]() {
-        // 在线程中创建新的 socket（socket 不能跨线程使用）
-        nng_socket threadSock = GetSocket();
-        
-        INFO("[RefreshFundamentalData] 开始刷新基本面数据");
-        
-        try {
-            // 1. 收集策略池标的
-            std::vector<std::string> symbols;
-            if (_strategySystem) {
-                auto names = _strategySystem->GetStrategyNames();
-                for (auto& name : names) {
-                    try {
-                        for (auto sym : _strategySystem->GetPools(name)) {
-                            std::string symbol = get_symbol(sym);
-                            if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) {
-                                symbols.push_back(symbol);
-                            }
-                        }
-                    } catch (...) {
-                        WARN("[RefreshFundamentalData] GetPools({}) failed", name);
-                    }
-                }
-            }
+void Server::RunMarginRefresh(const String& targetDay) {
+    String dbPath = _config->GetDatabasePath();
+    String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve("");
 
-            if (symbols.empty()) {
-                WARN("[RefreshFundamentalData] 没有策略或策略池为空");
-                return;
-            }
+    MarginData data(dbPath + "/finance", interpreter);
+    data.SetTargetDay(targetDay);
 
-            INFO("[RefreshFundamentalData] 收集到 {} 个标的", symbols.size());
+    DataPipeline pipeline(data);
+    int n = pipeline.Run(dbPath + "/margin");
 
-            // 2. 确定要下载的类目（按覆盖率自适应）
-            std::vector<std::string> categories = {"profit", "operation", "growth", "balance", "cashflow", "dupont"};
+    ScopedSocket sse = OpenSseSocket();
+    if (n >= 0) {
+        _refreshState->MarkDone("margin", targetDay);
+        SendSSE(sse.get(), "margin_refresh", {
+            {"status", "completed"},
+            {"date", targetDay},
+            {"imported", std::to_string(n)},
+            {"issues", std::to_string(pipeline.issues().size())}
+        });
+    } else {
+        SendSSE(sse.get(), "schedule_error", {
+            {"task", "fetch_margin_data.py"},
+            {"message", "两融明细刷新失败，下一轮会重试"},
+            {"date", targetDay}
+        });
+    }
+}
 
-            // 3. 确定下载窗口（最近一个季度）
-            auto now = std::chrono::system_clock::now();
-            auto time_t_now = std::chrono::system_clock::to_time_t(now);
-            std::tm tm_now;
+void Server::RunFundamentalRefresh(const String& targetDay) {
+    String dbPath = _config->GetDatabasePath();
+    String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve("");
+
+    Vector<symbol_t> symbols = CollectStrategySymbols();
+    if (symbols.empty()) {
+        WARN("[DataRefresh] 没有策略池标的，跳过基本面刷新");
+        return;
+    }
+
+    // 下载窗口用「年 + 季度」，与 fetch_finance_data.py 的 --start/--end 语义对齐。
+    // 以前传的是完整日期（2026-07-01），脚本靠 split('-')[0] 侥幸取到年份，
+    // 而 download_category 根本不按 statDate 过滤 —— 实际是把整年四个季度全拉下来。
+    time_t now = Now();
+    std::tm tm{};
 #ifdef _WIN32
-            localtime_s(&tm_now, &time_t_now);
+    localtime_s(&tm, &now);
 #else
-            localtime_r(&time_t_now, &tm_now);
+    localtime_r(&now, &tm);
 #endif
-            int year = tm_now.tm_year + 1900;
-            int month = tm_now.tm_mon + 1;
+    int year = tm.tm_year + 1900;
+    int quarter = (tm.tm_mon) / 3 + 1;   // tm_mon 0-based
+    String startYq = fmt::format("{}-Q{}", year, quarter);
 
-            // 确定最近一个季度
-            int quarter;
-            if (month <= 3) {
-                quarter = 4;
-                year -= 1;
-            } else if (month <= 6) {
-                quarter = 1;
-            } else if (month <= 9) {
-                quarter = 2;
-            } else {
-                quarter = 3;
+    FundamentalData data(dbPath + "/finance", interpreter);
+    data.SetSymbols(symbols);
+    data.SetWindow(startYq, startYq);
+
+    DataPipeline pipeline(data);
+    int n = pipeline.Run(dbPath + "/finance");
+
+    ScopedSocket sse = OpenSseSocket();
+    if (n >= 0) {
+        _refreshState->MarkDone("fundamental", targetDay);
+        SendSSE(sse.get(), "fundamental_refresh", {
+            {"status", "completed"},
+            {"imported", std::to_string(n)},
+            {"issues", std::to_string(pipeline.issues().size())}
+        });
+    } else {
+        SendSSE(sse.get(), "schedule_error", {
+            {"task", "fetch_finance_data.py"},
+            {"message", "基本面刷新失败，下一轮会重试"}
+        });
+    }
+}
+
+void Server::RefreshDailyData() {
+    if (!_refreshState || !_dataPool) return;
+
+    const String target = DataPipeline::TargetTradingDay();
+
+    if (_refreshState->NeedRefresh("quote", target)) {
+        DispatchDataJob("quote", [this, target]() { RunQuoteRefresh(target); });
+    }
+    if (_refreshState->NeedRefresh("margin", target)) {
+        DispatchDataJob("margin", [this, target]() { RunMarginRefresh(target); });
+    }
+    if (_refreshState->NeedRefresh("fundamental", target)) {
+        DispatchDataJob("fundamental", [this, target]() { RunFundamentalRefresh(target); });
+    }
+}
+
+void Server::RunDataRepair(const String& targetDay) {
+    String dbPath = _config->GetDatabasePath();
+    String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve("");
+    ScopedSocket sse = OpenSseSocket();
+
+    // 行情：每个频率各补一次（异常清单里的分类别能区分频率）
+    {
+        static const char* kFreqs[] = {"daily", "5m", "15m", "30m", "60m"};
+        for (const char* freq : kFreqs) {
+            QuoteData data(interpreter, freq);
+            DataPipeline pipeline(data);
+            int n = pipeline.Repair(dbPath + "/quote");
+            if (n > 0) {
+                INFO("[DataRefresh] 行情 {} 补数据: {} 行", freq, n);
             }
-
-            std::string start_date = fmt::format("{}-{:02d}-01", year, (quarter - 1) * 3 + 1);
-            std::string end_date = ToString(time_t_now, "%Y-%m-%d");
-
-            INFO("[RefreshFundamentalData] 下载窗口: {} ~ {}", start_date, end_date);
-
-            // 4. 下载数据
-            auto& financeDB = FinanceDB::instance();
-            std::string db_path = _config->GetDatabasePath() + "/finance";
-
-            int total_downloaded = 0;
-            int total_failed = 0;
-
-            for (const auto& category : categories) {
-                INFO("[RefreshFundamentalData] 下载类目: {}", category);
-
-                for (const auto& symbol : symbols) {
-                    String csv_path;
-                    bool ok = DownloadFundamentalCsv(
-                        symbol, category, start_date, end_date,
-                        PythonEnv::fromConfig(_config->GetRawConfig()).resolve(""),
-                        db_path, csv_path);
-
-                    if (!ok) {
-                        WARN("[RefreshFundamentalData] 下载失败: {} {}", symbol, category);
-                        total_failed++;
-                        continue;
-                    }
-
-                    // 导入 CSV
-                    if (!csv_path.empty() && std::filesystem::exists(csv_path)) {
-                        int imported = financeDB.importCsv(csv_path, category);
-                        if (imported > 0) {
-                            total_downloaded += imported;
-                            std::filesystem::remove(csv_path);
-                        } else {
-                            WARN("[RefreshFundamentalData] 导入失败: {}", csv_path);
-                            total_failed++;
-                        }
-                    }
-                }
-            }
-
-            INFO("[RefreshFundamentalData] 完成: 导入 {} 行, 失败 {} 次", total_downloaded, total_failed);
-
-            SendSSE(threadSock, "fundamental_refresh", {
-                {"status", "completed"},
-                {"imported", std::to_string(total_downloaded)},
-                {"failed", std::to_string(total_failed)}
-            });
-
-        } catch (const std::exception& e) {
-            WARN("[RefreshFundamentalData] 异常: {}", e.what());
-            SendSSE(threadSock, "fundamental_refresh", {
-                {"status", "error"},
-                {"message", e.what()}
-            });
         }
+    }
+
+    // 两融：整日重抓
+    {
+        MarginData data(dbPath + "/finance", interpreter);
+        data.SetTargetDay(targetDay);
+        DataPipeline pipeline(data);
+        pipeline.Repair(dbPath + "/margin");
+    }
+
+    // 基本面：按 (标的, 类目) 补
+    {
+        FundamentalData data(dbPath + "/finance", interpreter);
+        data.SetSymbols(CollectStrategySymbols());
+        DataPipeline pipeline(data);
+        pipeline.Repair(dbPath + "/finance");
+    }
+
+    SendSSE(sse.get(), "data_repair", {
+        {"status", "completed"},
+        {"date", targetDay}
     });
 }
 
-void Server::RetryFundamentalData(nng_socket sseSock) {
-    // 提交到线程池
-    QuasarX::ThreadPool::instance().submit([this]() {
-        nng_socket threadSock = GetSocket();
-        
-        INFO("[RetryFundamentalData] 开始补下载基本面数据");
+void Server::RepairDailyData() {
+    if (!_refreshState || !_dataPool) return;
 
-        try {
-            // 1. 取出异常清单
-            auto issues = TakeDataIssues();
-            if (issues.empty()) {
-                INFO("[RetryFundamentalData] 没有需要补下载的数据");
-                return;
-            }
+    const String target = DataPipeline::TargetTradingDay();
+    if (!_refreshState->NeedRefresh("repair", target)) return;
 
-            INFO("[RetryFundamentalData] 发现 {} 条异常", issues.size());
-
-            // 2. 按 (symbol, category) 分组
-            std::map<std::pair<std::string, std::string>, std::vector<DataCheckIssue>> grouped;
-            for (auto& issue : issues) {
-                if (issue._type != DataCheckType::Fundamental) continue;
-                auto key = std::make_pair(issue._symbol, String(check_category_name(issue._category)));
-                grouped[key].push_back(issue);
-            }
-
-            // 3. 逐组补下载
-            auto& financeDB = FinanceDB::instance();
-            std::string db_path = _config->GetDatabasePath() + "/finance";
-
-            int total_downloaded = 0;
-            int total_failed = 0;
-
-            for (auto& [key, issue_list] : grouped) {
-                const std::string& symbol = key.first;
-                const std::string& category = key.second;
-
-                INFO("[RetryFundamentalData] 补下载: {} {}", symbol, category);
-
-                // 确定下载窗口（取异常中最晚的日期）
-                std::string start_date;
-                for (auto& issue : issue_list) {
-                    if (issue._date > start_date) {
-                        start_date = issue._date;
-                    }
-                }
-
-                auto now = std::chrono::system_clock::now();
-                auto time_t_now = std::chrono::system_clock::to_time_t(now);
-                std::string end_date = ToString(time_t_now, "%Y-%m-%d");
-
-                String csv_path;
-                bool ok = DownloadFundamentalCsv(
-                    symbol, category, start_date, end_date,
-                    PythonEnv::fromConfig(_config->GetRawConfig()).resolve(""),
-                    db_path, csv_path);
-
-                if (!ok) {
-                    WARN("[RetryFundamentalData] 下载失败: {} {}", symbol, category);
-                    total_failed++;
-                    continue;
-                }
-
-                // 导入 CSV
-                if (!csv_path.empty() && std::filesystem::exists(csv_path)) {
-                    int imported = financeDB.importCsv(csv_path, category);
-                    if (imported > 0) {
-                        total_downloaded += imported;
-                        std::filesystem::remove(csv_path);
-                    } else {
-                        WARN("[RetryFundamentalData] 导入失败: {}", csv_path);
-                        total_failed++;
-                    }
-                }
-            }
-
-            INFO("[RetryFundamentalData] 完成: 导入 {} 行, 失败 {} 次", total_downloaded, total_failed);
-
-            SendSSE(threadSock, "fundamental_retry", {
-                {"status", "completed"},
-                {"imported", std::to_string(total_downloaded)},
-                {"failed", std::to_string(total_failed)}
-            });
-
-        } catch (const std::exception& e) {
-            WARN("[RetryFundamentalData] 异常: {}", e.what());
-            SendSSE(threadSock, "fundamental_retry", {
-                {"status", "error"},
-                {"message", e.what()}
-            });
-        }
-    });
+    if (DispatchDataJob("repair", [this, target]() {
+            RunDataRepair(target);
+            _refreshState->MarkDone("repair", target);
+        })) {
+        INFO("[DataRefresh] 开始补数据，目标交易日 {}", target);
+    }
 }
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {
@@ -1856,148 +1902,6 @@ DataFrequencyType DataFrequencyTypeFromString(const char* s) {
     return DataFrequencyType::Day;
 }
 
-namespace {
-// 20:00 调度支持的下载频率集合（baostock 数据源覆盖范围）
-const std::vector<DataFrequencyType> kScheduleFreqs = {
-    DataFrequencyType::Day,
-    DataFrequencyType::Min5,
-    DataFrequencyType::Min15,
-    DataFrequencyType::Min30,
-    DataFrequencyType::Min60,
-};
-
-// 字符串日期 YYYY-MM-DD
-String dateString(time_t t) {
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
-                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-    return String(buf);
-}
-
-// 取 YYYY-MM-DD 部分（end_time 形如 "2026-09-02 15:00:00"）
-String dateOnly(const String& dt) {
-    auto pos = dt.find(' ');
-    return (pos == String::npos) ? dt : dt.substr(0, pos);
-}
-}  // namespace
-
-void Server::updateActiveStrategiesQuote(bool overwrite) {
-    auto now = Now();
-    String today = dateString(now);
-
-    // 1. 收集所有活跃策略的标的池（按 asset_type 分桶）
-    if (!_strategySystem) {
-        WARN("[Schedules] updateActiveStrategiesQuote: strategySystem is null");
-        return;
-    }
-    auto names = _strategySystem->GetStrategyNames();
-    if (names.empty()) {
-        INFO("[Schedules] updateActiveStrategiesQuote: no active strategies");
-        return;
-    }
-
-    std::map<std::string, std::set<std::string>> buckets;   // asset_type → internal-symbols
-    for (auto& name : names) {
-        try {
-            auto pools = _strategySystem->GetPools(name);
-            for (auto sym : pools) {
-                String internal = get_symbol(sym);
-                const char* asset = is_etf(sym) ? "etf" : "stock";
-                buckets[asset].insert(internal);
-            }
-        } catch (...) {
-            WARN("[Schedules] updateActiveStrategiesQuote: GetPools({}) failed", name);
-        }
-    }
-
-    // 2. 确保 QuoteDB 已初始化
-    auto dbPath = _config->GetDatabasePath();
-    String quoteDir = dbPath + "/quote";
-    auto& quoteDB = QuoteDB::instance();
-    if (!quoteDB.isInitialized()) {
-        if (!quoteDB.init(quoteDir, "quote.db")) {
-            WARN("[Schedules] updateActiveStrategiesQuote: QuoteDB init failed");
-            return;
-        }
-    }
-
-    // 3. 对每个 (asset_type, freq) 表 → 增量下载
-    int totalGroups = 0, skippedEmpty = 0;
-    auto pyEnv = PythonEnv::fromConfig(_config->GetRawConfig());
-    std::string interpreter = pyEnv.resolve("");
-    for (auto& [assetType, symbols] : buckets) {
-        for (auto freq : kScheduleFreqs) {
-            const char* freqStr = DataFrequencyTypeToString(freq);
-            String table = QuoteDB::tableName(assetType, freqStr);
-            auto ranges = quoteDB.getSymbolTimeRanges(table);
-
-            // 已有 end_time → 复用为起点；未在表里的 symbol → 走全量
-            // overwrite=true: 跳过"已最新"检查，所有标的走全量下载 + 覆盖导入
-            std::map<String, std::vector<std::string>> groups;   // end_date → symbols
-            std::vector<std::string> fullReload;                 // 不在表里 → 走 max-history
-            for (auto& sym : symbols) {
-                auto it = std::find_if(ranges.begin(), ranges.end(),
-                    [&](const QuoteDB::SymbolTimeRange& r) {
-                        return get_symbol(r.symbol) == sym;
-                    });
-                if (it == ranges.end()) {
-                    fullReload.push_back(sym);
-                } else if (overwrite) {
-                    // 覆盖模式：无视 endDate，强制全量重下载
-                    fullReload.push_back(sym);
-                } else {
-                    String endDate = dateOnly(it->end_time);
-                    if (endDate >= today) continue;  // 已最新
-                    groups[endDate].push_back(sym);
-                }
-            }
-
-            // 表里没数据的 symbol 合并到 end_time=1970 组（走全量）
-            if (!fullReload.empty()) {
-                groups["1970-01-01"].insert(groups["1970-01-01"].end(),
-                                            fullReload.begin(), fullReload.end());
-            }
-
-            if (groups.empty()) {
-                ++skippedEmpty;
-                continue;
-            }
-
-            for (auto& [endDate, syms] : groups) {
-                // 拼接 symbols 为外部格式 600000.SH
-                String symsJoined;
-                for (auto& s : syms) {
-                    if (!symsJoined.empty()) symsJoined += ",";
-                    symsJoined += s;
-                }
-
-                String start = endDate;  // YYYY-MM-DD 或 1970-01-01
-                INFO("[Schedules] updateActiveStrategiesQuote: {}/{} start={} symbols={}",
-                     assetType, freqStr, start, syms.size());
-
-                std::vector<QuoteDownloadHandler::DownloadGroup> dgroups;
-                QuoteDownloadHandler::DownloadGroup g;
-                g.asset_type = assetType;
-                g.symbols_str = symsJoined;
-                g.symbols = std::vector<std::string>(syms.begin(), syms.end());
-                dgroups.push_back(std::move(g));
-
-                QuoteDownloadHandler::runDownloadJob(dgroups, freqStr,
-                                                    start, today, interpreter, quoteDir, overwrite);
-                ++totalGroups;
-            }
-        }
-    }
-
-    INFO("[Schedules] updateActiveStrategiesQuote: {} groups dispatched, {} (asset,freq) skipped",
-         totalGroups, skippedEmpty);
-}
 
 int Server::GetMaxPrepareCount() {
     auto& schemas = _config->GetSchemas();

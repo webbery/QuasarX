@@ -64,6 +64,20 @@ public:
     /// 用于前端首页展示（数据到哪天、每天多少行）。
     nlohmann::json queryCategoryOverview(const String& table, int recent_days = 30);
 
+    /// 类目表的入库体检：行数 / 标的数 / 日期范围 / 每列 NULL 数 /
+    /// pub_date 缺失或早于 stat_date 的行数 / stat_date 不在季末的行数。
+    /// 表不存在时返回带 "error" 的对象（不抛异常）。
+    nlohmann::json queryCategoryHealth(const String& table);
+
+    /// 某个类目期望的 CSV 表头列名（按 CATEGORY_DEFS 的顺序）。
+    /// 体检时用它比对下载到的 CSV —— 列名对不上就说明数据源改了格式。
+    static Vector<String> categoryCsvColumns(const String& category);
+
+    /// 统计类目表里满足条件的行数（入库体检用）。
+    /// `where` 是 SQL WHERE 子句表达式，只由服务端代码拼出，不接受用户输入。
+    /// 执行失败返回 -1。
+    int64_t countWhere(const String& table, const String& where);
+
     /// 删除某次分红事件（按 symbol + ex_dividend_date 唯一定位）
     bool deleteDividendEvent(const String& symbol, const String& ex_date);
 
@@ -142,7 +156,13 @@ public:
 
     Vector<DividendEvent> getDividendEvents(const String& symbol);
 
-    int recalcSymbolAdjPrices(const String& symbol, const Vector<DividendEvent>& events);
+    /// 按分红事件重算 stock_1d 的 adj_*（后复权累乘因子）
+    ///
+    /// start_time / end_time 为空表示不限。给定时只读取并写回该区间内的 bar：
+    /// 区间外的事件仍参与因子计算，其 prev_close 用 (symbol, datetime) 索引
+    /// 单点取出 —— 增量复查尾部时没必要把整段历史读一遍、再逐行 UPDATE 一遍。
+    int recalcSymbolAdjPrices(const String& symbol, const Vector<DividendEvent>& events,
+                              const String& start_time = "", const String& end_time = "");
 
     nlohmann::json recalcAllAdjPrices();
 

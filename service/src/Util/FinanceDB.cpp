@@ -1,4 +1,5 @@
 #include "Util/FinanceDB.h"
+#include <cmath>
 #include "Util/QuoteDB.h"
 #include "Util/system.h"
 #include "Util/log.h"
@@ -20,6 +21,18 @@ struct CategoryDef {
     Vector<std::pair<String, String>> field_map;
 };
 
+// 类目字段表：CSV 列名 → DB 列名
+//
+// ★ CSV 列名必须与 baostock 实际返回的表头逐字一致 ★
+// importCsv 是按列名精确匹配的，对不上就静默写 NULL —— 一张列全空的表
+// 比导入失败更难发现。以前这里写成 ASTurnRatio / debtToAsset /
+// netCashFlowAct 这些名字，而 baostock 实际给的是 AssetTurnRatio /
+// liabilityToAsset / CFOToOR，于是 operation/balance/cashflow/dupont
+// 四类共 12 个列永久为 NULL（cashflow 那 7 个列名 baostock 根本不存在）。
+//
+// DB 列名保持原有命名（脚本里写 "category.field" 引用的就是它），
+// 只有 cashflow / dupont 改成 baostock 真实字段的对应名 —— 原来的
+// net_cf_act / dupont_equity_multiplier 从来没被填上过值，也没有脚本引用。
 static const std::map<String, CategoryDef> CATEGORY_DEFS = {
     {"profit", {
         "盈利能力",
@@ -42,7 +55,7 @@ static const std::map<String, CategoryDef> CATEGORY_DEFS = {
             {"INVTurnRatio", "inv_turn_ratio"},
             {"INVTurnDays", "inv_turn_days"},
             {"CATurnRatio", "ca_turn_ratio"},
-            {"ASTurnRatio", "as_turn_ratio"},
+            {"AssetTurnRatio", "as_turn_ratio"},
         },
     }},
     {"growth", {
@@ -61,28 +74,39 @@ static const std::map<String, CategoryDef> CATEGORY_DEFS = {
             {"currentRatio", "current_ratio"},
             {"quickRatio", "quick_ratio"},
             {"cashRatio", "cash_ratio"},
-            {"debtToAsset", "debt_to_asset"},
+            {"YOYLiability", "yoy_liability"},
+            {"liabilityToAsset", "debt_to_asset"},
+            {"assetToEquity", "asset_to_equity"},
         },
     }},
-    {"cashflow", {
-        "现金流量",
+    // baostock 的现金流量接口只给比率，没有绝对金额
+    // （没有经营活动现金流净额、没有营业收入、没有税金及附加）。
+    {
+        "cashflow",
         {
-            {"netProfit", "net_profit_cf"},
-            {"salesService", "sales_service"},
-            {"taxSurcharge", "tax_surcharge"},
-            {"cashPayAcquire", "cash_pay_acquire"},
-            {"netCashFlowAct", "net_cf_act"},
-            {"netCashFlowInv", "net_cf_inv"},
-            {"netCashFlowFin", "net_cf_fin"},
+            "现金流量",
+            {
+                {"CAToAsset", "ca_to_asset"},
+                {"NCAToAsset", "nca_to_asset"},
+                {"tangibleAssetToAsset", "tangible_asset_to_asset"},
+                {"ebitToInterest", "ebit_to_interest"},
+                {"CFOToOR", "cfo_to_or"},
+                {"CFOToNP", "cfo_to_np"},
+                {"CFOToGr", "cfo_to_gr"},
+            },
         },
-    }},
+    },
     {"dupont", {
         "杜邦分析",
         {
             {"dupontROE", "dupont_roe"},
-            {"dupontNetProfit", "dupont_net_profit"},
+            {"dupontAssetStoEquity", "dupont_asset_sto_equity"},
             {"dupontAssetTurn", "dupont_asset_turn"},
-            {"dupontEquityMultiplier", "dupont_equity_multiplier"},
+            {"dupontPnitoni", "dupont_pnitoni"},
+            {"dupontNitogr", "dupont_nitogr"},
+            {"dupontTaxBurden", "dupont_tax_burden"},
+            {"dupontIntburden", "dupont_intburden"},
+            {"dupontEbittogr", "dupont_ebittogr"},
         },
     }},
     // 融资融券明细（日频，交易日粒度）。数据由 tools/fetch_margin_data.py 产出，
@@ -134,6 +158,36 @@ FinanceDB::categoryFields(const String& category) {
     static const Vector<std::pair<String, String>> empty;
     auto it = CATEGORY_DEFS.find(category);
     return it != CATEGORY_DEFS.end() ? it->second.field_map : empty;
+}
+
+Vector<String> FinanceDB::categoryCsvColumns(const String& category) {
+    Vector<String> cols;
+    for (const auto& [csv_col, db_col] : categoryFields(category)) {
+        cols.push_back(csv_col);
+    }
+    return cols;
+}
+
+int64_t FinanceDB::countWhere(const String& table, const String& where) {
+    if (!isInitialized() || !isValidCategory(table)) {
+        return -1;
+    }
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    String sql = fmt::format("SELECT COUNT(*) FROM {}{}{}",
+                             table,
+                             where.empty() ? "" : " WHERE ",
+                             where);
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        SPDLOG_ERROR("[FinanceDB] countWhere failed ({}): {}", sql, err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return -1;
+    }
+    int64_t n = (duckdb_row_count(&res) > 0) ? duckdb_value_int64(&res, 0, 0) : -1;
+    duckdb_destroy_result(&res);
+    return n;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -195,6 +249,14 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
     }
 
     std::lock_guard<std::recursive_mutex> lock(mtx());
+    // 没初始化就没有连接，duckdb_query 会拿到空句柄。
+    // 以前这条路径没做检查（调用方 RefreshFundamentalData 直接调 importCsv），
+    // 结果基本面刷新静默全灭 —— 表没建、没数据，日志里也只有一行 WARN。
+    if (!isInitialized()) {
+        SPDLOG_ERROR("[FinanceDB] importCsv: FinanceDB not initialized, skip {}/{}",
+                     category, csv_path);
+        return -1;
+    }
     ensureTable(category);
 
     std::ifstream ifs(csv_path);
@@ -252,6 +314,27 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
         return -1;
     }
 
+    // 表头里缺的期望列：整个列会全是 NULL。先说清楚，别让「列名写错」变成
+    // 一张空列的表（以前 ASTurnRatio / debtToAsset / cashflow 那批列就是这么
+    // 永久 NULL 掉的，没人发现）。
+    if (!field_col_idx.empty()) {
+        Vector<String> missing;
+        for (const auto& [csv_col, db_col] : field_map) {
+            if (field_col_idx.find(db_col) == field_col_idx.end()) {
+                missing.push_back(csv_col);
+            }
+        }
+        if (!missing.empty()) {
+            String m;
+            for (size_t i = 0; i < missing.size(); i++) {
+                if (i > 0) m += ", ";
+                m += missing[i];
+            }
+            SPDLOG_WARN("[FinanceDB] {} 的 CSV 缺少期望列 [{}]，这些列会全部为 NULL: {}",
+                        category, m, csv_path);
+        }
+    }
+
     // ── 阶段 2：解析数据行 ──
     struct Row {
         int64_t symbol;
@@ -262,6 +345,7 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
     };
     Vector<Row> rows;
     rows.reserve(64);
+    int skipped = 0;
 
     String line;
     while (std::getline(ifs, line)) {
@@ -278,17 +362,28 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
         if (col_code >= 0 && col_code < static_cast<int>(cols.size())) {
             r.symbol = encodeSymbol(toInternalSymbol(cols[col_code]));
         } else {
+            skipped++;
             continue;
         }
         // stat_date
         if (col_stat < static_cast<int>(cols.size())) {
             r.stat_date = cols[col_stat];
         } else {
+            skipped++;
+            continue;
+        }
+        // 日期格式必须是 YYYY-MM-DD：格式不对的行直接跳过，不要让 DuckDB 的
+        // 类型转换错误把整个文件打回（以前一行坏数据就废掉整批）。
+        if (!IsYmdDate(r.stat_date)) {
+            skipped++;
             continue;
         }
         // pub_date
         if (col_pub >= 0 && col_pub < static_cast<int>(cols.size())) {
             r.pub_date = cols[col_pub];
+        }
+        if (!r.pub_date.empty() && !IsYmdDate(r.pub_date)) {
+            r.pub_date.clear();
         }
 
         // 各字段值
@@ -302,8 +397,12 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
                 const auto& val_str = cols[idx_it->second];
                 if (!val_str.empty()) {
                     try {
-                        r.values[fi] = std::stod(val_str);
-                        r.valid[fi] = true;
+                        double v = std::stod(val_str);
+                        // nan / inf 拼进 SQL 会变成裸 token，语句直接解析失败
+                        if (std::isfinite(v)) {
+                            r.values[fi] = v;
+                            r.valid[fi] = true;
+                        }
                     } catch (...) {
                         // 空值或无效值，保持 0 + false
                     }
@@ -314,56 +413,70 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
     }
     ifs.close();
 
+    if (skipped > 0) {
+        SPDLOG_WARN("[FinanceDB] {} 跳过 {} 行格式不合法的数据", csv_path, skipped);
+    }
     if (rows.empty()) {
         SPDLOG_WARN("[FinanceDB] No valid rows in {}", csv_path);
         return 0;
     }
 
-    // ── 阶段 3：构建批量 INSERT SQL ──
-    String sql;
-    sql.reserve(rows.size() * 256 + 512);
+    // ── 阶段 3：分块构建批量 INSERT SQL ──
+    //
+    // 单条 INSERT 不能超过 ~500 行：超过之后 DuckDB 的 ART 索引在高频
+    // ON CONFLICT upsert 下会损坏，而损坏是不可修复的（必须删库重建）。
+    // 两融明细每天约 3750 行，正好踩在这条线上，所以这里必须分块。
+    // 所有块在同一个事务里，失败一起回滚。
+    const size_t CHUNK_SIZE = 500;
 
-    // INSERT INTO {category} (symbol, stat_date, pub_date, field1, field2, ...) VALUES
-    sql += fmt::format("INSERT INTO {} (symbol, stat_date, pub_date", category);
+    String insert_head = fmt::format("INSERT INTO {} (symbol, stat_date, pub_date", category);
     for (const auto& [csv_col, db_col] : field_map) {
-        sql += ", " + db_col;
+        insert_head += ", " + db_col;
     }
-    sql += ") VALUES ";
+    insert_head += ") VALUES ";
 
-    for (size_t i = 0; i < rows.size(); i++) {
-        const auto& r = rows[i];
-        if (i > 0) sql += ", ";
-
-        sql += fmt::format("({},'{}','{}'", r.symbol, r.stat_date, r.pub_date);
-        for (size_t fi = 0; fi < field_map.size(); fi++) {
-            if (r.valid[fi]) {
-                sql += fmt::format(",{:.6f}", r.values[fi]);
-            } else {
-                sql += ",NULL";
-            }
-        }
-        sql += ")";
-    }
-
-    // ON CONFLICT upsert
-    sql += " ON CONFLICT(symbol, stat_date) DO UPDATE SET pub_date=excluded.pub_date";
+    String upsert_tail = " ON CONFLICT(symbol, stat_date) DO UPDATE SET pub_date=excluded.pub_date";
     for (const auto& [csv_col, db_col] : field_map) {
-        sql += fmt::format(",{}=excluded.{}", db_col, db_col);
+        upsert_tail += fmt::format(",{}=excluded.{}", db_col, db_col);
     }
 
     // ── 阶段 4：执行 ──
     exec("BEGIN TRANSACTION");
-    duckdb_result result;
-    duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
-    if (state != DuckDBSuccess) {
-        const char* err = duckdb_result_error(&result);
-        SPDLOG_ERROR("[FinanceDB] Batch insert failed for {} ({}): {}",
-                     category, csv_path, err ? err : "unknown");
+    for (size_t start = 0; start < rows.size(); start += CHUNK_SIZE) {
+        size_t end = std::min(start + CHUNK_SIZE, rows.size());
+
+        String sql;
+        sql.reserve((end - start) * 256 + 512);
+        sql += insert_head;
+
+        for (size_t i = start; i < end; i++) {
+            const auto& r = rows[i];
+            if (i > start) sql += ", ";
+
+            sql += fmt::format("({},'{}','{}'", r.symbol, r.stat_date, r.pub_date);
+            for (size_t fi = 0; fi < field_map.size(); fi++) {
+                if (r.valid[fi]) {
+                    sql += fmt::format(",{:.6f}", r.values[fi]);
+                } else {
+                    sql += ",NULL";
+                }
+            }
+            sql += ")";
+        }
+        sql += upsert_tail;
+
+        duckdb_result result;
+        duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
+        if (state != DuckDBSuccess) {
+            const char* err = duckdb_result_error(&result);
+            SPDLOG_ERROR("[FinanceDB] Batch insert failed for {} ({} rows {}~{}): {}",
+                         category, csv_path, start, end, err ? err : "unknown");
+            duckdb_destroy_result(&result);
+            exec("ROLLBACK");
+            return -1;
+        }
         duckdb_destroy_result(&result);
-        exec("ROLLBACK");
-        return -1;
     }
-    duckdb_destroy_result(&result);
     exec("COMMIT");
 
     int count = static_cast<int>(rows.size());
@@ -660,6 +773,78 @@ nlohmann::json FinanceDB::queryCategoryOverview(const String& table, int recent_
         }
         duckdb_destroy_result(&res);
     }
+
+    return result;
+}
+
+// 类目表的入库体检
+//
+// 回答四个问题：
+//   1. 这张表在不在、行数与标的数、最新报告期到哪天
+//   2. 每列有多少 NULL（列名写错 → 整列 NULL，这里能直接看出来）
+//   3. pub_date 有多少行缺失或早于 stat_date（公告日早于报告期 = 时间穿越）
+//   4. stat_date 有多少行不是季末（不是季末说明抓错了报告期）
+nlohmann::json FinanceDB::queryCategoryHealth(const String& table) {
+    nlohmann::json result;
+    result["table"] = table;
+
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+    if (!isValidCategory(table)) {
+        result["error"] = fmt::format("Unknown table: {}", table);
+        return result;
+    }
+
+    const auto& fields = categoryFields(table);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    // ── 总量 / 日期范围 / 日期合法性 ──
+    String sql = fmt::format(
+        "SELECT COUNT(*), COUNT(DISTINCT symbol), "
+        "strftime(MIN(stat_date), '%Y-%m-%d'), strftime(MAX(stat_date), '%Y-%m-%d'), "
+        "SUM(CASE WHEN pub_date IS NULL THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN pub_date < stat_date THEN 1 ELSE 0 END), "
+        // 注意用单个 %：fmt::format 只处理 {}，不会把 %% 还原成 %，
+        // 写成 %%m 会让 DuckDB 的 strftime 输出字面量 %m 而不是月份。
+        "SUM(CASE WHEN strftime('%m-%d', stat_date) NOT IN "
+        "('03-31','06-30','09-30','12-31') THEN 1 ELSE 0 END) "
+        "FROM {}", table);
+
+    for (const auto& [csv_col, db_col] : fields) {
+        sql += fmt::format(", SUM(CASE WHEN {} IS NULL THEN 1 ELSE 0 END)", db_col);
+    }
+
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return result;
+    }
+    if (duckdb_row_count(&res) > 0) {
+        int64_t rows = duckdb_value_int64(&res, 0, 0);
+        result["rows"] = rows;
+        result["symbols"] = duckdb_value_int64(&res, 1, 0);
+        char* first = duckdb_value_varchar(&res, 2, 0);
+        char* last = duckdb_value_varchar(&res, 3, 0);
+        result["start_date"] = first ? first : "";
+        result["latest_date"] = last ? last : "";
+        if (first) duckdb_free(first);
+        if (last) duckdb_free(last);
+        result["pub_date_missing"] = duckdb_value_int64(&res, 4, 0);
+        result["pub_date_before_stat"] = duckdb_value_int64(&res, 5, 0);
+        result["stat_date_not_quarter_end"] = duckdb_value_int64(&res, 6, 0);
+
+        // 每列的 NULL 数
+        result["null_counts"] = nlohmann::json::object();
+        for (size_t i = 0; i < fields.size(); i++) {
+            const auto& [csv_col, db_col] = fields[i];
+            result["null_counts"][db_col] = duckdb_value_int64(&res, 7 + i, 0);
+        }
+    }
+    duckdb_destroy_result(&res);
 
     return result;
 }
@@ -1371,7 +1556,8 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
     return result;
 }
 
-int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<DividendEvent>& events) {
+int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<DividendEvent>& events,
+                                     const String& start_time, const String& end_time) {
 
     if (!isInitialized()) {
         SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: not initialized");
@@ -1397,9 +1583,15 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<Dividend
     Vector<RawBar> raw_bars;
 
     {
+        // 停牌 bar（ext bit0）不参与重算：那天没有成交，价格可能是 0/空，
+        // 既不该写 adj_*，也不能拿来当其它事件的 prev_close。
         String read_sql = fmt::format(
             "SELECT epoch(datetime), open, close, high, low "
-            "FROM stock_1d WHERE symbol = {} ORDER BY datetime ASC", sym);
+            "FROM stock_1d WHERE symbol = {} AND (ext & 1) = 0", sym);
+        // 增量复查只读本次重写过的区间；不传区间时保持原来的全历史重算
+        if (!start_time.empty()) read_sql += fmt::format(" AND datetime >= '{}'", start_time);
+        if (!end_time.empty())   read_sql += fmt::format(" AND datetime <= '{}'", end_time);
+        read_sql += " ORDER BY datetime ASC";
 
         auto& qdb = QuoteDB::instance();
         std::lock_guard<std::recursive_mutex> qlock(qdb.mtx());
@@ -1412,7 +1604,9 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<Dividend
         }
 
         idx_t n = duckdb_row_count(&res);
-        SPDLOG_INFO("[FinanceDB] recalc: SELECT returned {} rows, sym_encoded={}", n, sym);
+        SPDLOG_INFO("[FinanceDB] recalc: SELECT returned {} rows, sym_encoded={}, range=[{}, {}]",
+                    n, sym, start_time.empty() ? "-inf" : start_time,
+                    end_time.empty() ? "+inf" : end_time);
         if (n == 0) {
             duckdb_destroy_result(&res);
             return 0;
@@ -1433,18 +1627,42 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<Dividend
 
     idx_t n = raw_bars.size();
 
-    // 3. 对每个事件，找到 ex_date 之前最近一根 bar 的 close 作为 prev_close
+    // 3. 对每个事件，找到 ex_date 之前最近一根 bar 的 close 作为 prev_close。
+    //    只读区间时，区间前的 bar 不在 raw_bars 里，所以统一走
+    //    (symbol, datetime) 索引单点查询 —— 取数口径与全区间扫描一致，
+    //    成本是每事件一次索引查找，远小于为增量复查读一遍整段历史。
     Vector<double> prev_closes(events.size(), 0.0);
-    for (size_t i = 0; i < events.size(); i++) {
-        for (idx_t j = 0; j < n; j++) {
-            if (raw_bars[j].datetime < events[i].ex_dividend_date) {
-                prev_closes[i] = raw_bars[j].close;
-            } else {
-                break;
+    {
+        auto& qdb = QuoteDB::instance();
+        std::lock_guard<std::recursive_mutex> qlock(qdb.mtx());
+        for (size_t i = 0; i < events.size(); i++) {
+            char timebuf[32];
+            struct tm tm_val;
+            time_t t = events[i].ex_dividend_date;
+#ifdef _WIN32
+            gmtime_s(&tm_val, &t);
+#else
+            gmtime_r(&t, &tm_val);
+#endif
+            strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
+
+            String sql = fmt::format(
+                "SELECT close FROM stock_1d WHERE symbol = {} AND (ext & 1) = 0 "
+                "AND datetime < '{}' ORDER BY datetime DESC LIMIT 1", sym, timebuf);
+            duckdb_result res;
+            if (duckdb_query(qdb.conn(), sql.c_str(), &res) != DuckDBSuccess) {
+                SPDLOG_ERROR("[FinanceDB] recalc: prev_close query failed: {}",
+                             duckdb_result_error(&res));
+                duckdb_destroy_result(&res);
+                continue;
             }
+            if (duckdb_row_count(&res) > 0) {
+                prev_closes[i] = duckdb_value_double(&res, 0, 0);
+            }
+            duckdb_destroy_result(&res);
+            SPDLOG_INFO("[FinanceDB] recalc: event[{}] ex_date={} prev_close={}",
+                         i, static_cast<int64_t>(events[i].ex_dividend_date), prev_closes[i]);
         }
-        SPDLOG_INFO("[FinanceDB] recalc: event[{}] ex_date={} prev_close={}",
-                     i, static_cast<int64_t>(events[i].ex_dividend_date), prev_closes[i]);
     }
 
     // 4. 为每根 bar 计算累乘因子

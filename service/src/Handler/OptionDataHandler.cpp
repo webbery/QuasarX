@@ -1,11 +1,11 @@
 #include "Handler/OptionDataHandler.h"
 #include "Util/OptionDataDB.h"
 #include "Util/PythonRunner.h"
+#include "Util/ThreadPool.h"
 #include "Util/data.h"
 #include "Util/system.h"
 #include "server.h"
 #include <filesystem>
-#include <thread>
 #include <set>
 #include <algorithm>
 #include <chrono>
@@ -142,8 +142,8 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
     auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(env_name);
 
-    // 后台线程: 按品种循环 (失败跳过, 不中断)
-    std::thread([exchange, products, start_date, end_date, interpreter, csv_dir, db_path]() {
+    // 提交到线程池: 按品种循环 (失败跳过, 不中断)
+    ThreadPool::instance().submit([this, exchange, products, start_date, end_date, interpreter, csv_dir, db_path]() {
         SetCurrentThreadName("OptionDataDownload");
         // SSE socket 必须在当前工作线程创建并关闭
         ScopedSocket sse(Server::GetSocket());
@@ -287,10 +287,11 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
 
                 INFO("[OptionDataHandler] 下载标的 ETF: {} (标的={})", etf_sym, prod);
 
-                auto r = DownloadAndImportSymbol(
-                    etf_sym, "daily", start_date, end_date, interpreter, quote_dir);
+                // 走公共链路：下载 → CSV 体检 → 分块入库 → DB 级复查
+                int etf_rows = _server->DownloadQuoteData(
+                    {to_symbol(toInternalSymbol(etf_sym))}, "daily", false, "");
 
-                if (!r.download_ok) {
+                if (etf_rows < 0) {
                     SendSSE(sse.get(), "option_data_download", {
                         {"status", "etf_download_failed"},
                         {"product", prod},
@@ -299,13 +300,13 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                     continue;
                 }
 
-                if (r.import_ok && r.imported > 0) {
-                    etf_rows_total += r.imported;
+                if (etf_rows > 0) {
+                    etf_rows_total += etf_rows;
                     SendSSE(sse.get(), "option_data_download", {
                         {"status", "etf_imported"},
                         {"product", prod},
                         {"etf_symbol", etf_sym},
-                        {"rows", std::to_string(r.imported)}
+                        {"rows", std::to_string(etf_rows)}
                     });
                 }
             }
@@ -324,7 +325,7 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
             {"total_rows", std::to_string(total_imported)},
             {"etf_rows", std::to_string(etf_rows_total)}
         });
-    }).detach();
+    });
 
     nlohmann::json resp;
     resp["status"] = "started";

@@ -7,7 +7,7 @@
  * 数据落 FinanceDB 的 margin_daily 表（类目通道，字段口径见
  * tools/fetch_margin_data.py 与 FinanceDB::CATEGORY_DEFS["margin_daily"]）。
  *
- * POST   /v0/margin  — 下载并导入（后台线程，SSE 推 "margin_download" 进度）
+ * POST   /v0/margin  — 下载并导入（提交到 Server 数据线程池，SSE 推 "margin_download" 进度）
  *                      body（可空）:
  *                        {"date": "20261110"}   指定交易日，缺省取最近有数据的交易日
  *                        {"env":  "py311"}      python 环境名（配置的 python.environments）

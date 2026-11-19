@@ -20,6 +20,7 @@
         "test_macro",
         "test_quote_finance",
         "test_dividend_adj",
+        "test_data_pipeline",
         "test_node_unit",
         "test_formula_math",
         "test_multi_freq",
