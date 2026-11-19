@@ -608,7 +608,7 @@ class TestLedgerPersistence:
 
         assert on_disk["allocated"] == pytest.approx(entry["allocated"])
         assert on_disk["cash"] == pytest.approx(entry["cash"], rel=1e-9, abs=1e-6)
-        assert on_disk["borrowedCash"] == pytest.approx(entry["borrowedCash"])
+        assert on_disk["credit"]["borrowedCash"] == pytest.approx(entry["borrowedCash"])
 
         disk_pos = on_disk["positions"][SYMBOL]
         api_pos = _position_of(entry, SYMBOL)
