@@ -12,7 +12,7 @@
  * 5. **LLM 不生产产物** —— 产物由工具层产出，LLM 只拿到一段文本摘要。
  */
 
-import type { UiSpec } from '@/lib/charts/types'
+import type { UiSpec } from '@/lib/ui/protocol'
 
 /* ============================================================================
  * 类型登记

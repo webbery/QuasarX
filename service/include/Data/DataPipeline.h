@@ -51,12 +51,32 @@ private:
 /// 异常清单是全局的：Run 结束后本轮的问题进队列，UpdateData 从队列里取回
 /// 本类型的部分重试，仍失败的放回队列。凌晨 03:00 的 Repair() 走同一条路径，
 /// 补的是上一轮遗留的问题。
+/// 下载链路的阶段（进度上报用）
+///
+/// 用枚举而不是字符串：阶段集合是封闭的（下载/体检/入库/重试），
+/// 字符串一旦拼错，只会在前端静默匹配不上、进度条永远停在第一格；
+/// 枚举在编译期就能挡住。
+enum class DataStage : uint8_t {
+    Download,   ///< 拉取数据（阻塞式 Python 调用，最耗时）
+    Check,      ///< CSV 级体检
+    Import,     ///< 入库（末尾含 DB 级复查）
+    Retry,      ///< 对体检发现的问题立刻重下重试
+};
+
 class DataPipeline {
 public:
+    /// 阶段回调：进入每个阶段时调用一次。
+    ///
+    /// 只报阶段、不报条目数 —— 下载是 `_data.Download()` 里的一次阻塞式 Python 调用，
+    /// 要拿到逐标的进度得先把 `RunCommand` 改成流式读子进程 stdout。
+    /// 在此之前，进度条能如实反映的就是「走到第几个阶段」。
+    using StageCallback = std::function<void(DataStage stage)>;
+
     explicit DataPipeline(DownloadBase& data) : _data(data) {}
 
     /// 跑完整条链路。返回导入行数（<0 失败，0 无数据）
-    int Run(const String& dst);
+    /// onStage 可为空（不需要进度上报的调用方，如凌晨补数据）。
+    int Run(const String& dst, const StageCallback& onStage = nullptr);
 
     /// 只跑补数据：把队列里本类型的遗留问题重下重试。
     /// dst 是这条链路的数据根目录（补数据时还没跑过 Download，得先告诉它落哪）

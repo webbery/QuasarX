@@ -20,6 +20,14 @@ export interface ActionContext {
   sessionId: string
   /** 事件回调：动作执行过程可以继续往前端推事件 */
   emit?: (event: AgentEvent) => void
+  /**
+   * 追加一个产物到触发本动作的消息。
+   *
+   * 用途：阻塞型动作（回测）先推一张进度卡再执行 —— 等 handler 返回才建卡，
+   * 用户在整段耗时里看不到任何反馈。产物的 binding 要用「点击时已知」的字段
+   * 做 match（回测的 run_id 调用方拿不到，只能按策略名）。
+   */
+  emitArtifact?: (artifact: ArtifactEnvelope) => void
 }
 
 export interface ActionResult {

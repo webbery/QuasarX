@@ -102,4 +102,15 @@ export { AGENT_TOOL_CONFIG, AGENT_SYSTEM_PROMPTS } from "./types"
 export { internalTools, INTERNAL_TOOL_AGENT_MAP } from "./internalTools"
 
 // Agent Node Creation
-export { getToolsForAgent, createAgentNode } from "./agents"
+export { getResidentToolsForAgent, createAgentNode } from "./agents"
+
+// 工具目录与统一检索（渐进式披露）
+export {
+  ToolCatalog,
+  buildToolCatalog,
+  getToolCatalog,
+  tokenizeQuery,
+  type ToolCatalogEntry,
+  type ToolCatalogMatch,
+} from "./toolCatalog"
+export { createSearchTool, type SearchToolDeps } from "./searchTool"

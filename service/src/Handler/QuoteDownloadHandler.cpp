@@ -69,10 +69,12 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     }
 
     // 异步执行：下载 → CSV 体检 → 分块入库 → DB 级复查 → 补数据
-    _server->SubmitQuoteDownload(parsed, freq, overwrite, env_name);
+    // job_id 回给调用方，前端用它把后续 SSE 进度事件关联到同一条任务
+    const String jobId = _server->SubmitQuoteDownload(parsed, freq, overwrite, env_name);
 
     nlohmann::json resp;
     resp["status"] = "started";
+    resp["job_id"] = jobId;
     resp["freq"] = freq;
     resp["table_stock"] = QuoteDB::tableName("stock", freq);
     resp["table_etf"] = QuoteDB::tableName("etf", freq);

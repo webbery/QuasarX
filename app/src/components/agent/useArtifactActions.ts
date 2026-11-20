@@ -12,8 +12,20 @@ import { useChatStore } from '@/stores/chatStore'
 export function useArtifactActions(
   artifact: Ref<ArtifactEnvelope | undefined>,
   onSuccess?: (action: ArtifactAction) => void,
+  /** 产物所属消息 id —— 动作产出的新产物要挂回同一条消息 */
+  messageId?: Ref<string | undefined>,
 ) {
   const chatStore = useChatStore()
+
+  /** 把产物挂到触发本动作的消息上（拿不到消息 id 就落到当前叶子） */
+  function attachToMessage(art: ArtifactEnvelope) {
+    const id = messageId?.value ?? chatStore.currentLeafId ?? undefined
+    if (!id) {
+      console.warn('[ArtifactAction] 没有可挂载的消息，产物被丢弃:', art.title)
+      return
+    }
+    chatStore.attachArtifact(id, art)
+  }
 
   const actionState = reactive<Record<string, 'idle' | 'pending' | 'done'>>({})
   const resultMessage = ref('')
@@ -45,9 +57,13 @@ export function useArtifactActions(
     const ctx: ActionContext = {
       artifact: a,
       sessionId: chatStore.currentSession?.id ?? 'default',
+      emitArtifact: attachToMessage,
     }
 
     const result = await runAction(action, ctx)
+
+    // 动作可以产出新产物（「形成产物链」）—— 之前这里把它丢掉了
+    if (result.artifact) attachToMessage(result.artifact)
 
     actionState[action.id] = result.ok ? 'done' : 'idle'
     resultMessage.value = result.message ? `${result.ok ? '✓' : '✕'} ${result.message}` : ''

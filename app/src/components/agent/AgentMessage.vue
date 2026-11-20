@@ -52,6 +52,7 @@
             v-for="artifact in artifacts"
             :key="artifact.id"
             :artifact="artifact"
+            :message-id="message.id"
           />
         </div>
 

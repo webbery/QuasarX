@@ -83,11 +83,16 @@ String DataPipeline::TargetTradingDay() {
     return LastSettledTradingDay(Now());
 }
 
-int DataPipeline::Run(const String& dst) {
+int DataPipeline::Run(const String& dst, const StageCallback& onStage) {
     const DataType type = _data.Type();
     _data.ClearIssues();
 
+    const auto stage = [&onStage](DataStage s) {
+        if (onStage) onStage(s);
+    };
+
     // ── 1. 下载 ──
+    stage(DataStage::Download);
     int dl = _data.Download(dst);
     if (dl < 0) {
         _data.AddIssue(DataCategory::Day, null_symbol(), "", DataReason::Missing);
@@ -97,15 +102,18 @@ int DataPipeline::Run(const String& dst) {
     }
 
     // ── 2. CSV 级体检 ──
+    stage(DataStage::Check);
     _data.Check();
 
     // ── 3. 导入（好的入库，坏的跳过；末尾做 DB 级复查）──
+    stage(DataStage::Import);
     int imported = _data.ImportData();
 
     // ── 4. 本轮问题进队列 ──
     DownloadBase::RecordIssues(_data.Issues());
 
     // ── 5. 立刻重试一次 ──
+    stage(DataStage::Retry);
     int retried = _data.UpdateData();
 
     INFO("[Pipeline] type={} 完成: 下载 {} 个, 导入 {} 行, 重试修复 {} 项, 遗留问题 {} 条",

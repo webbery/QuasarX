@@ -16,7 +16,8 @@
  */
 
 import { registerAction } from './actionRegistry'
-import type { PatchArtifact } from './artifacts'
+import { makeArtifact, type PatchArtifact } from './artifacts'
+import { UI_SPEC_VERSION, type UiSpec } from '@/lib/ui/protocol'
 import { applyStrategyUpdate } from '@/lib/tools/strategy'
 import { useStrategyControl } from '@/composables/useStrategyControl'
 import { useBacktestControl } from '@/composables/useBacktestControl'
@@ -100,7 +101,7 @@ export function ensureAgentActionsRegistered(): void {
   })
 
   /* ---------- 执行回测 ---------- */
-  registerAction('run_backtest', async (action) => {
+  registerAction('run_backtest', async (action, ctx) => {
     const strategyId = action.params?.strategyId as string | undefined
     const versionId = action.params?.versionId as string | undefined
     const strategyName = action.params?.strategyName as string | undefined
@@ -121,11 +122,41 @@ export function ensureAgentActionsRegistered(): void {
       return { ok: false, message: `版本 ${versionId} 没有可回测的策略图` }
     }
 
+    // 「策略名 + 时间戳」做本次回测的唯一标识：
+    // 后端把 script.id 原样回灌到 backtest_progress 的 strategy 字段，
+    // 前端据此把事件关联到这一次点击。不能用 strategyId ——
+    // 同一策略连续回测时两次的进度会串到同一张卡上。
+    const runKey = `${strategyName || strategyId || 'backtest'}@${Date.now()}`
+
+    // 先出进度卡，再阻塞执行 —— 回测是分钟级，等 handler 返回才建卡用户全程看不到反馈
+    const title = `回测进度 · ${strategyName ?? strategyId ?? '策略'}`
+    const spec: UiSpec = {
+      version: UI_SPEC_VERSION,
+      type: 'progress',
+      title,
+      subtitle: `版本 ${versionId}`,
+      params: {},
+      data: { status: 'running', label: '准备回测…' },
+      binding: {
+        kind: 'sse',
+        event: 'backtest_progress',
+        match: { strategy: runKey },
+      },
+    }
+    ctx.emitArtifact?.(
+      makeArtifact('ui', title, spec, {
+        subtitle: `版本 ${versionId}`,
+        source: `backtest · ${runKey}`,
+        ui: { height: 150, collapsible: false },
+      }),
+    )
+
     const result = await useBacktestControl().run({
       script: flowData,
       versionId,
       strategyId,
       strategyName,
+      runKey,
     })
     return { ok: result.success, message: result.message }
   })

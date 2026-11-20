@@ -101,8 +101,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onUnmounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getUiType, mergeParams } from '@/lib/charts/registry'
+import sseService from '@/ts/SSEService'
+import { isTerminalEvent, matchesBinding } from '@/lib/ui/protocol'
 import { getResolver } from '@/lib/charts/resolvers'
 import { exportCsv, exportPng } from '@/lib/charts/export'
 import type { UiControlDef, UiSpec } from '@/lib/charts/types'
@@ -117,6 +119,8 @@ const props = withDefaults(
     artifact?: ArtifactEnvelope
     density?: ArtifactDensity
     height?: number
+    /** 所属消息 id —— 产物里的动作产出的新产物要挂回同一条消息 */
+    messageId?: string
   }>(),
   { density: 'full' },
 )
@@ -175,6 +179,50 @@ const effectiveHeight = computed(() => {
   return props.height ?? hints?.height ?? 300
 })
 
+/* ---------- 实时绑定（inbound） ---------- */
+
+/**
+ * 按 spec.binding 订阅服务端事件，用类型定义的 reducer 合并进 data。
+ *
+ * 先 replay 再 subscribe：POST 返回 → 工具造产物 → 事件流渲染 → 组件挂载，
+ * started/progress 大概率已经发过了，不回放的话卡片会停在初始态。
+ */
+let unsubscribeBinding: (() => void) | null = null
+
+function stopBinding() {
+  unsubscribeBinding?.()
+  unsubscribeBinding = null
+}
+
+function startBinding() {
+  stopBinding()
+
+  const binding = props.spec.binding
+  const reducer = typeDef.value?.reducer
+  if (!binding || binding.kind !== 'sse' || !reducer) return
+
+  const apply = (payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return
+    const event = payload as Record<string, unknown>
+    if (!matchesBinding(binding, event)) return
+
+    data.value = reducer(data.value, event)
+
+    // 两种终态信号都认：事件自带 status 字段（stopOn），或 reducer 把 data.status
+    // 收敛到 done/failed（回测这类没有 status 字段的链路，只能从文案里认）
+    const status = (data.value as { status?: unknown }).status
+    if (isTerminalEvent(binding, event) || status === 'done' || status === 'failed') {
+      stopBinding()
+    }
+  }
+
+  sseService.replay(binding.event, apply)
+  unsubscribeBinding = sseService.onEvent(binding.event, apply)
+}
+
+onMounted(startBinding)
+onUnmounted(stopBinding)
+
 /* ---------- 导出 ---------- */
 
 const bodyRef = ref<HTMLElement | null>(null)
@@ -202,7 +250,12 @@ function onExportCsv() {
 /* ---------- 产物动作 ---------- */
 
 const artifactRef = computed(() => props.artifact)
-const { actionState, resultMessage, actions, execute } = useArtifactActions(artifactRef)
+const messageIdRef = computed(() => props.messageId)
+const { actionState, resultMessage, actions, execute } = useArtifactActions(
+  artifactRef,
+  undefined,
+  messageIdRef,
+)
 
 /* ---------- 参数变化 ---------- */
 
@@ -291,6 +344,7 @@ watch(
     resolveError.value = ''
     maximized.value = false
     densityRef.value = props.density ?? 'full'
+    startBinding()
   },
 )
 
@@ -303,6 +357,7 @@ const iconClass = computed(() => {
     matrix: 'fas fa-table-cells',
     table: 'fas fa-table',
     metric: 'fas fa-gauge-high',
+    progress: 'fas fa-bars-progress',
   }
   return map[props.spec.type] ?? 'fas fa-cube'
 })

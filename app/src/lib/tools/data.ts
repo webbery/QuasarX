@@ -12,6 +12,8 @@
 import { tool } from "@langchain/core/tools"
 import { z } from "zod"
 import { applyAuthHeader, getAuthToken } from "./common/auth"
+import { makeArtifact, type ToolArtifactResult } from "@/lib/agent/artifacts"
+import { UI_SPEC_VERSION, type UiSpec } from "@/lib/ui/protocol"
 
 const BASE_URL = "/v0"
 
@@ -93,11 +95,51 @@ export const dataTool = tool(
             ...(end ? { end } : {}),
           })
           const data = res.data ?? {}
-          const lines = [`**行情下载已触发** — 标的: ${symbols}，频率: ${freq ?? "daily"}`]
+          const freqLabel = freq ?? "daily"
+          const jobId = typeof data.job_id === "string" ? data.job_id : ""
+          const total = (data.stock_count ?? 0) + (data.etf_count ?? 0)
+
+          const lines = [`**行情下载已触发** — 标的: ${symbols}，频率: ${freqLabel}`]
           lines.push(`  - 股票 → ${data.table_stock}: ${data.stock_count ?? 0} 个标的`)
           lines.push(`  - ETF → ${data.table_etf}: ${data.etf_count ?? 0} 个标的`)
-          lines.push("\n数据在后台异步下载，可通过 list_tables 查看进度。")
-          return lines.join("\n")
+          lines.push(
+            jobId
+              ? "\n进度在对话里的进度卡上实时更新；也可以事后用 list_tables 核对结果。"
+              : "\n数据在后台异步下载（服务端未返回 job_id，无法订阅进度），可用 list_tables 查看。",
+          )
+          const text = lines.join("\n")
+
+          // 没有 job_id 就没法关联事件 —— 退化成纯文本，不要造一张永远转圈的卡
+          if (!jobId) return text
+
+          const spec: UiSpec = {
+            version: UI_SPEC_VERSION,
+            type: "progress",
+            title: `行情下载 · ${symbols}`,
+            subtitle: `${freqLabel} · ${total} 个标的`,
+            params: {},
+            data: {
+              status: "running",
+              label: "已提交，等待服务端开始…",
+              // 与 service 的 DataStage 同序；reducer 按下标点亮
+              steps: ["下载数据", "数据体检", "入库", "补数据重试"],
+              step: 0,
+            },
+            binding: {
+              kind: "sse",
+              event: "quote_download",
+              match: { job_id: jobId },
+              stopOn: { field: "status", values: ["done", "failed"] },
+            },
+          }
+
+          const artifact = makeArtifact("ui", spec.title, spec, {
+            subtitle: spec.subtitle,
+            source: `quote · ${jobId}`,
+            ui: { height: 150, collapsible: false },
+          })
+
+          return { text, artifact } as ToolArtifactResult
         }
 
         case "delete_quote": {

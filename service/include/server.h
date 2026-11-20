@@ -196,18 +196,25 @@ public:
     /// 返回导入行数；<0 表示失败，原因写入 error。
     int DownloadMarginData(const String& date, const String& env, String& error);
 
+    /// 数据任务进度回调：任务内部在阶段边界调用，由 SubmitDataJob 补上 job_id 后
+    /// 以 SSE 进度事件发出。payload 的形状归各条链路自己定（行情带 freq，两融带 date）。
+    using JobProgress = std::function<void(Map<String, String> payload)>;
+
     /// 下载并导入一批标的的行情（供 REST 的 QuoteDownloadHandler / OptionDataHandler 调用）
     ///
     /// 走 Data/QuoteData 这条公共链路。symbols 用内部格式（sh.600519），
     /// freq 是 "daily"/"5m"/"15m"/"30m"/"60m"。overwrite=true 时无视库里的最新日期全量重下。
+    /// progress 可为空 —— 内部自己推 SSE 的调用方（OptionDataHandler）不需要它。
     /// 返回导入行数；<0 表示失败。
     int DownloadQuoteData(const Vector<symbol_t>& symbols, const String& freq,
-                          bool overwrite, const String& env);
+                          bool overwrite, const String& env,
+                          const JobProgress& progress = nullptr);
 
     /// 异步下载并导入一批标的的行情（内部提交到数据线程池）。
     /// REST 的 QuoteDownloadHandler / OptionDataHandler 用这个，不阻塞请求线程。
-    void SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
-                             bool overwrite, const String& env);
+    /// 返回 job_id —— 前端拿它把后续 SSE 进度事件关联到对话里的进度产物。
+    String SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
+                               bool overwrite, const String& env);
 
     /// 异步下载并导入两融明细（供 REST 的 MarginHandler）。
     /// date 为空 = 由脚本自动取最近有数据的交易日。
@@ -285,10 +292,19 @@ private:
     /// @param started  开始事件 payload；空表示不发开始事件
     /// @param finished 结束事件 payload；rows < 0 时由各链路映射成自己的失败格式
     /// @param run      真正干活：跑完返回 DataJobResult
-    void SubmitDataJob(const String& key, const String& event,
-                       Map<String, String> started,
-                       std::function<Map<String, String>(const DataJobResult&)> finished,
-                       std::function<DataJobResult()> run);
+    /// @return         job_id。开始/进度/结束事件都会带上它，前端据此把同一条链路的
+    ///                 事件关联起来 —— 只靠 freq 关联的话，同频率并发两个下载会串。
+    ///
+    /// run 有两个重载：需要中间进度的链路用带 JobProgress 的那个，不需要的原样传。
+    String SubmitDataJob(const String& key, const String& event,
+                         Map<String, String> started,
+                         std::function<Map<String, String>(const DataJobResult&)> finished,
+                         std::function<DataJobResult()> run);
+
+    String SubmitDataJob(const String& key, const String& event,
+                         Map<String, String> started,
+                         std::function<Map<String, String>(const DataJobResult&)> finished,
+                         std::function<DataJobResult(const JobProgress&)> run);
 
     /// 行情链路（按频率逐个跑 QuoteData，串行以免同时拉起多个 python 进程）
     void RunQuoteRefresh(const String& targetDay);

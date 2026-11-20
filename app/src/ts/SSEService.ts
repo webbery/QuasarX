@@ -104,8 +104,10 @@ class SSEService {
         timestamp: Date.now()
       }
 
-      this.messages.value.push(messageData)
-      this.lastMessage.value = messageData
+      // 存整条消息（含事件名）而不是裸 data —— 否则按事件名回放/过滤都做不到，
+      // getMessagesByType 会永远返回空数组。
+      this.messages.value.push(message)
+      this.lastMessage.value = message
 
       console.log(`[SSE] handleEvent: 准备触发 triggerHandlers("${eventType}")`)
       this.triggerHandlers(eventType, message)
@@ -117,6 +119,31 @@ class SSEService {
 
     } catch (error) {
       console.error('解析 SSE 消息失败:', error, event.data)
+    }
+  }
+
+  /**
+   * 订阅某类事件，返回取消函数。
+   *
+   * 与 on/off 的区别：handler 直接拿到 data（不用再拆 message.data），
+   * 且返回 unsubscribe —— UI 产物挂载/卸载时成对调用，不易漏。
+   */
+  onEvent(eventType: string, handler: (data: any, message: SSEMessage) => void): () => void {
+    const wrapper = (message: SSEMessage) => handler(message.data, message)
+    this.on(eventType, wrapper as unknown as (message: string) => void)
+    return () => this.off(eventType, wrapper as unknown as (message: string) => void)
+  }
+
+  /**
+   * 回放缓存里某类事件。
+   *
+   * 用在哪：进度卡挂载时，服务端的 started/progress 早就发完了 ——
+   * 不回放的话卡片会停在初始态，直到下一条事件到达。
+   * 缓存只保留最近 50 条，足够覆盖「产物创建 → 组件挂载」这段窗口。
+   */
+  replay(eventType: string, handler: (data: any, message: SSEMessage) => void): void {
+    for (const message of this.messages.value) {
+      if (message.type === eventType) handler(message.data, message)
     }
   }
 

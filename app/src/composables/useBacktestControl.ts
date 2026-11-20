@@ -29,6 +29,13 @@ export interface BacktestRunOptions {
   strategyId?: string
   /** 策略名（用于提示） */
   strategyName?: string
+  /**
+   * 本次回测的唯一标识，会作为 script.id 发给后端。
+   *
+   * 后端把 script.id 原样回灌到 backtest_progress 的 strategy 字段，
+   * 前端靠它把进度事件关联到「这一次点击」。不传则退回 strategyId。
+   */
+  runKey?: string
 }
 
 export interface BacktestRunResult {
@@ -114,10 +121,22 @@ export function useBacktestControl() {
 
     running.value = true
     try {
-      // JSON 模式：body 是 { script: <图 JSON> }，与 useBacktest.js 保持一致
-      const response = await client.post(apiUrl('/v0/backtest'), {
-        script: options.script,
-      })
+      // JSON 模式：body 是 { script: <图 JSON> }，与 useBacktest.js 保持一致。
+      //
+      // 必须把 id / name 塞进 script：后端拿 script["id"] 当策略标识
+      // （回测进度事件里的 strategy 字段、资金池 key、日志都靠它）。
+      // 历史版本的 flowData 只有 { nodes, edges }，不补的话后端一律拿到 "unknown"，
+      // 进度事件就无法关联到具体策略。
+      const script = {
+        ...options.script,
+        ...(options.runKey
+          ? { id: options.runKey }
+          : options.strategyId
+            ? { id: options.strategyId }
+            : {}),
+        ...(options.strategyName ? { name: options.strategyName } : {}),
+      }
+      const response = await client.post(apiUrl('/v0/backtest'), { script })
       const raw = (response.data || {}) as RawBacktestResponse
       const result = normalizeBacktestResult(raw, options.script)
 

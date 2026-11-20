@@ -1,18 +1,34 @@
 /**
- * 数据分析 Tool
+ * 数据分析 Tool（合并 analysis + mutation + math_tool）
  *
- * Agent 可通过此工具：
- * - EMD/CEEMDAN 信号分解分析
- * - 波动率/自相关/协方差分析
- * - XGBoost 训练/SHAP 分析
- * - Monte Carlo 价格预测
+ * 合并原则：**算法与数据源解耦**。
+ * 原来三个工具是按「数据源 + 算法包」切的（analysis=市场行情、mutation=回测序列、
+ * math_tool=用户给矩阵），同一个 CUSUM 因此被实现了两遍。现在统一成一个工具：
+ * action 决定算什么，参数决定数据从哪来。
+ *
+ * 数据源三种：
+ * - symbols（+ start_date/end_date/field）→ 后端取行情，走 /v0/analysis/* 与 /v0/ml
+ * - target=price/performance/drawdown/dailyReturns → 读最近一次回测结果，本地计算
+ * - covariance_matrix（+ labels）→ LLM 直接给矩阵，送后端做诊断
+ *
+ * 与 backtest 的依赖方向：analysis → backtest（复用 buildChartFromResult），单向无环。
  */
 
 import { tool } from "@langchain/core/tools"
 import { z } from "zod"
 import { applyAuthHeader, getAuthToken } from "./common/auth"
+import { buildChartFromResult } from "./backtest"
+import { detectAnomalies, type TimeSeries } from "@/lib/chartData"
+import { useHistoryStore } from "@/stores/history"
 
 const BASE_URL = "/v0"
+
+/** 不需要登录（纯本地计算）的 action */
+const LOCAL_ACTIONS = new Set(["change_point", "check_date", "list_targets"])
+
+/** 可扫描的回测序列 */
+const BACKTEST_TARGETS = ["price", "performance", "drawdown", "dailyReturns"] as const
+type BacktestTarget = (typeof BACKTEST_TARGETS)[number]
 
 async function getAxios() {
   const mod = await import("axios")
@@ -31,24 +47,103 @@ function formatPercent(v: number, digits = 2): string {
   return `${(v * 100).toFixed(digits)}%`
 }
 
+/* ============================================================================
+ * 回测序列取数（原 mutation 的能力）
+ * ========================================================================== */
+
+/** 把最近一次回测结果转成可扫描的时序 */
+async function loadBacktestSeries(target: BacktestTarget): Promise<TimeSeries | null> {
+  const historyStore = useHistoryStore()
+  const result = await historyStore.getLatestBacktestResult()
+  if (!result) return null
+
+  const chartData = buildChartFromResult(result)
+
+  switch (target) {
+    case "price":
+      return chartData.price
+    case "performance":
+      return chartData.performance
+    case "drawdown":
+      return chartData.drawdown
+    case "dailyReturns": {
+      const rets = chartData.dailyReturns
+      if (!rets?.length) return null
+      // 日收益率没有自带时间轴，用价格序列起点推（与 buildChartFromResult 的线性分配一致）
+      const startTs = chartData.price?.timestamps?.[0] ?? Math.floor(Date.now() / 1000)
+      return {
+        timestamps: rets.map((_, i) => startTs + i * 86400),
+        values: [rets],
+        labels: ["日收益率"],
+      }
+    }
+    default:
+      return null
+  }
+}
+
+/** 列出回测结果里实际可用的序列 */
+async function listBacktestTargets(): Promise<string[]> {
+  const historyStore = useHistoryStore()
+  const result = await historyStore.getLatestBacktestResult()
+  if (!result) return []
+
+  const chartData = buildChartFromResult(result)
+  const available: string[] = []
+  if (chartData.price) available.push(`price（价格趋势，${chartData.price.timestamps.length} 个点）`)
+  if (chartData.performance) available.push(`performance（累积回报，${chartData.performance.timestamps.length} 天）`)
+  if (chartData.drawdown) available.push(`drawdown（回撤曲线，${chartData.drawdown.timestamps.length} 天）`)
+  if (chartData.dailyReturns?.length) available.push(`dailyReturns（日收益率，${chartData.dailyReturns.length} 天）`)
+  return available
+}
+
+/** 解析日期字符串或时间戳 → 毫秒 */
+function parseDate(input: string): number | null {
+  const ts = Number(input)
+  if (!isNaN(ts) && ts > 1e9) return ts < 1e12 ? ts * 1000 : ts
+
+  const d = new Date(input)
+  return isNaN(d.getTime()) ? null : d.getTime()
+}
+
+/** 格式化一串突变点 */
+function formatAnomalies(
+  label: string,
+  anomalies: Array<{ timestamp: number; value: number; changePct: number; zScore: number; severity: string; context: string }>,
+): string[] {
+  const lines = [`**${label} 突变检测**（${anomalies.length} 个）`]
+  for (const a of anomalies) {
+    const icon = a.severity === "high" ? "🔴" : a.severity === "medium" ? "🟡" : "🟢"
+    const date = new Date(a.timestamp * 1000).toLocaleDateString("zh-CN")
+    lines.push(`${icon} **${date}** — ${a.context}`)
+    lines.push(`   值: ${a.value.toFixed(4)} | 变化: ${(a.changePct * 100).toFixed(2)}% | Z-Score: ${a.zScore.toFixed(1)}`)
+  }
+  return lines
+}
+
+/* ============================================================================
+ * 工具
+ * ========================================================================== */
+
 export const analysisTool = tool(
   async (params) => {
-    if (!getAuthToken()) {
+    const { action } = params
+
+    if (!LOCAL_ACTIONS.has(action) && !getAuthToken()) {
       return "错误：未登录或 token 已过期。请先在登录界面完成登录。"
     }
-    const { action } = params
-    const axios = await getAxios()
+
+    const axios = LOCAL_ACTIONS.has(action) ? null : await getAxios()
 
     try {
       switch (action) {
-
-        // ========== 信号分析 ==========
+        // ========== 信号分解 ==========
 
         case "signal_emd": {
           const { symbols, start_date, end_date, field, method, num_imfs, fill_method } = params
           if (!symbols) return "错误：signal_emd 需要 symbols 参数"
 
-          const res = await axios.get(`${BASE_URL}/analysis/signal`, {
+          const res = await axios!.get(`${BASE_URL}/analysis/signal`, {
             params: {
               symbols,
               ...(start_date ? { start_date } : {}),
@@ -88,7 +183,7 @@ export const analysisTool = tool(
           const symbolList = symbols.split(",").map((s: string) => s.trim())
           const isMulti = symbolList.length > 1
 
-          const res = await axios.get(`${BASE_URL}/analysis/volatility`, {
+          const res = await axios!.get(`${BASE_URL}/analysis/volatility`, {
             params: {
               symbols,
               ...(start_date ? { start_date } : {}),
@@ -169,7 +264,7 @@ export const analysisTool = tool(
           if (!strategyGraph) return "错误：xgboost_train 需要 strategyGraph 参数（策略图 JSON）"
           if (!label) return "错误：xgboost_train 需要 label 参数（标签配置）"
 
-          const res = await axios.post(`${BASE_URL}/ml`, {
+          const res = await axios!.post(`${BASE_URL}/ml`, {
             action: "train",
             script: JSON.stringify(strategyGraph),
             label,
@@ -214,7 +309,7 @@ export const analysisTool = tool(
           const { model_id } = params
           if (!model_id) return "错误：xgboost_shap 需要 model_id 参数"
 
-          const res = await axios.post(`${BASE_URL}/ml`, {
+          const res = await axios!.post(`${BASE_URL}/ml`, {
             action: "shap", model_id,
           })
           const d = res.data
@@ -249,7 +344,7 @@ export const analysisTool = tool(
           const { model_id } = params
           if (!model_id) return "错误：xgboost_delete 需要 model_id 参数"
 
-          await axios.post(`${BASE_URL}/ml`, {
+          await axios!.post(`${BASE_URL}/ml`, {
             action: "delete", model_id,
           })
           return `模型 ${model_id} 已释放。`
@@ -261,7 +356,7 @@ export const analysisTool = tool(
           const { symbols, times, steps } = params
           if (!symbols) return "错误：monte_carlo 需要 symbols 参数"
 
-          const res = await axios.post(`${BASE_URL}/predict/montecarlo`, {
+          const res = await axios!.post(`${BASE_URL}/predict/montecarlo`, {
             symbol: symbols,
             times: times ?? 1000,
             type: 2,
@@ -309,7 +404,7 @@ export const analysisTool = tool(
           const symbolList = symbols.split(",").map((s: string) => s.trim()).filter(Boolean)
           if (symbolList.length < 2) return "错误：cointegration 至少需要 2 个标的"
 
-          const res = await axios.get(`${BASE_URL}/analysis/cointegration`, {
+          const res = await axios!.get(`${BASE_URL}/analysis/cointegration`, {
             params: {
               symbols,
               ...(start_date ? { start_date } : {}),
@@ -323,7 +418,6 @@ export const analysisTool = tool(
           const lines = [`**协整分析** — ${symbols}`]
           lines.push(`  标的数: ${symbolList.length}，日期点: ${d.dates?.length ?? 0}`)
 
-          // 单位根检验
           if (d.unit_root) {
             lines.push("\n**单位根检验** (ADF)：")
             for (const [sym, ur] of Object.entries(d.unit_root as Record<string, any>)) {
@@ -334,7 +428,6 @@ export const analysisTool = tool(
             }
           }
 
-          // 二元 Engle-Granger
           if (d.pairwise_eg && Array.isArray(d.pairwise_eg)) {
             lines.push(`\n**Engle-Granger 检验**（${d.pairwise_eg.length} 对）：`)
             for (const eg of d.pairwise_eg) {
@@ -343,7 +436,6 @@ export const analysisTool = tool(
             }
           }
 
-          // Johansen 多元
           if (d.johansen && d.johansen.rank !== undefined) {
             const j = d.johansen
             lines.push(`\n**Johansen 多元协整**：rank=${j.rank}/${j.n_variables}`)
@@ -355,7 +447,6 @@ export const analysisTool = tool(
             }
           }
 
-          // Granger 因果
           if (d.granger?.pairwise && d.granger.pairwise.length > 0) {
             lines.push(`\n**Granger 因果检验**：`)
             for (const g of d.granger.pairwise) {
@@ -366,13 +457,13 @@ export const analysisTool = tool(
           return lines.join("\n")
         }
 
-        // ========== CUSUM 变点检测 ==========
+        // ========== CUSUM 变点检测（行情序列） ==========
 
         case "cusum": {
           const { symbols, start_date, end_date, threshold, drift, mode } = params
           if (!symbols) return "错误：cusum 需要 symbols 参数"
 
-          const res = await axios.post(`${BASE_URL}/analysis/cusum`, {
+          const res = await axios!.post(`${BASE_URL}/analysis/cusum`, {
             symbols,
             ...(start_date ? { start_date } : {}),
             ...(end_date ? { end_date } : {}),
@@ -386,7 +477,6 @@ export const analysisTool = tool(
           const lines = [`**CUSUM 累积和变点检测** — ${symbols}`]
           lines.push(`  模式: ${mode ?? "change_point"}，阈值: ${threshold ?? 4.0}，漂移: ${drift ?? 0.5}`)
 
-          // 累积和路径
           if (d.cusum_path && d.dates && d.dates.length === d.cusum_path.length) {
             const n = d.cusum_path.length
             const max = Math.max(...d.cusum_path.map((v: number) => Math.abs(v)))
@@ -394,7 +484,6 @@ export const analysisTool = tool(
               Math.abs(v) > Math.abs(arr[maxIdx]) ? i : maxIdx, 0)
             lines.push(`  数据点: ${n}，累积和峰值: ${formatNumber(max, 4)} @ ${d.dates[finalIdx]}`)
 
-            // 显示前 5 个 + 峰值附近
             lines.push("\n**累积和序列**（前 5 点）：")
             for (let i = 0; i < Math.min(5, n); i++) {
               lines.push(`  ${d.dates[i]}: ${formatNumber(d.cusum_path[i], 4)}`)
@@ -403,7 +492,6 @@ export const analysisTool = tool(
             lines.push(`  ${d.dates[finalIdx]}: ${formatNumber(d.cusum_path[finalIdx], 4)} （峰值）`)
           }
 
-          // 变点
           if (d.change_points && d.change_points.length > 0) {
             lines.push(`\n**检测到 ${d.change_points.length} 个变点**：`)
             for (const cp of d.change_points.slice(0, 10)) {
@@ -426,7 +514,7 @@ export const analysisTool = tool(
           const symbolList = symbols.split(",").map((s: string) => s.trim()).filter(Boolean)
           if (symbolList.length < 2) return "错误：pca 至少需要 2 个标的"
 
-          const res = await axios.get(`${BASE_URL}/analysis/pca`, {
+          const res = await axios!.get(`${BASE_URL}/analysis/pca`, {
             params: {
               symbols,
               ...(start_date ? { start_date } : {}),
@@ -440,32 +528,19 @@ export const analysisTool = tool(
           const lines = [`**主成分分析** — ${symbols}`]
           lines.push(`  标的数: ${symbolList.length}，主成分数: ${n_components ?? 3}`)
 
-          // 方差解释率
-          if (d.explained_variance_ratio) {
-            lines.push("\n**方差解释率**：")
-            const ev = d.explained_variance_ratio
-            for (let i = 0; i < ev.length; i++) {
-              lines.push(`  PC${i + 1}: ${(ev[i] * 100).toFixed(2)}%`)
-            }
-            const cumSum = ev.reduce((acc: number[], v: number) => {
-              acc.push((acc.length > 0 ? acc[acc.length - 1] : 0) + v)
-              return acc
-            }, [])
-            lines.push(`  累计解释: ${(cumSum[cumSum.length - 1] * 100).toFixed(2)}%`)
-          }
-
-          // 特征值
-          if (d.eigenvalues) {
-            lines.push("\n**特征值**：")
-            for (let i = 0; i < d.eigenvalues.length; i++) {
-              lines.push(`  λ${i + 1}: ${formatNumber(d.eigenvalues[i], 4)}`)
+          if (d.explained_variance_ratio && d.explained_variance_ratio.length > 0) {
+            const ratios = d.explained_variance_ratio
+            lines.push("\n**方差解释比例**：")
+            let cum = 0
+            for (let i = 0; i < ratios.length; i++) {
+              cum += ratios[i]
+              lines.push(`  PC${i + 1}: ${formatPercent(ratios[i])}（累计 ${formatPercent(cum)}）`)
             }
           }
 
-          // 特征向量（每个主成分）
-          if (d.components && Array.isArray(d.components) && d.components.length > 0) {
-            lines.push("\n**特征向量**（载荷）：")
-            for (let i = 0; i < Math.min(d.components.length, n_components ?? 3); i++) {
+          if (d.components && d.components.length > 0) {
+            lines.push("\n**成分载荷**：")
+            for (let i = 0; i < Math.min(d.components.length, 3); i++) {
               const comp = d.components[i]
               const weights = symbolList.map((sym: string, j: number) => `${sym}=${formatNumber(comp[j], 4)}`).join(", ")
               lines.push(`  PC${i + 1}: ${weights}`)
@@ -473,6 +548,169 @@ export const analysisTool = tool(
           }
 
           return lines.join("\n")
+        }
+
+        // ========== 协方差矩阵诊断（LLM 直接给矩阵） ==========
+
+        case "covariance_diagnostics": {
+          const { covariance_matrix, labels } = params
+          if (!covariance_matrix || !Array.isArray(covariance_matrix)) {
+            return "错误：covariance_diagnostics 需要 covariance_matrix 参数（二维数组）"
+          }
+          const n = covariance_matrix.length
+          if (n === 0 || !Array.isArray(covariance_matrix[0])) {
+            return "错误：covariance_matrix 必须是二维数组"
+          }
+
+          const res = await axios!.post(`${BASE_URL}/analysis/covariance_diagnostics`, {
+            covariance_matrix,
+            labels: labels ?? [],
+          })
+          const d = res.data
+          if (!d) return "协方差诊断无结果"
+
+          const lines = [`**协方差矩阵质量诊断** — ${n}x${n}`]
+          if (labels && Array.isArray(labels) && labels.length > 0) {
+            lines.push(`  标签: ${labels.join(", ")}`)
+          }
+
+          if (d.eigenvalues && Array.isArray(d.eigenvalues)) {
+            lines.push("\n**特征值**（降序）：")
+            for (let i = 0; i < d.eigenvalues.length; i++) {
+              lines.push(`  λ${i + 1}: ${formatNumber(d.eigenvalues[i])}`)
+            }
+          }
+
+          if (d.condition_number !== undefined) {
+            lines.push(`\n条件数 κ: ${formatNumber(d.condition_number, 2)}${d.condition_number > 1e10 ? " ⚠️ 接近奇异" : ""}`)
+          }
+
+          if (d.is_positive_definite !== undefined) {
+            lines.push(`正定: ${d.is_positive_definite ? "是 ✓" : "否 ✗"}`)
+          }
+
+          if (d.min_eigenvalue !== undefined) {
+            lines.push(`最小特征值: ${formatNumber(d.min_eigenvalue)}`)
+          }
+
+          if (d.max_eigenvalue !== undefined) {
+            lines.push(`最大特征值: ${formatNumber(d.max_eigenvalue)}`)
+          }
+
+          if (d.eigenvalues && Array.isArray(d.eigenvalues)) {
+            const sum = d.eigenvalues.reduce((a: number, b: number) => a + b, 0)
+            if (sum > 0) {
+              lines.push("\n**方差贡献**：")
+              for (let i = 0; i < Math.min(d.eigenvalues.length, n); i++) {
+                lines.push(`  λ${i + 1}: ${(d.eigenvalues[i] / sum * 100).toFixed(2)}%`)
+              }
+            }
+          }
+
+          if (d.diagnosis !== undefined) {
+            lines.push(`\n诊断: ${d.diagnosis}`)
+          } else if (d.is_positive_definite === false) {
+            lines.push("\n诊断: 矩阵非正定，建议检查输入协方差矩阵的正确性")
+          } else if (d.condition_number > 1e10) {
+            lines.push("\n诊断: 条件数过大，矩阵接近奇异，可能导致数值不稳定")
+          }
+
+          return lines.join("\n")
+        }
+
+        // ========== 回测序列突变扫描 ==========
+
+        case "change_point": {
+          const { target, method, windowSize, threshold, minGapDays } = params
+          const targetName = (target || "performance") as BacktestTarget
+
+          if (!BACKTEST_TARGETS.includes(targetName)) {
+            return `错误：target 只能是 ${BACKTEST_TARGETS.join(" / ")}（收到 "${target}"）`
+          }
+
+          const series = await loadBacktestSeries(targetName)
+          if (!series) {
+            const available = await listBacktestTargets()
+            if (available.length === 0) return "当前没有回测结果，无法检测突变。请先在主界面执行一次回测。"
+            return `回测结果里没有 ${targetName} 序列。可用序列：\n${available.map((s) => `- ${s}`).join("\n")}`
+          }
+
+          const anomalies = detectAnomalies(series, {
+            method: (method || "slope") as any,
+            windowSize: windowSize ?? 20,
+            threshold: threshold ?? 2.5,
+            minGapDays: minGapDays ?? 3,
+          })
+
+          if (anomalies.length === 0) {
+            return `${targetName} 序列未检测到显著突变点（方法 ${method || "slope"}，阈值 ${threshold ?? 2.5}σ），曲线波动在正常范围内。`
+          }
+
+          return formatAnomalies(
+            `${targetName} 序列（方法 ${method || "slope"}，阈值 ${threshold ?? 2.5}σ）`,
+            anomalies,
+          ).join("\n")
+        }
+
+        // ========== 检查特定日期附近的突变 ==========
+
+        case "check_date": {
+          const { target, date, toleranceDays, method, windowSize, threshold, minGapDays } = params
+          if (!date) return "错误：check_date 需要 date 参数（YYYY-MM-DD 或时间戳）"
+
+          const targetDate = parseDate(date)
+          if (!targetDate) return `无法解析日期: ${date}。请使用 YYYY-MM-DD 格式或 Unix 时间戳`
+
+          const targetName = (target || "performance") as BacktestTarget
+          if (!BACKTEST_TARGETS.includes(targetName)) {
+            return `错误：target 只能是 ${BACKTEST_TARGETS.join(" / ")}（收到 "${target}"）`
+          }
+
+          const series = await loadBacktestSeries(targetName)
+          if (!series) {
+            const available = await listBacktestTargets()
+            if (available.length === 0) return "当前没有回测结果。请先在主界面执行一次回测。"
+            return `回测结果里没有 ${targetName} 序列。可用序列：\n${available.map((s) => `- ${s}`).join("\n")}`
+          }
+
+          const tolerance = (toleranceDays ?? 5) * 86400000
+          const windowStart = targetDate - tolerance
+          const windowEnd = targetDate + tolerance
+
+          const anomalies = detectAnomalies(series, {
+            method: (method || "slope") as any,
+            windowSize: windowSize ?? 20,
+            threshold: threshold ?? 2.5,
+            // 定点检查放宽最小间隔，避免漏掉邻近的连续突变
+            minGapDays: minGapDays ?? 1,
+          })
+
+          const nearby = anomalies.filter(
+            (a) => a.timestamp * 1000 >= windowStart && a.timestamp * 1000 <= windowEnd,
+          )
+
+          if (nearby.length === 0) {
+            return `**${targetName}** 在 ${date} 前后 ${toleranceDays ?? 5} 天内未检测到显著突变。`
+          }
+
+          const lines = [`**${targetName}** 在 ${date} 前后 ${toleranceDays ?? 5} 天内发现 ${nearby.length} 个突变点：`]
+          for (const a of nearby) {
+            const d = new Date(a.timestamp * 1000).toLocaleDateString("zh-CN")
+            const daysDiff = Math.round((a.timestamp * 1000 - targetDate) / 86400000)
+            const when = daysDiff === 0 ? "当天" : daysDiff > 0 ? `后${daysDiff}天` : `前${Math.abs(daysDiff)}天`
+            lines.push(`  - ${d}（${when}）: ${a.context}`)
+          }
+          return lines.join("\n")
+        }
+
+        // ========== 列出可扫描的回测序列 ==========
+
+        case "list_targets": {
+          const available = await listBacktestTargets()
+          if (available.length === 0) {
+            return "当前没有回测结果。请先在主界面执行一次回测，之后再列出可扫描序列。"
+          }
+          return `可扫描的序列：\n${available.map((s) => `- ${s}`).join("\n")}`
         }
 
         default:
@@ -487,48 +725,68 @@ export const analysisTool = tool(
   {
     name: "analysis",
     description: [
-      "数据分析工具。对标的进行信号分解、波动率分析、机器学习训练和价格预测。",
-      "action='signal_emd' EMD/CEEMDAN 信号分解（symbols=标的代码，method=emd/ceemdan，num_imfs=IMF数量）；",
-      "action='volatility' 波动率与自相关分析，单标的返回滚动波动率/VaR/ACF/AR预测，多标的返回协方差/相关矩阵（symbols=逗号分隔）；",
-      "action='xgboost_train' XGBoost 训练（strategyGraph=策略图JSON，label={source,period,type,threshold}）；",
-      "action='xgboost_shap' 计算 SHAP 值（model_id=模型ID）；",
-      "action='xgboost_delete' 释放模型（model_id=模型ID）；",
-      "action='monte_carlo' Monte Carlo 价格预测（symbols=标的，times=模拟次数，steps=预测步数）；",
-      "action='cointegration' 协整分析（symbols=≥2个标的，返回单位根/Engle-Granger/Johansen/Granger因果检验）；",
-      "action='cusum' CUSUM 累积和变点检测（symbols，threshold 默认 4.0，drift 默认 0.5，mode=change_point/momentum/mean_revert）；",
-      "action='pca' 主成分分析（symbols=≥2个标的，n_components 主成分数默认 3）",
+      "数据分析工具。**算法与数据源解耦**：action 决定算什么，参数决定数据从哪来。\n",
+      "\n**数据源**\n",
+      "- `symbols`（可选 start_date/end_date/field，字段默认 close）→ 从后端取行情\n",
+      "- `target`=price/performance/drawdown/dailyReturns → 读最近一次回测结果的序列\n",
+      "- `covariance_matrix` + `labels` → 你自己把矩阵给进来\n",
+      "\n**行情类（用 symbols）**\n",
+      "- signal_emd 经验模态分解（method=emd/ceemdan, num_imfs）\n",
+      "- volatility 滚动波动率/ACF/AR预测/VaR/CVaR；多标的返回相关矩阵与条件数\n",
+      "- cointegration 单位根 + Engle-Granger + Johansen + Granger 因果\n",
+      "- cusum CUSUM 累积和变点（threshold 默认 4.0, drift 0.5, mode=change_point/momentum/mean_revert）\n",
+      "- pca 主成分分析（n_components 默认 3）\n",
+      "- monte_carlo 价格路径模拟（times, steps）\n",
+      "- xgboost_train / xgboost_shap / xgboost_delete 机器学习（strategyGraph + label；model_id）\n",
+      "\n**回测类（用 target）**\n",
+      "- change_point 突变扫描（method=slope/volatility/jump/reversal, windowSize, threshold 默认 2.5σ, minGapDays）\n",
+      "- check_date 检查指定日期附近有无突变（date, toleranceDays 默认 5）\n",
+      "- list_targets 列出回测结果里可扫描的序列\n",
+      "\n**纯计算（用 covariance_matrix）**\n",
+      "- covariance_diagnostics 协方差矩阵诊断（特征值/条件数/正定性）\n",
+      "\n所有数值必须来自工具返回，禁止编造。",
     ].join(""),
     schema: z.object({
       action: z.enum([
-        "signal_emd", "volatility",
+        "signal_emd", "volatility", "cointegration", "cusum", "pca", "monte_carlo",
         "xgboost_train", "xgboost_shap", "xgboost_delete",
-        "monte_carlo",
-        "cointegration", "cusum", "pca",
+        "covariance_diagnostics",
+        "change_point", "check_date", "list_targets",
       ]).describe("操作类型"),
-      symbols: z.string().optional().describe("标的代码，逗号分隔（如 sh.600000 或 sh.600000,sh.600036）"),
+      // === 数据源 ===
+      symbols: z.string().optional().describe("标的代码，逗号分隔（行情类必填，如 sh.600000,sh.600036）"),
       start_date: z.string().optional().describe("起始日期 YYYY-MM-DD"),
       end_date: z.string().optional().describe("结束日期 YYYY-MM-DD"),
       field: z.string().optional().describe("数据字段: close/open/high/low/volume（默认 close）"),
-      method: z.string().optional().describe("分解方法: emd/ceemdan（默认 emd）"),
-      num_imfs: z.number().optional().describe("IMF 数量 (1-20，默认 5)"),
-      windows: z.string().optional().describe("滚动窗口，逗号分隔（如 20,60,120）"),
       fill_method: z.string().optional().describe("缺失值填充: None/Forward/Backward/Linear/Zero"),
-      strategyGraph: z.any().optional().describe("策略图 JSON（xgboost_train 需要）"),
+      target: z.enum(BACKTEST_TARGETS).optional().describe("回测序列（回测类 action 用）: price/performance/drawdown/dailyReturns，默认 performance"),
+      covariance_matrix: z.array(z.array(z.number())).optional().describe("NxN 协方差矩阵（covariance_diagnostics 必填）"),
+      labels: z.array(z.string()).optional().describe("矩阵行列标签（covariance_diagnostics 可选）"),
+      // === 算法参数 ===
+      method: z.string().optional().describe("signal_emd: emd/ceemdan（默认 emd）；change_point: slope/volatility/jump/reversal（默认 slope）"),
+      num_imfs: z.number().optional().describe("IMF 数量 1-20（signal_emd 默认 5）"),
+      windows: z.string().optional().describe("滚动窗口，逗号分隔（volatility 默认 20,60,120）"),
+      n_components: z.number().optional().describe("PCA 主成分数（默认 3）"),
+      max_lag: z.number().optional().describe("Granger 最大滞后阶数（cointegration 默认 10）"),
+      threshold: z.number().optional().describe("阈值：cusum 默认 4.0；change_point 默认 2.5（Z-Score）"),
+      drift: z.number().optional().describe("CUSUM 漂移参数（默认 0.5）"),
+      mode: z.string().optional().describe("CUSUM 模式: change_point/momentum/mean_revert（默认 change_point）"),
+      times: z.number().optional().describe("Monte Carlo 模拟次数（默认 1000）"),
+      steps: z.number().optional().describe("Monte Carlo 预测步数（默认 20）"),
+      windowSize: z.number().optional().describe("change_point 局部窗口大小（默认 20）"),
+      minGapDays: z.number().optional().describe("change_point 最小间隔天数（默认 3；check_date 默认 1）"),
+      date: z.string().optional().describe("目标日期（check_date 必填）: YYYY-MM-DD 或 Unix 时间戳"),
+      toleranceDays: z.number().optional().describe("check_date 容差天数（默认 5）"),
+      // === XGBoost ===
+      strategyGraph: z.any().optional().describe("策略图 JSON（xgboost_train 必填）"),
       label: z.object({
         source: z.string().describe("标签来源"),
         period: z.string().describe("标签周期"),
         type: z.string().describe("标签类型"),
         threshold: z.number().describe("标签阈值"),
-      }).optional().describe("标签配置（xgboost_train 需要）"),
+      }).optional().describe("标签配置（xgboost_train 必填）"),
       params: z.record(z.string(), z.any()).optional().describe("XGBoost 训练参数"),
-      model_id: z.string().optional().describe("模型 ID（xgboost_shap/ml_delete 需要）"),
-      times: z.number().optional().describe("Monte Carlo 模拟次数（默认 1000）"),
-      steps: z.number().optional().describe("Monte Carlo 预测步数（默认 20）"),
-      max_lag: z.number().optional().describe("Granger 检验最大滞后阶数（cointegration 默认 10）"),
-      threshold: z.number().optional().describe("CUSUM 阈值（cusum 默认 4.0）"),
-      drift: z.number().optional().describe("CUSUM 漂移参数（cusum 默认 0.5）"),
-      mode: z.string().optional().describe("CUSUM 模式: change_point/momentum/mean_revert（默认 change_point）"),
-      n_components: z.number().optional().describe("PCA 主成分数（默认 3）"),
+      model_id: z.string().optional().describe("模型 ID（xgboost_shap / xgboost_delete 必填）"),
     }),
-  }
+  },
 )

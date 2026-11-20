@@ -227,74 +227,6 @@ export function buildChartFromResult(result: BacktestResult) {
 }
 
 /**
- * 格式化指定图表数据为易读文本
- */
-function formatChartData(metric: string, chartData: any): string {
-  switch (metric) {
-    case 'price': {
-      if (!chartData.price) return "无价格数据"
-      const ts = chartData.price
-      const first = ts.values[0][0]
-      const last = ts.values[0][ts.values[0].length - 1]
-      const changePctNum = ((last - first) / first * 100)
-      const changePct = changePctNum.toFixed(2)
-      return [
-        `**价格趋势**（${ts.timestamps.length}个数据点）`,
-        `起始: ${first} → 结束: ${last}（${changePctNum > 0 ? '+' : ''}${changePct}%）`,
-        `买入信号: ${ts.metadata?.buySignals?.length || 0}笔`,
-        `卖出信号: ${ts.metadata?.sellSignals?.length || 0}笔`,
-      ].join('\n')
-    }
-
-    case 'performance': {
-      if (!chartData.performance) return "无累积回报数据"
-      const ts = chartData.performance
-      const lines = [`**累积回报**（${ts.timestamps.length}天）`]
-      for (let i = 0; i < ts.labels.length; i++) {
-        const lastVal = ts.values[i][ts.values[i].length - 1]
-        lines.push(`  ${ts.labels[i]}: ${(lastVal * 100).toFixed(2)}%`)
-      }
-      return lines.join('\n')
-    }
-
-    case 'drawdown': {
-      if (!chartData.drawdown) return "无回撤数据"
-      const ts = chartData.drawdown
-      const maxDD = Math.max(...ts.values[0])
-      return `**回撤曲线**（${ts.timestamps.length}天）\n  最大回撤: ${(maxDD * 100).toFixed(2)}%`
-    }
-
-    case 'distribution': {
-      if (!chartData.distribution) return "无分布数据"
-      const d = chartData.distribution
-      const skew = d.metadata?.skewness ?? 0
-      const kurt = d.metadata?.kurtosis ?? 0
-      return [
-        `**收益率分布**（${d.bins.length}个区间）`,
-        `偏度: ${skew.toFixed(4)}${skew > 0.5 ? ' (右偏)' : skew < -0.5 ? ' (左偏)' : ''}`,
-        `峰度: ${kurt.toFixed(4)}${kurt > 3.5 ? ' (尖峰厚尾)' : kurt < 2.5 ? ' (低峰薄尾)' : ''}`,
-      ].join('\n')
-    }
-
-    case 'dailyReturns': {
-      if (!chartData.dailyReturns) return "无日收益率数据"
-      const rets = chartData.dailyReturns
-      const stats = computeStatistics(rets)
-      return [
-        `**日收益率序列**（${rets.length}天）`,
-        `均值: ${(stats.mean * 100).toFixed(4)}%`,
-        `标准差: ${(stats.std * 100).toFixed(4)}%`,
-        `偏度: ${stats.skewness.toFixed(4)}`,
-        `峰度: ${stats.kurtosis.toFixed(4)}`,
-      ].join('\n')
-    }
-
-    default:
-      return `未知图表类型: ${metric}。可用: price, performance, drawdown, distribution, dailyReturns`
-  }
-}
-
-/**
  * 格式化回测摘要
  */
 function formatBacktestSummary(result: BacktestResult): string {
@@ -392,7 +324,6 @@ export const backtestTool = tool(
               `- \`get_metrics\` 获取完整指标列表`,
               `- \`get_metric_value\` 获取单个指标值（metric=指标名）`,
               `- \`get_signals\` 获取交易信号明细`,
-              `- \`get_chart_data\` 获取图表数据（price/performance/drawdown/distribution）`,
               `- \`query_performance\` 查询策略绩效（策略级，调 \`/v0/strategy/performance\`）`,
             ].join('\n')
           }
@@ -480,31 +411,6 @@ export const backtestTool = tool(
           return formatBacktestSummary(result)
         }
 
-        // === 获取图表数据 ===
-
-        case "get_chart_data": {
-          const result = await historyStore.getLatestBacktestResult()
-          if (!result) return noResultMsg
-
-          const chartData = buildChartFromResult(result)
-
-          if (!metric || metric === 'all') {
-            // 返回所有可用图表概要
-            const lines = ['可用图表数据：']
-            if (chartData.price) lines.push(`- **price**: 价格趋势（${chartData.price.timestamps.length}个数据点，${chartData.price.metadata?.buySignals?.length || 0}笔买入，${chartData.price.metadata?.sellSignals?.length || 0}笔卖出）`)
-            if (chartData.performance) lines.push(`- **performance**: 累积回报（${chartData.performance.timestamps.length}天，${chartData.performance.labels.join(' vs ')}）`)
-            if (chartData.drawdown) lines.push(`- **drawdown**: 回撤曲线（${chartData.drawdown.timestamps.length}天）`)
-            if (chartData.distribution) lines.push(`- **distribution**: 收益率分布直方图（${chartData.distribution.bins.length}个区间）`)
-            if (chartData.dailyReturns) lines.push(`- **dailyReturns**: 日收益率序列（${chartData.dailyReturns.length}天）`)
-            lines.push('')
-            lines.push('使用 action="get_chart_data" + metric="performance/drawdown/distribution" 获取详细数据')
-            return lines.join('\n')
-          }
-
-          // 返回指定图表的详细内容
-          return formatChartData(metric, chartData)
-        }
-
         // === 容量扫描 ===
 
         case "run_capacity_scan": {
@@ -589,7 +495,7 @@ export const backtestTool = tool(
         }
 
         default:
-          return `未知 action: ${action}。支持的 action: run_backtest, get_metrics, get_metric_value, get_signals, get_summary, get_chart_data, run_capacity_scan, query_performance`
+          return `未知 action: ${action}。支持的 action: run_backtest, get_metrics, get_metric_value, get_signals, get_summary, run_capacity_scan, query_performance`
       }
     } catch (error: any) {
       console.warn("[Backtest Tool] 执行失败:", error)
@@ -599,7 +505,7 @@ export const backtestTool = tool(
   },
   {
     name: "backtest",
-    description: "策略回测结果分析工具（D3-A Phase 5：Agent 不直接触发回测）。action='run_backtest' 提示用户手动触发回测（返回操作指引，不调用 /v0/backtest）；action='get_metrics' 获取完整指标列表；action='get_metric_value' 获取单个指标值（metric=指标名）；action='get_signals' 获取交易信号明细；action='get_summary' 获取回测摘要；action='get_chart_data' 获取图表数据（price/performance/drawdown/distribution/dailyReturns）；action='run_capacity_scan' 容量扫描（strategy=策略图JSON）；action='query_performance' 查询策略绩效（strategy=策略名或ID）。用户手动回测后，Agent 通过 get_* 类 action 读取 historyStore 中的结果进行分析。",
+    description: "策略回测结果分析工具（D3-A Phase 5：Agent 不直接触发回测）。action='run_backtest' 提示用户手动触发回测（返回操作指引，不调用 /v0/backtest）；action='get_metrics' 获取完整指标列表；action='get_metric_value' 获取单个指标值（metric=指标名）；action='get_signals' 获取交易信号明细；action='get_summary' 获取回测摘要；action='run_capacity_scan' 容量扫描（strategy=策略图JSON）；action='query_performance' 查询策略绩效（strategy=策略名或ID）。用户手动回测后，Agent 通过 get_* 类 action 读取 historyStore 中的结果进行分析。",
     schema: z.object({
       action: z.enum([
         "run_backtest",
@@ -607,11 +513,10 @@ export const backtestTool = tool(
         "get_metric_value",
         "get_signals",
         "get_summary",
-        "get_chart_data",
         "run_capacity_scan",
         "query_performance",
       ]).describe("操作类型"),
-      metric: z.string().optional().describe("指标名称（get_metric_value 时需要），或图表类型（get_chart_data 时需要：price/performance/drawdown/distribution/dailyReturns/all）"),
+      metric: z.string().optional().describe("指标名称（get_metric_value 时需要）"),
       strategyId: z.string().optional().describe("要回测的策略 id 或名称（run_backtest 时可选，省略则取最近更新的策略）"),
       strategyGraph: z.any().optional().describe("策略图 JSON 数据（已废弃：run_backtest 不再直接调用后端，保留仅为向后兼容）"),
       strategy: z.union([z.string(), z.number()]).optional().describe("策略名（query_performance）或策略图 JSON（run_capacity_scan）"),

@@ -18,6 +18,7 @@ import HistogramView from './HistogramView.vue'
 import MatrixView from './MatrixView.vue'
 import TableView from './TableView.vue'
 import MetricView from './MetricView.vue'
+import ProgressView from './ProgressView.vue'
 
 let registered = false
 
@@ -31,6 +32,7 @@ const COMPONENTS: Record<string, unknown> = {
   matrix: MatrixView,
   table: TableView,
   metric: MetricView,
+  progress: ProgressView,
 }
 
 export function registerUiTypes(): void {

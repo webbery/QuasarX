@@ -923,7 +923,7 @@ int main(int argc, char* argv[])
 
     // 打印 CPU 向量化指令支持情况
     print_cpu_features();
-    INFO("VERSION: %s\n", QS_VERSION);
+    INFO("VERSION: {}\n", QS_VERSION);
 
     // 初始化 DuckDB 策略日志（表不存在则自动创建）
     if (!DuckDBLogger::instance().init("logs/strategy_logs.db")) {

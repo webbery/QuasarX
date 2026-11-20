@@ -85,7 +85,7 @@ import type { ArtifactAction, ArtifactDensity, ArtifactEnvelope } from '@/lib/ag
 import AgentFallbackArtifact from './AgentFallbackArtifact.vue'
 import { useArtifactActions } from './useArtifactActions'
 
-const props = defineProps<{ artifact: ArtifactEnvelope }>()
+const props = defineProps<{ artifact: ArtifactEnvelope; messageId?: string }>()
 
 const applied = ref(false)
 
@@ -136,12 +136,13 @@ const rendererProps = computed<Record<string, unknown>>(() => {
   if (!spec.value) return {}
 
   if (isUiKind.value) {
-    // UiFrame 的 props 是 spec / artifact / height / density
+    // UiFrame 的 props 是 spec / artifact / height / density / messageId
     return {
       spec: props.artifact.payload,
       artifact: props.artifact,
       height: effectiveHeight.value,
       density: density.value,
+      messageId: props.messageId,
     }
   }
 
@@ -163,9 +164,14 @@ const iconClass = computed(() => {
 
 /** 动作来源与执行：与 UiFrame 共用同一套逻辑 */
 const artifactRef = computed(() => props.artifact)
-const { actionState, resultMessage, actions, execute } = useArtifactActions(artifactRef, (action) => {
-  if (action.kind === 'apply_patch') applied.value = true
-})
+const messageIdRef = computed(() => props.messageId)
+const { actionState, resultMessage, actions, execute } = useArtifactActions(
+  artifactRef,
+  (action) => {
+    if (action.kind === 'apply_patch') applied.value = true
+  },
+  messageIdRef,
+)
 
 function actionIcon(action: ArtifactAction): string {
   const state = actionState[action.id]

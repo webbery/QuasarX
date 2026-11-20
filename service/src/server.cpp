@@ -1,5 +1,6 @@
 ﻿#include "server.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -1532,24 +1533,51 @@ bool Server::DispatchDataJob(const String& key, std::function<void()> job) {
     return true;
 }
 
-void Server::SubmitDataJob(
+namespace {
+/// 数据任务序号。前端拿 job_id 把 SSE 事件关联到对话里的进度产物 ——
+/// 只按 freq 关联的话，同频率并发两个下载会互相污染进度。
+/// HTTP worker 有多线程，所以用 atomic 自增。
+std::atomic<uint64_t> g_dataJobSeq{1};
+}
+
+String Server::SubmitDataJob(
         const String& key, const String& event,
         Map<String, String> started,
         std::function<Map<String, String>(const DataJobResult&)> finished,
         std::function<DataJobResult()> run) {
-    auto job = [this, key, event,
+    // 不需要中间进度的链路：包一层把 emit 参数丢掉
+    return SubmitDataJob(
+        key, event, std::move(started), std::move(finished),
+        [run = std::move(run)](const JobProgress&) -> DataJobResult { return run(); });
+}
+
+String Server::SubmitDataJob(
+        const String& key, const String& event,
+        Map<String, String> started,
+        std::function<Map<String, String>(const DataJobResult&)> finished,
+        std::function<DataJobResult(const JobProgress&)> run) {
+    const String jobId = "job-" + std::to_string(g_dataJobSeq.fetch_add(1));
+
+    auto job = [this, key, event, jobId,
                 started = std::move(started),
                 finished = std::move(finished),
                 run = std::move(run)]() {
         // 数据线程池的 worker 是共享的，socket 必须在本线程创建并随任务关闭
         ScopedSocket sse = OpenSseSocket();
+
+        // 所有事件统一盖 job_id，链路自己只关心业务字段
+        const JobProgress emit = [&sse, &event, &jobId](Map<String, String> payload) {
+            payload["job_id"] = jobId;
+            SendSSE(sse.get(), event, payload);
+        };
+
         if (!started.empty()) {
-            SendSSE(sse.get(), event, started);
+            emit(started);
         }
 
         DataJobResult result;
         try {
-            result = run();
+            result = run(emit);
         } catch (const std::exception& e) {
             result.rows = -1;
             result.error = e.what();
@@ -1561,17 +1589,19 @@ void Server::SubmitDataJob(
         }
 
         if (finished) {
-            SendSSE(sse.get(), event, finished(result));
+            emit(finished(result));
         }
     };
 
     if (!DispatchDataJob(key, std::move(job))) {
         WARN("[DataJob] {} 已在运行，忽略重复提交", key);
     }
+    return jobId;
 }
 
 int Server::DownloadQuoteData(const Vector<symbol_t>& symbols, const String& freq,
-                              bool overwrite, const String& env) {
+                              bool overwrite, const String& env,
+                              const JobProgress& progress) {
     String dbPath = _config->GetDatabasePath();
     String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve(env);
 
@@ -1580,12 +1610,30 @@ int Server::DownloadQuoteData(const Vector<symbol_t>& symbols, const String& fre
     data.SetOverwrite(overwrite);
 
     DataPipeline pipeline(data);
-    return pipeline.Run(dbPath + "/quote");
+
+    // 阶段 → SSE 进度。下标与 DataStage 的声明顺序一一对应。
+    DataPipeline::StageCallback onStage;
+    if (progress) {
+        static constexpr const char* kStageNames[] = {"download", "check", "import", "retry"};
+        constexpr size_t kStageCount = sizeof(kStageNames) / sizeof(kStageNames[0]);
+        const String total = std::to_string(symbols.size());
+        onStage = [progress, freq, total](DataStage stage) {
+            const auto idx = static_cast<size_t>(stage);
+            progress({
+                {"status", "progress"},
+                {"stage", idx < kStageCount ? kStageNames[idx] : "unknown"},
+                {"freq", freq},
+                {"total", total}
+            });
+        };
+    }
+
+    return pipeline.Run(dbPath + "/quote", onStage);
 }
 
-void Server::SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
-                                 bool overwrite, const String& env) {
-    SubmitDataJob(
+String Server::SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
+                                   bool overwrite, const String& env) {
+    return SubmitDataJob(
         "download:" + freq, "quote_download",
         {
             {"status", "started"},
@@ -1601,8 +1649,8 @@ void Server::SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& 
                 {"success", ok ? "true" : "false"}
             };
         },
-        [this, symbols, freq, overwrite, env]() -> DataJobResult {
-            return {DownloadQuoteData(symbols, freq, overwrite, env), 0, {}};
+        [this, symbols, freq, overwrite, env](const JobProgress& progress) -> DataJobResult {
+            return {DownloadQuoteData(symbols, freq, overwrite, env, progress), 0, {}};
         });
 }
 

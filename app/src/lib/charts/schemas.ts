@@ -159,3 +159,21 @@ export const monteCarloSchema = z.object({
 export const MONTE_CARLO_DESCRIPTION =
   '{ worst: 路径数组, best: 路径数组, median?, p10?, p90?, bar_count? }；' +
   '每条路径 = { equity_curve: number[], total_return?, max_drawdown?, win_rate? }'
+
+/* ============================================================================
+ * progress（长任务进度）
+ *
+ * 只能由工具/动作产生（uiType 里标了 hidden），LLM 不能直接构建 ——
+ * 否则模型可以伪造一个订阅，去偷看别人的 job 事件。
+ * ========================================================================== */
+
+export const progressSchema = z.object({
+  status: z.enum(['running', 'done', 'failed']).describe('任务状态'),
+  label: z.string().optional().describe('当前阶段或一句话说明'),
+  steps: z.array(z.string()).optional().describe('阶段名列表；有就渲染成步骤条'),
+  step: z.number().optional().describe('当前阶段下标（对应 steps）'),
+  detail: z.string().optional().describe('补充说明，如导入行数、失败原因'),
+})
+
+export const PROGRESS_DESCRIPTION =
+  '{ status: running|done|failed, label?, steps?: string[], step?: number, detail? }'

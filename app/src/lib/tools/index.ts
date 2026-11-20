@@ -22,7 +22,6 @@ import { knowledgeTool } from "./knowledge"
 import { webSearchTool } from "./webSearch"
 import { strategyTool } from "./strategy"
 import { backtestTool } from "./backtest"
-import { mutationTool } from "./mutation"
 import { calculatorTool } from "./calculator"
 import { skillTool } from "./skill"
 import { dataTool } from "./data"
@@ -31,9 +30,7 @@ import { optionPricingTool } from "./optionPricing"
 import { riskMonitorTool } from "./riskMonitor"
 import { orderQueryTool } from "./orderQuery"
 import { performanceTool } from "./performanceTool"
-import { mathTool } from "./mathTool"
-import { chartTool } from "./chart"
-import { visualizeTool } from "./visualize"
+import { uiTool } from "./ui"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -45,7 +42,6 @@ const builtinTools: StructuredToolInterface[] = [
   webSearchTool,
   strategyTool,
   backtestTool,
-  mutationTool,
   calculatorTool,
   skillTool,
   dataTool,
@@ -54,9 +50,7 @@ const builtinTools: StructuredToolInterface[] = [
   riskMonitorTool,
   orderQueryTool,
   performanceTool,
-  mathTool,
-  chartTool,
-  visualizeTool,
+  uiTool,
 ]
 
 // === 插件 Tool 加载 ===

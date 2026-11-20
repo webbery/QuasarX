@@ -1,7 +1,7 @@
 /**
  * UI 类型的**契约**定义（不含渲染组件）
  *
- * 放在 lib 层是为了让工具层（visualize）能拿到 schema / 控件 / resolver，
+ * 放在 lib 层是为了让工具层（ui）能拿到 schema / 控件 / resolver，
  * 而不必把 .vue 组件拉进 LLM 调用链。
  * 渲染组件由 components/agent/ui/registerUiTypes.ts 在注册时补上。
  */
@@ -11,17 +11,19 @@ import {
   MATRIX_DESCRIPTION,
   METRIC_DESCRIPTION,
   MONTE_CARLO_DESCRIPTION,
+  PROGRESS_DESCRIPTION,
   TABLE_DESCRIPTION,
   TIME_SERIES_DESCRIPTION,
   histogramSchema,
   matrixSchema,
   metricSchema,
   monteCarloSchema,
+  progressSchema,
   tableSchema,
   timeSeriesSchema,
 } from './schemas'
 import { BENCHMARK_OPTIONS, DEFAULT_BENCHMARK } from './resolvers'
-import type { UiControlDef, UiTypeDefinition } from './types'
+import type { UiControlDef, UiReducer, UiTypeDefinition } from './types'
 
 /** 图形类型（呈现层控件） */
 const CHART_TYPE_OPTIONS = [
@@ -45,14 +47,74 @@ const TIMESERIES_VIEW_CONTROLS: UiControlDef[] = [
   { key: 'legend', label: '图例', kind: 'toggle', layer: 'view', default: false },
 ]
 
+/* ============================================================================
+ * progress 的事件合并语义
+ * ========================================================================== */
+
+/** 行情下载链路的阶段（顺序与 service 的 DataStage 一致） */
+const DOWNLOAD_STAGES = ['download', 'check', 'import', 'retry'] as const
+const DOWNLOAD_STAGE_LABEL: Record<string, string> = {
+  download: '下载数据',
+  check: '数据体检',
+  import: '入库',
+  retry: '补数据重试',
+}
+
+/**
+ * progress 的 reducer：把一条 SSE 事件并进进度数据。
+ *
+ * 同时吃两种载荷：
+ * - `quote_download`：{ status, stage, freq, total, total_rows }
+ * - `backtest_progress`：{ strategy, run_id, progress, message }
+ *
+ * 回测的 progress 值是阶段标记（0 → 0.6 → 0.7 → 0.8，永远到不了 1.0），
+ * 所以这里**不换算百分比**，只用 message 推进文案，终态也从 message 里认。
+ * 等后端给 backtest_progress 补上 status 字段后，可以删掉最后那个分支。
+ */
+const progressReducer: UiReducer = (data, event) => {
+  const next = { ...data }
+  const status = typeof event.status === 'string' ? event.status : ''
+  const stage = typeof event.stage === 'string' ? event.stage : ''
+
+  // 阶段推进（行情下载）
+  const stageIdx = DOWNLOAD_STAGES.indexOf(stage as (typeof DOWNLOAD_STAGES)[number])
+  if (stageIdx >= 0) {
+    next.step = stageIdx
+    next.label = DOWNLOAD_STAGE_LABEL[stage] ?? stage
+  }
+
+  // 文案推进（回测的 message 自带阶段信息）
+  const message = typeof event.message === 'string' ? event.message : ''
+  if (message) next.label = message
+
+  if (status === 'started' || status === 'progress') {
+    next.status = 'running'
+  } else if (status === 'done') {
+    next.status = 'done'
+    next.step = DOWNLOAD_STAGES.length
+    next.label = '完成'
+    if (event.total_rows !== undefined) next.detail = `导入 ${event.total_rows} 行`
+  } else if (status === 'failed' || status === 'error') {
+    next.status = 'failed'
+    const err = event.error ?? event.message
+    if (err) next.detail = String(err)
+  } else if (message) {
+    // 没有 status 字段的链路（backtest_progress）：从文案里认终态
+    if (/出错|失败|error/i.test(message)) next.status = 'failed'
+    else if (/完成|finished/i.test(message)) next.status = 'done'
+    else next.status = 'running'
+  }
+
+  return next
+}
+
 /**
  * 全部 UI 类型的契约。
  *
  * 通用型：LLM 自己给 data，只有呈现层控件。
  * 领域型：数据由 resolver 出，带数据层控件（换基准、换标的）。
  */
-export const UI_TYPE_DEFS: UiTypeDefinition[] = [
-  /* ---------- 通用型 ---------- */
+export const UI_TYPE_DEFS: UiTypeDefinition[] = [  /* ---------- 通用型 ---------- */
   {
     id: 'timeseries',
     label: '时序图',
@@ -191,5 +253,20 @@ export const UI_TYPE_DEFS: UiTypeDefinition[] = [
     defaults: { mode: 'worst' },
     compact: true,
     exportable: true,
+  },
+
+  /* ---------- 内部型（只能由工具/动作产生，不对 LLM 暴露） ---------- */
+  {
+    id: 'progress',
+    label: '任务进度',
+    icon: 'spinner',
+    schema: progressSchema,
+    schemaDescription: PROGRESS_DESCRIPTION,
+    controls: [],
+    intake: 'stream',
+    compact: true,
+    // 不让 LLM 直接构建：否则它可以伪造订阅去偷看别人的任务事件
+    hidden: true,
+    reducer: progressReducer,
   },
 ]
