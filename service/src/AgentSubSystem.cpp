@@ -1611,7 +1611,10 @@ bool FlowSubsystem::RunTrainingCollect(
         return false;
     }
     INFO("[TrainingCollect] Creating backtest context: strategy='{}', symbols={}", strategy, symbols.size());
-    run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital, startDate, endDate);
+    // 训练集收集跑的是自己的数据窗（startDate/endDate 是加载范围），
+    // 不继承 exchange 上残留的 backtest.start/end
+    run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital, startDate, endDate,
+                                                      /*forceReload=*/false, /*inheritTimeRange=*/false);
     if (runId == 0) {
         WARN("[TrainingCollect] Failed to create backtest context");
         return false;
@@ -1794,8 +1797,12 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             // 写死会在资金池被其他活跃策略占用一部分时必然分配失败，日终回放
             // 全程 0 预算（买单全部 qty=0 被丢弃，只剩 HOLD）。
             // 策略未配置资金时传 0，交给账本按剩余资金自动均分。
+            // 日终回放跑的是自己的数据窗（全历史回放 + 预热门控），
+            // 不继承 exchange 上残留的 backtest.start/end ——
+            // 否则上一次 HTTP 回测的结束日会把回放截断在半路
             runId = simExchange->createBacktestContext(strategy, symbols, flow._capital,
-                                                       String(), String(), forceReload);
+                                                       String(), String(), forceReload,
+                                                       /*inheritTimeRange=*/false);
             BacktestContext* btContext = simExchange->getBacktestContext(runId);
             if (!btContext) {
                 exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);

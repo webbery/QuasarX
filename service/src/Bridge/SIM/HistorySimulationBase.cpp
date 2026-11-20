@@ -550,8 +550,18 @@ run_id_t HistorySimulationBase::createBacktestContext(
     double initial_capital,
     const String& load_start_date,
     const String& load_end_date,
-    bool forceReload)
+    bool forceReload,
+    bool inheritTimeRange)
 {
+    // 交易范围（backtest.start / backtest.end）是否生效。
+    //
+    // inheritTimeRange=false 的调用方（日终回放、训练集收集）不继承 exchange 上
+    // 残留的范围：那些路径跑的是自己的数据窗，套用上一次 HTTP 回测的结束日
+    // 会把回放截断在半路。
+    const bool useRange = inheritTimeRange && _hasBacktestTimeRange;
+    const time_t rangeStart = useRange ? _backtestStartTime : 0;
+    const time_t rangeEnd = useRange ? _backtestEndTime : 0;
+
     // 确保数据已加载：首次加载 或 请求的 symbols 与已加载不一致时重新加载。
     // forceReload 用于日终回放：DB 才是事实来源，缓存里的最后一天可能已经过期
     // （simulate/bar 写入新 bar 后没有失效缓存），不重载就会把整轮回放跑在旧窗口上。
@@ -625,13 +635,13 @@ run_id_t HistorySimulationBase::createBacktestContext(
     time_t maxStartTime = 0;
     time_t minEndTime = std::numeric_limits<time_t>::max();
 
-    if (_hasBacktestTimeRange) {
+    if (useRange) {
         // backtest.start 表示「交易起点」而非「数据窗截断」：数据仍从自然起点加载，
         // 让特征节点有足够历史预热，只是在前 N 个 epoch 内跳过 Signal/Execution/Portfolio
         // 节点（N = 数据窗起点到 backtest.start 的 bar 数，见下方 tradingStartEpochs）。
         INFO("[Backtest] Configured range: trading {} ~ {} (data window keeps full history for warmup)",
-             ToString(_backtestStartTime, "%Y-%m-%d"),
-             ToString(_backtestEndTime, "%Y-%m-%d"));
+             ToString(rangeStart, "%Y-%m-%d"),
+             ToString(rangeEnd, "%Y-%m-%d"));
     }
 
     for (auto symbol : symbols) {
@@ -660,8 +670,10 @@ run_id_t HistorySimulationBase::createBacktestContext(
         }
     }
 
-    if (_backtestEndTime != 0) {
-        minEndTime = _backtestEndTime;
+    // 回测窗口的结束（含）：backtest.end 优先于数据自然结束。
+    // stepForward 用它做推进闸门 —— bar 时间超过它就不再推进，回测到此为止。
+    if (rangeEnd != 0) {
+        minEndTime = rangeEnd;
     }
     context->setCommonStartTime(maxStartTime);
     context->setCommonEndTime(minEndTime);
@@ -692,10 +704,10 @@ run_id_t HistorySimulationBase::createBacktestContext(
             context->setCurIndex(symbol, startIndex);
             DEBUG_INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
 
-            if (_backtestStartTime != 0) {
+            if (rangeStart != 0) {
                 size_t off = data.size() - startIndex;  // 默认：start 之后无数据 → 全程不交易
                 for (size_t i = startIndex; i < data.size(); ++i) {
-                    if (data._datetime[i] >= _backtestStartTime) {
+                    if (data._datetime[i] >= rangeStart) {
                         off = i - startIndex;
                         break;
                     }
@@ -704,6 +716,16 @@ run_id_t HistorySimulationBase::createBacktestContext(
             }
 
             size_t symbolBars = (data.size() > startIndex) ? (data.size() - startIndex) : 0;
+            if (rangeEnd != 0) {
+                // 有 backtest.end 时按截断后的窗口统计：进度分母必须和实际跑过的
+                // epoch 数一致，否则结束日提前收尾时进度条永远走不满。
+                // 判定与 stepForward 的推进闸门保持同一口径（bar 时间 <= 结束时间）。
+                symbolBars = 0;
+                for (size_t i = startIndex; i < data.size(); ++i) {
+                    if (data._datetime[i] > rangeEnd) break;
+                    ++symbolBars;
+                }
+            }
             if (symbolBars < commonBars) {
                 commonBars = symbolBars;
             }
@@ -856,6 +878,20 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
         }
         quotes[symbol] = std::move(info);
     }
+    // === 回测窗口截断 ===
+    // _commonEndTime 是回测窗口的结束（含）。当前 bar 的时间超过它就不再推进：
+    // 结束日之后的 bar 不撮合、不记账，回测在这里收尾。
+    //
+    // 少了这一步，backtest.end 只被解析后写进一个没人读的字段，
+    // 回测永远跑到数据末尾，结束日形同虚设。
+    if (minTime > context->getCommonEndTime()) {
+        dataLock.unlock();
+        context->setFinished(true);
+        INFO("[Backtest] Reached end of backtest window ({}), stopped.",
+             ToString(context->getCommonEndTime(), "%Y-%m-%d %H:%M:%S"));
+        return false;
+    }
+
     // 推进时间最小的symbol
     for (auto& [symbol, quote] : quotes) {
         context->setQuote(symbol, quote);
