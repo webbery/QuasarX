@@ -114,3 +114,16 @@ export {
   type ToolCatalogMatch,
 } from "./toolCatalog"
 export { createSearchTool, type SearchToolDeps } from "./searchTool"
+
+// 能力地图（规划阶段的认知底物）与越界出口
+export {
+  CAPABILITY_DOMAINS,
+  AGENT_DOMAINS,
+  getDomain,
+  domainsForAgent,
+  renderCapabilityMap,
+  checkCapabilityMap,
+  verifyCapabilityMap,
+  type CapabilityDomain,
+} from "./capabilityMap"
+export { createGapTool, formatGap, type CapabilityGap } from "./gapTool"

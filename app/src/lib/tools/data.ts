@@ -40,6 +40,33 @@ function truncateRows(rows: any[], limit: number, formatter: (r: any) => string)
   return lines.join("\n")
 }
 
+/**
+ * 删除行情数据（由「待确认动作」调用）
+ *
+ * 删除不可逆 —— 工具层不直接调它，只产出动作卡，用户点确认后才执行。
+ */
+export async function deleteQuoteData(params: { table?: string; symbol?: string }): Promise<string> {
+  const axios = await getAxios()
+  const { table, symbol } = params
+  const res = await axios.delete(`${BASE_URL}/quote`, {
+    params: { ...(table ? { table } : {}), ...(symbol ? { symbol } : {}) },
+  })
+  const target = table ? (symbol ? `${table}/${symbol}` : table) : "所有行情数据"
+  return `已删除：${target}。${res.data?.message ?? ""}`
+}
+
+/**
+ * 删除财务数据（由「待确认动作」调用）
+ */
+export async function deleteFinanceData(params: { code: string; category?: string }): Promise<string> {
+  const axios = await getAxios()
+  const { code, category } = params
+  const res = await axios.delete(`${BASE_URL}/finance`, {
+    params: { code, ...(category ? { category } : {}) },
+  })
+  return `已删除财务数据：${code}${category ? `/${category}` : ""}。${res.data?.success ? "成功" : ""}`
+}
+
 export const dataTool = tool(
   async (params) => {
     if (!getAuthToken()) {
@@ -144,11 +171,38 @@ export const dataTool = tool(
 
         case "delete_quote": {
           const { table, symbol } = params
-          const res = await axios.delete(`${BASE_URL}/quote`, {
-            params: { ...(table ? { table } : {}), ...(symbol ? { symbol } : {}) },
-          })
           const target = table ? (symbol ? `${table}/${symbol}` : table) : "所有行情数据"
-          return `已删除：${target}。${res.data?.message ?? ""}`
+
+          // 删除不可逆：产出待确认动作，用户点确认后才真删
+          const artifact = makeArtifact(
+            "action",
+            `删除行情数据 · ${target}`,
+            {
+              context: `即将删除行情数据：${target}。该操作不可撤销，删除后需要重新下载。`,
+              actions: [
+                {
+                  id: "confirm-delete-quote",
+                  kind: "data_manager.delete_quote",
+                  label: "确认删除",
+                  params: { table, symbol },
+                  destructive: true,
+                  confirm: {
+                    title: `确认删除行情数据「${target}」？`,
+                    body: "删除后需要重新下载才能恢复，操作不可撤销。",
+                  },
+                  pendingLabel: "删除中…",
+                  doneLabel: "已删除",
+                },
+              ],
+            },
+            { subtitle: target, source: "data_manager · delete_quote" },
+          )
+
+          const text = [
+            `删除行情数据「${target}」需要用户确认 —— 已生成待确认动作卡。`,
+            `在用户点击「确认删除」之前，数据不会被删除。`,
+          ].join("\n")
+          return { text, artifact } as ToolArtifactResult
         }
 
         case "import_quote": {
@@ -237,11 +291,38 @@ export const dataTool = tool(
         case "delete_finance": {
           const { code, category } = params
           if (!code) return "错误：delete_finance 需要 code 参数"
+          const target = `${code}${category ? `/${category}` : ""}`
 
-          const res = await axios.delete(`${BASE_URL}/finance`, {
-            params: { code, ...(category ? { category } : {}) },
-          })
-          return `已删除财务数据：${code}${category ? `/${category}` : ""}。${res.data?.success ? "成功" : ""}`
+          // 删除不可逆：产出待确认动作，用户点确认后才真删
+          const artifact = makeArtifact(
+            "action",
+            `删除财务数据 · ${target}`,
+            {
+              context: `即将删除财务数据：${target}。该操作不可撤销，删除后需要重新下载。`,
+              actions: [
+                {
+                  id: "confirm-delete-finance",
+                  kind: "data_manager.delete_finance",
+                  label: "确认删除",
+                  params: { code, category },
+                  destructive: true,
+                  confirm: {
+                    title: `确认删除财务数据「${target}」？`,
+                    body: "删除后需要重新下载才能恢复，操作不可撤销。",
+                  },
+                  pendingLabel: "删除中…",
+                  doneLabel: "已删除",
+                },
+              ],
+            },
+            { subtitle: target, source: "data_manager · delete_finance" },
+          )
+
+          const text = [
+            `删除财务数据「${target}」需要用户确认 —— 已生成待确认动作卡。`,
+            `在用户点击「确认删除」之前，数据不会被删除。`,
+          ].join("\n")
+          return { text, artifact } as ToolArtifactResult
         }
 
         // ========== 股票/指数/期货基础信息 ==========

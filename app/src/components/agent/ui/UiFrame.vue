@@ -378,6 +378,10 @@ function actionIcon(action: ArtifactAction): string {
       return 'fas fa-upload'
     case 'open_panel':
       return 'fas fa-table-columns'
+    case 'data_manager.delete_quote':
+    case 'data_manager.delete_finance':
+    case 'strategy.delete_strategy':
+      return 'fas fa-trash'
     default:
       return 'fas fa-bolt'
   }

@@ -122,7 +122,9 @@ app.whenReady().then(async () => {
                 ...details.responseHeaders,
                 'Content-Security-Policy': [
                     "default-src 'self'; " +
-                    "script-src 'self' 'unsafe-eval'; " +
+                    // blob: 仅用于 javascript 工具的沙箱 Worker（Blob URL 启动的 Worker，
+                    // 无 Node/DOM/文件，由 tool 层白名单控制注入面）
+                    "script-src 'self' 'unsafe-eval' blob:; " +
                     "style-src 'self' 'unsafe-inline'; " +
                     "img-src 'self' data: blob:; " +
                     "connect-src 'self' https: http:; " +

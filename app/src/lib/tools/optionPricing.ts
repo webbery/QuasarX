@@ -25,12 +25,169 @@ function formatNumber(v: number | undefined, digits = 4): string {
   return typeof v === "number" && Math.abs(v) < 1000 ? v.toFixed(digits) : String(v)
 }
 
+// === 组合收益（payoff）===
+//
+// 收益图是纯本地计算（不需要后端），放在这里而不是 javascript 沙箱：
+// 期权相关的能力归期权域管，模型不需要自己手搓腿数与乘数。
+
+type PayoffLeg = { type: "call" | "put"; direction: "buy" | "sell"; strike: number; premium: number; quantity: number }
+
+interface PayoffSpec {
+  optionStrategy?: string
+  spot?: number
+  strike?: number
+  premium?: number
+  quantity?: number
+  direction?: "buy" | "sell"
+  strike2?: number
+  premium2?: number
+  quantity2?: number
+  strike3?: number
+  premium3?: number
+  quantity3?: number
+  ratio?: number
+  targetPrice?: number
+}
+
+function singleLegPayoff(S: number, leg: PayoffLeg): number {
+  const intrinsic = leg.type === "call" ? Math.max(S - leg.strike, 0) : Math.max(leg.strike - S, 0)
+  return (leg.direction === "buy" ? intrinsic - leg.premium : leg.premium - intrinsic) * leg.quantity
+}
+
+/** 把策略描述展开成腿 */
+function buildLegs(spec: PayoffSpec): { legs: PayoffLeg[]; error?: string } {
+  const { optionStrategy: strategy, strike, premium } = spec
+  const qty = spec.quantity ?? 1
+  const dir = spec.direction ?? "buy"
+  const k2 = spec.strike2
+  const p2 = spec.premium2
+  const q2 = spec.quantity2 ?? qty
+  const k3 = spec.strike3
+  const p3 = spec.premium3
+  const q3 = spec.quantity3 ?? qty
+  const ratio = spec.ratio ?? 1
+
+  if (strike === undefined || premium === undefined) {
+    return { legs: [], error: "payoff 需要 strike（行权价）和 premium（权利金）参数" }
+  }
+
+  const leg = (type: "call" | "put", direction: "buy" | "sell", K: any, P: any, q: any): PayoffLeg | null => {
+    if (typeof K !== "number" || typeof P !== "number") return null
+    return { type, direction, strike: K, premium: P, quantity: q ?? 1 }
+  }
+
+  const legs: PayoffLeg[] = []
+  const add = (...ls: Array<PayoffLeg | null>) => {
+    for (const l of ls) if (l) legs.push(l)
+  }
+
+  switch (strategy) {
+    case "long_call": add(leg("call", "buy", strike, premium, qty)); break
+    case "long_put": add(leg("put", "buy", strike, premium, qty)); break
+    case "short_call": add(leg("call", "sell", strike, premium, qty)); break
+    case "short_put": add(leg("put", "sell", strike, premium, qty)); break
+    case "bull_call_spread":
+      add(leg("call", "buy", strike, premium, qty), leg("call", "sell", k2, p2, q2)); break
+    case "bear_put_spread":
+      add(leg("put", "buy", strike, premium, qty), leg("put", "sell", k2, p2, q2)); break
+    case "straddle":
+      add(leg("call", "buy", strike, premium, qty), leg("put", "buy", strike, p2, q2)); break
+    case "strangle":
+      add(leg("call", "buy", strike, premium, qty), leg("put", "buy", k2, p2, q2)); break
+    case "butterfly":
+      add(
+        leg("call", "buy", strike, premium, qty),
+        leg("call", "sell", k2, p2, qty * 2),
+        leg("call", "buy", k3, p3, q3),
+      ); break
+    case "condor":
+      add(
+        leg("call", "buy", strike, premium, qty),
+        leg("call", "sell", k2, p2, qty),
+        leg("call", "sell", typeof k2 === "number" && typeof k3 === "number" ? (k2 + k3) / 2 : undefined, p3, qty),
+        leg("call", "buy", k3, p3, qty),
+      ); break
+    case "ratio_spread":
+      add(leg("call", "buy", strike, premium, qty), leg("call", "sell", k2, p2, qty * ratio)); break
+    case "calendar_spread":
+      // 简化：近月卖出、远月买入，行权价相同
+      add(leg("call", "sell", strike, premium, qty), leg("call", "buy", strike, p2, q2)); break
+    default:
+      return {
+        legs: [],
+        error: `未知期权策略: ${strategy}。支持: long_call, long_put, short_call, short_put, bull_call_spread, bear_put_spread, straddle, strangle, butterfly, condor, ratio_spread, calendar_spread`,
+      }
+  }
+  if (legs.length === 0) return { legs: [], error: "策略参数不足，无法构建腿组合" }
+  return { legs }
+}
+
+/** 计算并格式化组合收益文本 */
+function optionPayoffText(spec: PayoffSpec): string {
+  const { legs, error } = buildLegs(spec)
+  if (error) return error
+
+  const S = spec.spot ?? spec.strike!
+  const qty = spec.quantity ?? 1
+
+  // 价格扫描点：行权价与现价附近
+  const strikes = legs.map((l) => l.strike)
+  const minK = Math.min(...strikes, S)
+  const maxK = Math.max(...strikes, S)
+  const range = maxK - minK
+  const step = range * 0.25 || S * 0.05 || 1
+  const prices = [
+    minK - step * 2, minK - step, minK,
+    ...strikes,
+    maxK + step, maxK + step * 2,
+  ].map((p) => Number(p.toFixed(2)))
+
+  const payoffs = prices.map((price) => ({
+    price,
+    payoff: legs.reduce((sum, leg) => sum + singleLegPayoff(price, leg), 0),
+  }))
+
+  // 盈亏平衡点：收益符号变化处（线性插值）
+  const breakeven: number[] = []
+  for (let i = 1; i < payoffs.length; i++) {
+    const a = payoffs[i - 1]
+    const b = payoffs[i]
+    if (a.payoff === 0 || (a.payoff < 0 && b.payoff > 0) || (a.payoff > 0 && b.payoff < 0)) {
+      const t = b.payoff === a.payoff ? 0.5 : (0 - a.payoff) / (b.payoff - a.payoff)
+      breakeven.push(Number((a.price + t * (b.price - a.price)).toFixed(2)))
+    }
+  }
+
+  const maxProfit = Math.max(...payoffs.map((p) => p.payoff))
+  const maxLoss = Math.min(...payoffs.map((p) => p.payoff))
+  const fmtP = (n: number) => (Math.abs(n) >= 1e9 || (Math.abs(n) < 0.0001 && n !== 0) ? n.toExponential(4) : String(Number(n.toFixed(4))))
+
+  const lines = [
+    `期权组合收益 [${spec.optionStrategy}]`,
+    `当前价格: ${S}，行权价: ${strikes.join(" / ")}`,
+    "",
+    ...payoffs.map((p) => `  价格 ${p.price}: 收益 = ${fmtP(p.payoff)}`),
+    "",
+    breakeven.length ? `盈亏平衡点: ${breakeven.join(" / ")}` : "盈亏平衡点: 扫描范围内无符号变化",
+    `最大盈利: ${fmtP(maxProfit)}`,
+    `最大亏损: ${fmtP(maxLoss)}`,
+  ]
+  if (spec.optionStrategy === "calendar_spread") lines.push("（日历价差为简化计算，未考虑时间价值衰减）")
+  return lines.join("\n")
+}
+
 export const optionPricingTool = tool(
   async (params) => {
+    const { action } = params
+
+    // payoff 是纯本地计算，不需要登录、不调后端 —— 放在鉴权之前
+    if (action === "payoff") {
+      return optionPayoffText(params as unknown as PayoffSpec)
+    }
+
     if (!getAuthToken()) {
       return "错误：未登录或 token 已过期。请先在登录界面完成登录。"
     }
-    const { action } = params
     const axios = await getAxios()
 
     try {
@@ -186,14 +343,15 @@ export const optionPricingTool = tool(
   {
     name: "option_pricing",
     description: [
-      "期权定价与 IV 曲面分析工具。",
+      "期权定价、IV 曲面与组合收益分析工具。",
       "action='pricing' 单合约定价（spot/strike/expiry_days/volatility 必填，method=black_scholes/monte_carlo/binomial）；",
       "action='pricing_multi' 批量定价同一标的多个 strike（contracts=[{strike,is_call?},...]）；",
-      "action='iv_surface' 查询交易所期权 IV 曲面（exchange=CFFEX/SSE/SZSE，product=品种名如 510050/510300/510500）",
+      "action='iv_surface' 查询交易所期权 IV 曲面（exchange=CFFEX/SSE/SZSE，product=品种名如 510050/510300/510500）；",
+      "action='payoff' 组合收益图（本地计算：盈亏平衡点/最大盈亏。optionStrategy=策略类型，spot=现价，strike/premium=第一条腿，strike2/premium2=第二条腿，strike3/premium3=第三条腿，ratio=比例价差比例）",
     ].join(""),
     schema: z.object({
-      action: z.enum(["pricing", "pricing_multi", "iv_surface"]).describe("操作类型"),
-      spot: z.number().optional().describe("标的价格（pricing/pricing_multi 必填）"),
+      action: z.enum(["pricing", "pricing_multi", "iv_surface", "payoff"]).describe("操作类型"),
+      spot: z.number().optional().describe("标的价格（pricing/pricing_multi 必填；payoff 时作为现价）"),
       strike: z.number().optional().describe("行权价（pricing 必填）"),
       contracts: z.array(z.object({
         strike: z.number().describe("行权价"),
@@ -209,6 +367,24 @@ export const optionPricingTool = tool(
       method: z.string().optional().describe("定价方法: black_scholes/monte_carlo/binomial（默认 black_scholes）"),
       exchange: z.string().optional().describe("交易所: CFFEX/SSE/SZSE（iv_surface 必填）"),
       product: z.string().optional().describe("品种: 50ETF/300ETF/500ETF/510050/510300 等（iv_surface 必填）"),
+      // === payoff（组合收益）参数 ===
+      optionStrategy: z.enum([
+        "long_call", "long_put", "short_call", "short_put",
+        "bull_call_spread", "bear_put_spread",
+        "straddle", "strangle",
+        "butterfly", "condor",
+        "ratio_spread", "calendar_spread",
+      ]).optional().describe("期权策略类型（payoff 必填）"),
+      premium: z.number().optional().describe("权利金（第一条腿，正数表示支付，负数表示收取）"),
+      quantity: z.number().optional().describe("合约数量（第一条腿，默认 1）"),
+      direction: z.enum(["buy", "sell"]).optional().describe("买卖方向（第一条腿，默认 buy）"),
+      strike2: z.number().optional().describe("行权价（第二条腿）"),
+      premium2: z.number().optional().describe("权利金（第二条腿）"),
+      quantity2: z.number().optional().describe("合约数量（第二条腿）"),
+      strike3: z.number().optional().describe("行权价（第三条腿，butterfly 需要）"),
+      premium3: z.number().optional().describe("权利金（第三条腿）"),
+      quantity3: z.number().optional().describe("合约数量（第三条腿）"),
+      ratio: z.number().optional().describe("比例（ratio_spread 需要，如 2 表示 1:2）"),
     }),
   }
 )

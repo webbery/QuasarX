@@ -18,7 +18,8 @@
 import { registerAction } from './actionRegistry'
 import { makeArtifact, type PatchArtifact } from './artifacts'
 import { UI_SPEC_VERSION, type UiSpec } from '@/lib/ui/protocol'
-import { applyStrategyUpdate } from '@/lib/tools/strategy'
+import { applyStrategyUpdate, deleteStrategyById } from '@/lib/tools/strategy'
+import { deleteQuoteData, deleteFinanceData } from '@/lib/tools/data'
 import { useStrategyControl } from '@/composables/useStrategyControl'
 import { useBacktestControl } from '@/composables/useBacktestControl'
 import { useHistoryStore } from '@/stores/history'
@@ -98,6 +99,50 @@ export function ensureAgentActionsRegistered(): void {
     )
 
     return { ok: result.ok, message: result.message }
+  })
+
+  /* ---------- 删除行情数据（不可逆，需用户点击确认） ---------- */
+  registerAction('data_manager.delete_quote', async (action) => {
+    const table = action.params?.table as string | undefined
+    const symbol = action.params?.symbol as string | undefined
+    try {
+      const message = await deleteQuoteData({ table, symbol })
+      return { ok: true, message }
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `删除行情数据失败：${reason}` }
+    }
+  })
+
+  /* ---------- 删除财务数据（不可逆，需用户点击确认） ---------- */
+  registerAction('data_manager.delete_finance', async (action) => {
+    const code = action.params?.code as string | undefined
+    const category = action.params?.category as string | undefined
+    if (!code) {
+      return { ok: false, message: '缺少 code 参数，无法删除财务数据' }
+    }
+    try {
+      const message = await deleteFinanceData({ code, category })
+      return { ok: true, message }
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `删除财务数据失败：${reason}` }
+    }
+  })
+
+  /* ---------- 删除策略图（不可逆，需用户点击确认） ---------- */
+  registerAction('strategy.delete_strategy', async (action) => {
+    const strategyId = action.params?.strategyId as string | undefined
+    if (!strategyId) {
+      return { ok: false, message: '缺少 strategyId 参数，无法删除策略图' }
+    }
+    try {
+      const message = await deleteStrategyById(strategyId)
+      return { ok: true, message }
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `删除策略图失败：${reason}` }
+    }
   })
 
   /* ---------- 执行回测 ---------- */

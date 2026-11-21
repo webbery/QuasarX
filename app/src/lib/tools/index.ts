@@ -16,13 +16,11 @@ import type { StructuredToolInterface } from "@langchain/core/tools"
 import { quoteTool } from "./quote"
 import { accountTool } from "./account"
 import { positionTool } from "./position"
-import { datetimeTool } from "./datetime"
-import { platformTool } from "./platform"
+import { javascriptTool } from "./javascript"
 import { knowledgeTool } from "./knowledge"
 import { webSearchTool } from "./webSearch"
 import { strategyTool } from "./strategy"
 import { backtestTool } from "./backtest"
-import { calculatorTool } from "./calculator"
 import { skillTool } from "./skill"
 import { dataTool } from "./data"
 import { analysisTool } from "./analysis"
@@ -36,13 +34,11 @@ const builtinTools: StructuredToolInterface[] = [
   quoteTool,
   accountTool,
   positionTool,
-  datetimeTool,
-  platformTool,
+  javascriptTool,
   knowledgeTool,
   webSearchTool,
   strategyTool,
   backtestTool,
-  calculatorTool,
   skillTool,
   dataTool,
   analysisTool,

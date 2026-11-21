@@ -1,15 +1,24 @@
 /**
  * 五个专业 Agent 定义
  *
- * 渐进式披露：
- * - 每个 Agent 常驻的只有 `search`（能力检索/启用）+ 白名单里的 `ask_*`（跨 Agent 转交）
- * - 其余工具由 LLM 先 search 再 enable，**下一轮**才真正绑定进 tools 数组
- * - 绑定是每轮重建的（rawLlm.bindTools(currentTools)），enable 立刻在下一轮生效
+ * 渐进式披露 + 能力地图：
+ * - 每个 Agent 常驻的只有 `search`（取域/加载契约）+ `ui` + `report_gap`（越界出口）
+ *   + 白名单里的 `ask_*`（跨 Agent 转交）
+ * - 其余工具由 LLM 先 search(action="domain") 认域、再 search(action="contract") 加载契约，
+ *   **下一轮**才真正绑定进 tools 数组
+ * - 绑定是每轮重建的（rawLlm.bindTools(currentTools)），加载立刻在下一轮生效
+ * - system prompt 里注入的是**能力地图**（域的场景与限制），不是工具字典 ——
+ *   完整 JSON Schema 只在契约加载后进入上下文
+ *
+ * 门禁（代码层，不靠 prompt 自觉）：
+ * - 白名单内但契约未加载 → 自动预取契约再执行，并把契约要点回灌给模型
+ * - 白名单外（越权域）→ 拒绝执行，原因写进 AI 消息，模型下一轮能看到并改走 ask_xxx
+ * - 目录里没有的名字（幻觉）→ 拒绝，并列出本 Agent 可用工具
  *
  * 为什么每轮重绑而不是一次性 bindTools：
  *   一次性绑定要么把所有工具都塞进 prompt（21 个工具 ≈ 6500 tok/轮），
  *   要么得改 state 存「本轮启用了什么」。后者要动 GraphState 和 checkpoint，
- *   而一次 search 只要 ~200 tok —— 单轮内用闭包变量累积更划算。
+ *   而一次检索只要 ~200 tok —— 单轮内用闭包变量累积更划算。
  */
 
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
@@ -21,6 +30,8 @@ import { INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { isToolArtifactResult, type ArtifactEnvelope } from "./artifacts";
 import { getToolCatalog, type ToolCatalog } from "./toolCatalog";
 import { createSearchTool } from "./searchTool";
+import { capabilityOwner, renderCapabilityMap } from "./capabilityMap";
+import { createGapTool, formatGap } from "./gapTool";
 import { uiTool } from "../tools/ui";
 
 /** 从 LangChain 响应中提取 token 用量（无用量信息时返回 undefined） */
@@ -78,13 +89,18 @@ interface AgentRunResult {
  * 为什么必须剔除：Anthropic 会校验历史消息里 tool_use 的 name 必须在 tools 数组中，
  * 否则下一次请求直接 400。OpenAI 虽然宽松，但留着也只会让模型误以为调用成功。
  * 对应地，这类调用也不再补 ToolMessage（否则 tool_result 找不到对应的 tool_use）。
+ *
+ * 但「剔除」不等于「静默」：被挡掉的调用原因必须写进这条消息的正文，
+ * 否则模型不知道自己的调用被拒了，下一轮会原样再试一次。
  */
-function sanitizeAiMessage(response: any, keepCalls: any[]): AIMessage {
+function sanitizeAiMessage(response: any, keepCalls: any[], refusals: string[] = []): AIMessage {
   const allCalls: any[] = response.tool_calls ?? [];
-  if (keepCalls.length === allCalls.length) return response as AIMessage;
-
   const keepNames = new Set(keepCalls.map((c) => c.name));
-  const placeholder = "（部分工具调用未被识别，已忽略）";
+  const dropped = allCalls.length - keepCalls.length;
+
+  if (dropped === 0 && refusals.length === 0) return response as AIMessage;
+
+  const placeholder = "（部分工具调用未被接受，已忽略）";
   let content = response.content;
   if (Array.isArray(content)) {
     const filtered = content.filter(
@@ -94,6 +110,16 @@ function sanitizeAiMessage(response: any, keepCalls: any[]): AIMessage {
   } else if (typeof content === "string" && content.trim() === "") {
     // 只带 tool_use 没有正文的响应，剔空后会让 Anthropic 报「content 不能为空」
     content = placeholder;
+  }
+
+  // 拒绝原因写进正文：模型下一轮能读到「为什么被挡 + 该走哪条路」
+  if (refusals.length) {
+    const text = `[工具调用被拒绝]\n${refusals.map((r) => `- ${r}`).join("\n")}`;
+    if (Array.isArray(content)) {
+      content = [...content, { type: "text", text }];
+    } else {
+      content = `${content}\n\n${text}`;
+    }
   }
 
   return new AIMessage({
@@ -150,12 +176,37 @@ async function runAgentLoop(
     return true;
   };
 
-  // 常驻：search + ui + 白名单里的 ask_*
+  /** 工具契约要点：模型直接调用时并不知道参数叫什么，这里补给它 */
+  const contractHint = (name: string): string => {
+    const entry = catalog?.get(name);
+    if (!entry) return "";
+    const params = entry.params ? `\n参数：${entry.params}` : "";
+    return `${entry.summary}${params}`;
+  };
+
+  /** 拒绝原因：越权（不在白名单）还是幻觉（目录里根本没这个工具） */
+  const refuseReason = (name: string): string => {
+    if (!catalog?.has(name)) {
+      const loadable = [...allowedSet].filter((n) => !n.startsWith("ask_"));
+      return [
+        `拒绝执行「${name}」：工具目录里没有这个工具（可能记错了名字）。`,
+        `本 Agent 可加载的工具：${loadable.join(", ")}。`,
+      ].join("");
+    }
+    const owner = capabilityOwner(name);
+    const route = owner.routeTo
+      ? `用 \`ask_${owner.routeTo}\` 转交给 ${owner.routeTo} Agent 处理。`
+      : "该能力不在当前 Agent 的职责域内，不要用相近工具硬凑。";
+    return `拒绝执行「${name}」：不在当前 Agent（${agentType}）的能力域内。${route}`;
+  };
+
+  // 常驻：search + ui + report_gap + 白名单里的 ask_*
   if (catalog) {
     currentTools.push(
       createSearchTool({
         catalog,
         allowedTools,
+        agentType,
         residentToolNames: residentTools.map((t) => t.name),
         onEnable: enableTool,
       }),
@@ -163,6 +214,17 @@ async function runAgentLoop(
   }
   // ui 是跨领域的展示入口（出图 / 进度 / 交互），每个 Agent 都要能展示结果，故常驻
   currentTools.push(uiTool, ...residentTools);
+  // report_gap 是越界出口：能力不足时有一条正式的路可走，而不是硬凑
+  currentTools.push(
+    createGapTool((gap) => {
+      onEvent?.({
+        agent: agentType,
+        content: formatGap(gap),
+        eventType: "gap",
+        timestamp: Date.now(),
+      });
+    }),
+  );
 
   let currentMessages = [...messages];
   let toolCallCount = 0;
@@ -236,37 +298,47 @@ async function runAgentLoop(
     // 执行 Tool 调用
     toolCallCount += toolCalls.length;
 
-    // 先把「允许自动绑定」的调用判出来，再决定哪些调用要写回消息历史
+    // 门禁：判定每个调用能不能执行
     const executable = new Map<any, StructuredToolInterface>();
+    /** 被挡下来的调用及原因 —— 要写进 AI 消息正文，模型才知道该改走哪条路 */
+    const refusals: string[] = [];
+    /** 预取契约的要点，回灌给模型（它调用时并不知道参数叫什么） */
+    const contractHints = new Map<string, string>();
+
     for (const tc of toolCalls) {
       const existing = currentTools.find((t) => t.name === tc.name);
       if (existing) {
         executable.set(tc, existing);
         continue;
       }
-      // 兜底：模型可能没 enable 就直接调（它从检索结果里看到了名字）。
-      // 在白名单里就顺手绑上，别让一次可自动修复的失误变成一条错误消息。
+      // 契约门禁：白名单内但契约没加载 → 先把契约捞出来再执行，
+      // 别让一次可自动修复的失误变成一条错误消息（但契约要点必须回灌给它）。
       if (allowedSet.has(tc.name) && enableTool(tc.name)) {
         const bound = currentTools.find((t) => t.name === tc.name)!;
         executable.set(tc, bound);
+        const hint = contractHint(tc.name);
+        if (hint) contractHints.set(tc.id ?? tc.name, hint);
         onEvent?.({
           agent: agentType,
-          content: `自动启用工具: ${tc.name}（模型跳过了 enable 步骤）`,
+          content: `自动加载契约: ${tc.name}（模型跳过了 contract 步骤）`,
           eventType: "thought",
           timestamp: Date.now(),
         });
         continue;
       }
+      // 越权（不在本 Agent 的能力域）或幻觉（目录里没这个工具）→ 拒绝执行
+      const reason = refuseReason(tc.name);
+      refusals.push(reason);
       onEvent?.({
         agent: agentType,
-        content: `忽略未启用的工具调用: ${tc.name}（请先用 search 检索并 enable）`,
+        content: reason,
         eventType: "error",
         timestamp: Date.now(),
       });
     }
 
     const keepCalls = toolCalls.filter((tc) => executable.has(tc));
-    const aiMessage = sanitizeAiMessage(response, keepCalls);
+    const aiMessage = sanitizeAiMessage(response, keepCalls, refusals);
 
     // AIMessage 必须先于 ToolMessage 进历史，否则 Anthropic 会因 tool_result 找不到 tool_use 而拒
     currentMessages.push(aiMessage);
@@ -316,6 +388,12 @@ async function runAgentLoop(
           timestamp: Date.now(),
         });
 
+        // 预取契约时把要点一并回灌：模型第一次调这个工具，很可能参数名猜错了
+        const hint = contractHints.get(tc.id ?? tc.name);
+        if (hint) {
+          resultStr = `（该工具契约要点：${hint}）\n${resultStr}`;
+        }
+
         if (artifact) {
           onEvent?.({
             agent: agentType,
@@ -341,9 +419,11 @@ async function runAgentLoop(
           timestamp: Date.now(),
         });
 
+        // 报错的常见原因是参数猜错 —— 把契约要点一并给出，模型下一轮就能改对
+        const hint = contractHints.get(tc.id ?? tc.name);
         currentMessages.push(
           new ToolMessage({
-            content: `Error: ${errorMsg}`,
+            content: hint ? `Error: ${errorMsg}\n\n（该工具契约要点：${hint}）` : `Error: ${errorMsg}`,
             tool_call_id: tc.id ?? "",
           }),
         );
@@ -388,9 +468,15 @@ export function createAgentNode(
     const { messages, userInput } = state;
 
     // 构建消息：system prompt + 历史 + 用户输入
-    const systemPrompt = AGENT_SYSTEM_PROMPTS[agentType];
     const allowedTools = AGENT_TOOL_CONFIG[agentType] ?? [];
     const residentTools = getResidentToolsForAgent(agentType, internalTools);
+
+    // system prompt = 行为约束 + 能力地图
+    // 能力地图只给域的场景与限制，不给工具 JSON Schema（完整契约按需加载）
+    const capabilityMap = renderCapabilityMap(agentType, new Set(allowedTools));
+    const systemPrompt = capabilityMap
+      ? `${AGENT_SYSTEM_PROMPTS[agentType]}\n\n${capabilityMap}`
+      : AGENT_SYSTEM_PROMPTS[agentType];
 
     // 工具目录是单例，插件只加载一次；失败时降级为「只有转交工具」
     let catalog: ToolCatalog | null = null;

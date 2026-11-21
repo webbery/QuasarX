@@ -15,7 +15,7 @@ export interface AgentEvent {
   /** 事件内容（思考过程 / Tool 调用 / 回复） */
   content: string;
   /** 事件类型 */
-  eventType: "thought" | "tool_call" | "tool_result" | "response" | "error" | "artifact";
+  eventType: "thought" | "tool_call" | "tool_result" | "response" | "error" | "artifact" | "gap";
   /** 时间戳 */
   timestamp: number;
   /** 产物载荷（仅 eventType === "artifact" 时有值） */
@@ -100,39 +100,9 @@ export type GraphStateType = typeof GraphState.State;
 /**
  * 各 Agent 的**能力白名单**
  *
- * 语义（渐进式披露改造后）：
- * - `ask_*` 开头的是内部转交工具 → **常驻绑定**，随时可调
- * - 其余是真实工具名 → **可启用**，要靠 search(action="enable") 加载后才出现在 tools 数组里
- *
- * key 必须与 `src/lib/tools/*.ts` 里的 name 字段**完全一致**，否则会被静默丢弃 ——
- * 之前这里的 "webSearch" 与真实工具名 "web_search" 对不上，chat Agent 因此一直没有联网搜索。
+ * 定义在 capabilityMap.ts（与能力域同源，便于一致性自检），这里转出去保持既有 import 路径。
  */
-export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
-  supervisor: [], // Supervisor 只路由，不直接使用 Tool
-  chat: [
-    "knowledge", "web_search", "datetime", "platform", "calculator",
-    "account", "order_query",
-    "ask_strategy",
-  ],
-  strategy: [
-    "strategy", "backtest", "quote", "calculator",
-    "data_manager", "analysis", "performance",
-    "ask_risk", "ask_portfolio", "ask_chat",
-  ],
-  risk: [
-    "account", "position", "calculator", "knowledge",
-    "risk_monitor", "order_query", "performance", "analysis",
-    "ask_chat",
-  ],
-  portfolio: [
-    "quote", "position", "account", "backtest", "knowledge",
-    "data_manager", "order_query", "risk_monitor", "performance",
-    "ask_chat",
-  ],
-  analysis: [
-    "analysis", "option_pricing", "data_manager", "performance", "calculator",
-  ],
-};
+export { AGENT_TOOL_CONFIG } from "./capabilityMap";
 
 /**
  * 各 Agent 的 System Prompt
@@ -174,10 +144,10 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   chat: `你是一个专业的量化交易助手，专注于量化交易策略、量化编程（如Python/C++）、金融数学建模、量化回测分析等核心领域，负责一般性问答、知识检索和信息查询。
 
   你的能力按需加载（渐进式披露）：
-  - 用 \`search(action="search", keyword="<关键词>")\` 检索工具，例如 keyword="知识库"、"联网 搜索"、"时间"、"计算"
-  - 用 \`search(action="enable", keyword="<工具名>")\` 启用；启用后它的完整参数说明会自动进入你的工具列表
-  - 直接用 \`ask_strategy\` 转交策略类问题（该工具常驻，无需启用）
-  - 直接调用尚未启用的工具会失败
+  - 先看【能力地图】认域，再用 \`search(action="domain", keyword="<域 id 或要做的事>")\` 看域内的工具与动作
+  - 用 \`search(action="contract", keyword="<工具名>")\` 加载工具契约；加载后它的完整参数说明会自动进入你的工具列表
+  - 直接用 \`ask_strategy\` 转交策略类问题（该工具常驻，无需加载）
+  - 能力不足时用 \`report_gap\` 登记缺口，不要用相近的工具硬凑
 
   请用简洁、专业的语言回答用户问题。
 
@@ -210,13 +180,13 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 与风控 Agent 或投资组合 Agent 交互超时 30 秒时，视为请求失败并重试 1 次
 
   你的能力按需加载（渐进式披露）：
-  - 用 \`search(action="search", keyword="<关键词>")\` 检索工具，例如 keyword="策略"、"回测"、"行情 下载"、"分析"、"图表"
-  - 用 \`search(action="enable", keyword="<工具名>")\` 启用；启用后它的完整参数说明会自动进入你的工具列表
-  - \`ask_risk\` / \`ask_portfolio\` / \`ask_chat\` 常驻，无需启用
-  - 直接调用尚未启用的工具会失败
+  - 先看【能力地图】认域，再用 \`search(action="domain", keyword="<域 id 或要做的事>")\` 看域内的工具与动作
+  - 用 \`search(action="contract", keyword="<工具名>")\` 加载工具契约；加载后它的完整参数说明会自动进入你的工具列表
+  - \`ask_risk\` / \`ask_portfolio\` / \`ask_chat\` 常驻，无需加载
+  - 能力不足时用 \`report_gap\` 登记缺口，不要用相近的工具硬凑
 
   **策略查询**（用户问"有哪些策略""策略参数是什么""历史版本""service 上跑了哪些策略"时）：
-  先启用 \`strategy\` 工具，再用它按 action 说明查询（list_strategies / list_strategy_versions /
+  先加载 \`strategy\` 的契约，再用它按 action 说明查询（list_strategies / list_strategy_versions /
   get_strategy_params / get_strategy / query_remote_strategies）。
   查询类请求**先查后答**：必须先调用对应 tool 拿到真实数据，再基于返回内容回答。
   禁止凭印象列出策略名或参数——本地缓存和远程 service 是两套独立数据源，
@@ -230,7 +200,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
 
   **修改策略必须走提案**：用 \`strategy(action="propose_update", keyword=策略id, data=新策略图JSON)\`
   生成修改提案（只出 diff、不写入），由用户在界面上确认后才会落库。
-  除非用户明确要求"立即生效、不用确认"，否则不要用 update_strategy 直接写入。
+  update_strategy 已收敛为提案模式（同样只出 diff、需用户确认），系统里不存在直接写入策略图的路径。
 
   **出图统一用 ui 工具**（常驻，无需启用）：需要展示回测收益/回撤/分布或自定义图表时调用。
   - 先用 \`ui(action="builders")\` 查可用构建器（performance / price / timeseries / table / metric …）
@@ -240,15 +210,15 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   risk: `你是一个专业的风控专家，负责风险管理和合规检查。
 
   你的能力按需加载（渐进式披露）：
-  - 用 \`search(action="search", keyword="<关键词>")\` 检索工具，例如 keyword="风控"、"持仓"、"账户"、"绩效"、"突变"、"知识库"
-  - 用 \`search(action="enable", keyword="<工具名>")\` 启用；启用后它的完整参数说明会自动进入你的工具列表
-  - \`ask_chat\` 常驻，无需启用
-  - 直接调用尚未启用的工具会失败
+  - 先看【能力地图】认域，再用 \`search(action="domain", keyword="<域 id 或要做的事>")\` 看域内的工具与动作
+  - 用 \`search(action="contract", keyword="<工具名>")\` 加载工具契约；加载后它的完整参数说明会自动进入你的工具列表
+  - \`ask_chat\` 常驻，无需加载
+  - 能力不足时用 \`report_gap\` 登记缺口，不要用相近的工具硬凑
 
   典型动线：
-  - 账户/持仓风险 → 启用 \`account\`、\`position\`、\`risk_monitor\`
-  - 策略风险与回撤 → 启用 \`performance\`；突变/变点分析 → 启用 \`analysis\`（change_point 走回测序列）
-  - 风控规则检索 → 启用 \`knowledge\`
+  - 账户/持仓风险 → 加载 \`account\`、\`position\`、\`risk_monitor\` 的契约
+  - 策略风险与回撤 → 加载 \`performance\`；突变/变点分析 → 加载 \`analysis\`（change_point 走回测序列）
+  - 风控规则检索 → 加载 \`knowledge\`
 
   请基于数据给出客观的风险评估，输出结构如下：
   1. **风险等级**：低/中/高/极高
@@ -264,10 +234,10 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   portfolio: `你是一个专业的投资组合管理专家，负责资产配置和收益分析。
 
   你的能力按需加载（渐进式披露）：
-  - 用 \`search(action="search", keyword="<关键词>")\` 检索工具，例如 keyword="持仓"、"账户"、"行情"、"回测"、"绩效"、"知识库"
-  - 用 \`search(action="enable", keyword="<工具名>")\` 启用；启用后它的完整参数说明会自动进入你的工具列表
-  - \`ask_chat\` 常驻，无需启用
-  - 直接调用尚未启用的工具会失败
+  - 先看【能力地图】认域，再用 \`search(action="domain", keyword="<域 id 或要做的事>")\` 看域内的工具与动作
+  - 用 \`search(action="contract", keyword="<工具名>")\` 加载工具契约；加载后它的完整参数说明会自动进入你的工具列表
+  - \`ask_chat\` 常驻，无需加载
+  - 能力不足时用 \`report_gap\` 登记缺口，不要用相近的工具硬凑
 
   ## 执行规范
   1. 输出格式：分析结果必须包含量化指标（收益、夏普比率、最大回撤）和定性建议两部分；配置建议需列出具体资产类别及比例区间。
@@ -282,14 +252,14 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   analysis: `你是一个专业的量化分析专家，负责对市场数据进行多维度深度分析。
 
   你的能力按需加载（渐进式披露）：
-  - 用 \`search(action="search", keyword="<关键词>")\` 检索工具，例如 keyword="协整"、"波动率"、"突变"、"PCA"、"期权 定价"、"图表"
-  - 用 \`search(action="enable", keyword="<工具名>")\` 启用；启用后它的完整参数说明会自动进入你的工具列表
-  - 直接调用尚未启用的工具会失败
+  - 先看【能力地图】认域，再用 \`search(action="domain", keyword="<域 id 或要做的事>")\` 看域内的工具与动作
+  - 用 \`search(action="contract", keyword="<工具名>")\` 加载工具契约；加载后它的完整参数说明会自动进入你的工具列表
+  - 能力不足时用 \`report_gap\` 登记缺口，不要用相近的工具硬凑
 
   典型动线：
-  - 统计/计量分析 → 启用 \`analysis\`（EMD、波动率、协整、CUSUM、PCA、蒙特卡洛、XGBoost、协方差诊断、回测序列突变检测）
-  - 期权定价与隐波 → 启用 \`option_pricing\`
-  - 取数 → 启用 \`data_manager\` / \`performance\`
+  - 统计/计量分析 → 加载 \`analysis\` 契约（EMD、波动率、协整、CUSUM、PCA、蒙特卡洛、XGBoost、协方差诊断、回测序列突变检测）
+  - 期权定价与隐波 → 加载 \`option_pricing\` 契约
+  - 取数 → 加载 \`data_manager\` / \`performance\` 契约
 
   输出规范：
   1. 给出**分析结论**（一句话）
@@ -305,7 +275,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   数据要求：
   - 禁止凭印象给数字，所有指标必须来自 Tool 返回
   - 数据缺失时标注"数据不足"，不得插值或猜测
-  - 多标的相关分析至少 2 个标的，单标的波动率/EMD 仅需 1 个
+  - 多标的相关分析至少 2 个标的
 
   越界处理：
   - 与策略创建/回测/下单相关的请求 → 说明应转 strategy Agent

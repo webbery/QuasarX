@@ -80,6 +80,10 @@ export type ActionKind =
   | 'deploy_strategy'
   | 'apply_patch'
   | 'open_panel'
+  // 不可逆的删除动作：工具不直接执行，产出待确认动作，用户点了才真删
+  | 'data_manager.delete_quote'
+  | 'data_manager.delete_finance'
+  | 'strategy.delete_strategy'
 
 export interface ArtifactAction {
   id: string

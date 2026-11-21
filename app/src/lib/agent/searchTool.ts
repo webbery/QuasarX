@@ -5,26 +5,37 @@
  *   tools/* → agent/toolCatalog → tools/* 会成循环依赖；
  *   agent 层 → tools 层是单向的。
  *
- * 四个 action：
- * - search  同时检索工具目录与 skills，分词匹配，返回紧凑候选
- * - enable  把某个工具加进本次会话的绑定集合（下一轮 LLM 就能看到它的完整 schema）
- * - read    读取 skill 正文（等价于旧 skill 工具的 read）
- * - list    列出本 Agent 可用的全部工具名与技能名
+ * 五个 action（两级加载）：
+ * - domain   看能力域：场景、限制、域内工具与动作清单（不含 JSON Schema）
+ * - contract 加载某个工具的完整契约（description + 参数说明）并绑定它
+ * - search   关键词模糊检索（兜底：域路由失败时的第二条路）
+ * - read     读取 skill 正文（等价于旧 skill 工具的 read）
+ * - list     列出本 Agent 可用的全部能力域与技能
  *
- * 为什么 enable 只回一句短确认：
- *   完整 schema 会由下一轮的 tools 数组提供，这里再吐一遍纯属重复烧 token。
+ * 为什么 contract 合并了 enable：
+ *   「启用」和「看参数说明」本来就是一件事 —— 模型拿到工具名却不知道参数，
+ *   只能靠猜。合并后模型一次调用就同时拿到契约和绑定结果。
  */
 
 import { tool } from "@langchain/core/tools"
 import type { StructuredToolInterface } from "@langchain/core/tools"
 import { z } from "zod"
 import { tokenizeQuery, type ToolCatalog, type ToolCatalogEntry } from "./toolCatalog"
+import {
+  capabilityOwner,
+  domainsForAgent,
+  effectiveTools,
+  type CapabilityDomain,
+} from "./capabilityMap"
+import type { AgentType } from "./types"
 
 export interface SearchToolDeps {
   /** 工具目录 */
   catalog: ToolCatalog
   /** 本 Agent 可启用的工具白名单 */
   allowedTools: string[]
+  /** 当前 Agent（决定能力地图的可见范围） */
+  agentType: AgentType
   /**
    * 常驻的转交工具名（ask_xxx）
    *
@@ -50,6 +61,8 @@ const MAX_RESULTS = 6
 const MAX_ACTIONS = 8
 /** search 结果里最多显示几个技能 */
 const MAX_SKILLS = 3
+/** 契约正文上限（避免把超长 description 全量灌进上下文） */
+const MAX_CONTRACT_CHARS = 2400
 
 /** 读取 skills（非 Electron 环境返回 null） */
 async function loadSkills(): Promise<SkillInfo[] | null> {
@@ -146,15 +159,143 @@ function formatEntry(entry: ToolCatalogEntry, matched?: string[], matchedActions
   return parts.join("\n")
 }
 
+/** 域的模糊匹配：域 id 精确命中 > 标题/场景/关键词分词命中 */
+function matchDomain(query: string, domains: CapabilityDomain[]): CapabilityDomain | undefined {
+  const q = (query ?? "").trim().toLowerCase()
+  if (!q) return undefined
+
+  const exact = domains.find((d) => d.id.toLowerCase() === q)
+  if (exact) return exact
+
+  const segments = tokenizeQuery(query)
+  let best: { domain: CapabilityDomain; score: number } | undefined
+  for (const d of domains) {
+    const hay = [d.id, d.title, d.scenarios, ...(d.keywords ?? [])].join(" ").toLowerCase()
+    let score = 0
+    for (const seg of segments) {
+      if (d.id.toLowerCase().includes(seg)) score += 40
+      else if (hay.includes(seg)) score += 18
+    }
+    if (score > 0 && (!best || score > best.score)) best = { domain: d, score }
+  }
+  return best?.domain
+}
+
 export function createSearchTool(deps: SearchToolDeps): StructuredToolInterface {
-  const { catalog, allowedTools, residentToolNames = [], onEnable } = deps
+  const { catalog, allowedTools, agentType, residentToolNames = [], onEnable } = deps
   const allowed = new Set(allowedTools)
   const resident = new Set(residentToolNames)
+  const domains = domainsForAgent(agentType).filter((d) => effectiveTools(agentType, d, allowed).length > 0)
+
+  /** 域卡片：域内工具 + 各自的动作清单（不含 JSON Schema） */
+  function formatDomain(domain: CapabilityDomain): string {
+    const lines = [`**${domain.id}** · ${domain.title}`, `适用：${domain.scenarios}`]
+    if (domain.limits.length) lines.push(`限制：${domain.limits.join("；")}`)
+    if (domain.requires?.length) lines.push(`前置：${domain.requires.join("；")}`)
+    const tools = effectiveTools(agentType, domain, allowed)
+    lines.push("域内工具：")
+    for (const name of tools) {
+      const entry = catalog.get(name)
+      if (!entry) {
+        // ui 这类常驻工具不进目录（不需要契约加载）
+        lines.push(`- ${name}（常驻，无需加载契约）`)
+        continue
+      }
+      const actions = entry.actions.length ? ` → ${entry.actions.slice(0, MAX_ACTIONS).join(", ")}` : ""
+      lines.push(`- ${name}${actions}`)
+    }
+    const gaps = (domain.notCovered ?? []).filter((nc) => !nc.routeTo)
+    if (gaps.length) {
+      lines.push(`不覆盖：${gaps.map((g) => g.topic).join("；")}（这类需求用 report_gap 登记）`)
+    }
+    return lines.join("\n")
+  }
+
+  /** 越权提示：这个工具归谁管 */
+  function ownershipHint(toolName: string): string {
+    const owner = capabilityOwner(toolName)
+    if (!owner.domains.length) {
+      return `「${toolName}」不在系统的任何能力域内 —— 系统没有这个能力，不要用相近工具硬凑。`
+    }
+    const domainsText = owner.domains.map((d) => d.id).join("、")
+    if (owner.routeTo) {
+      return `「${toolName}」属于 ${domainsText} 域，不在当前 Agent 的能力域内 —— 用 \`ask_${owner.routeTo}\` 转交给 ${owner.routeTo} Agent。`
+    }
+    return `「${toolName}」属于 ${domainsText} 域，不在当前 Agent 的能力域内。`
+  }
 
   return tool(
     async ({ action, keyword }) => {
       switch (action) {
-        /* ---------- 检索 ---------- */
+        /* ---------- 能力域 ---------- */
+        case "domain": {
+          if (!keyword?.trim()) {
+            return '错误：domain 需要 keyword 参数。填域 id（如 "market_data"）或描述你要做的事（如 "下载行情"）。'
+          }
+
+          const domain = matchDomain(keyword, domains)
+          if (!domain) {
+            return [
+              `没有匹配「${keyword}」的能力域。`,
+              ``,
+              `本 Agent 可用的能力域：`,
+              ...domains.map((d) => `- ${d.id} · ${d.title}（${d.scenarios}）`),
+              ``,
+              `换个说法再试；如果确实没有这个能力，用 report_gap 登记缺口，不要用相近工具硬凑。`,
+            ].join("\n")
+          }
+
+          return [
+            `【能力域】${domain.id} · ${domain.title}`,
+            formatDomain(domain),
+            ``,
+            `下一步：search(action="contract", keyword="<工具名>") 加载该工具的完整契约，加载后下一轮即可调用。`,
+          ].join("\n")
+        }
+
+        /* ---------- 工具契约 ---------- */
+        case "contract":
+        case "enable": {
+          const name = keyword?.trim()
+          if (!name) return "错误：contract 需要 keyword 参数（要加载的工具名）。"
+
+          const entry = catalog.get(name)
+          if (!entry) {
+            const available = catalog.list().filter((e) => allowed.has(e.name)).map((e) => e.name)
+            return [
+              `工具目录里没有「${name}」。`,
+              `本 Agent 可用的工具：${available.join(", ")}。`,
+              `先 search(action="domain") 找到对应能力域，或换用正确的工具名。`,
+            ].join("\n")
+          }
+
+          if (!allowed.has(name)) {
+            return [
+              `「${name}」不在当前 Agent 的能力域内。`,
+              ownershipHint(name),
+              ``,
+              `本 Agent 可用的能力域：${domains.map((d) => d.id).join(", ")}。`,
+              `如果这属于别的 Agent 的职责，用对应的 ask_xxx 转交工具。`,
+            ].join("\n")
+          }
+
+          onEnable(name)
+
+          const actions = entry.actions.length ? `\n可用 action：${entry.actions.join(", ")}` : ""
+          const params = entry.params ? `\n\n参数说明：\n${entry.params}` : ""
+          const desc = entry.description.length > MAX_CONTRACT_CHARS
+            ? `${entry.description.slice(0, MAX_CONTRACT_CHARS)}…（已截断，完整行为以工具校验为准）`
+            : entry.description
+          return [
+            `已加载 **${entry.name}** 的契约，下一轮即可直接调用。`,
+            actions,
+            ``,
+            desc,
+            params,
+          ].join("\n")
+        }
+
+        /* ---------- 检索（兜底） ---------- */
         case "search": {
           if (!keyword?.trim()) {
             return '错误：search 需要 keyword 参数。多个关键词用空格分隔，例如 keyword="行情 下载"。'
@@ -170,8 +311,10 @@ export function createSearchTool(deps: SearchToolDeps): StructuredToolInterface 
             return [
               `未找到与「${keyword}」相关的能力。`,
               ``,
-              `本 Agent 可启用的工具（${available.length} 个）：${available.join(", ")}`,
-              `可以换个说法再搜，或直接 enable 上面某个工具。`,
+              `本 Agent 可用的工具（${available.length} 个）：${available.join(", ")}`,
+              `本 Agent 可用的能力域：${domains.map((d) => d.id).join(", ")}`,
+              `可以换个说法再搜，或改用 search(action="domain") 从能力域切入。`,
+              `如果确实没有这个能力，用 report_gap 登记缺口。`,
             ].join("\n")
           }
 
@@ -187,13 +330,13 @@ export function createSearchTool(deps: SearchToolDeps): StructuredToolInterface 
             }
             lines.push(
               "",
-              '下一步：对选中的工具调用 search(action="enable", keyword="<工具名>")。',
-              "启用后它的完整参数说明会自动出现在你的工具列表里，直接调用即可。",
+              '下一步：对选中的工具调用 search(action="contract", keyword="<工具名>") 加载契约。',
+              "加载后它的完整参数说明会自动出现在你的工具列表里，直接调用即可。",
             )
           }
 
           if (hints.length) {
-            lines.push("", "**转交工具**（已常驻，直接调用即可，不用 enable）")
+            lines.push("", "**转交工具**（已常驻，直接调用即可，不用加载）")
             lines.push(...hints)
           }
 
@@ -208,45 +351,13 @@ export function createSearchTool(deps: SearchToolDeps): StructuredToolInterface 
           return lines.join("\n")
         }
 
-        /* ---------- 启用 ---------- */
-        case "enable": {
-          const name = keyword?.trim()
-          if (!name) return "错误：enable 需要 keyword 参数（要启用的工具名）。"
-
-          const entry = catalog.get(name)
-          if (!entry) {
-            const available = catalog.list().map((e) => e.name)
-            return [
-              `工具目录里没有「${name}」。`,
-              `目录里全部工具：${available.join(", ")}。`,
-              `先用 search 确认正确名称。`,
-            ].join("\n")
-          }
-
-          if (!allowed.has(name)) {
-            const available = catalog.list().filter((e) => allowed.has(e.name)).map((e) => e.name)
-            return [
-              `「${name}」不在本 Agent 的可启用范围内。`,
-              `可启用的工具：${available.join(", ")}。`,
-              `如果这属于别的 Agent 的职责，用对应的 ask_xxx 转交工具。`,
-            ].join("\n")
-          }
-
-          onEnable(name)
-
-          const actions = entry.actions.length
-            ? `\n可用 action：${entry.actions.join(", ")}`
-            : ""
-          return `已启用 **${entry.name}** — ${entry.summary}${actions}\n参数说明已加载，现在可以直接调用 ${entry.name}。`
-        }
-
         /* ---------- 读技能 ---------- */
         case "read": {
           const skillId = keyword?.trim()
           if (!skillId) return "错误：read 需要 keyword 参数（技能 ID）。"
 
           if (typeof window === "undefined" || !window.skillsAPI) {
-            return "【技能】技能系统不可用（非 Electron 环境）。工具检索与启用不受影响。"
+            return "【技能】技能系统不可用（非 Electron 环境）。工具检索与加载不受影响。"
           }
 
           const res = await window.skillsAPI.read(skillId)
@@ -258,47 +369,51 @@ export function createSearchTool(deps: SearchToolDeps): StructuredToolInterface 
 
         /* ---------- 列目录 ---------- */
         case "list": {
-          const entries = catalog.list().filter((e) => allowed.has(e.name))
-          const lines = [`【本 Agent 可启用的能力】共 ${entries.length} 个工具：`]
-          for (const e of entries) {
-            lines.push(`- **${e.name}** — ${e.summary || "(无描述)"}`)
+          const lines = [`【本 Agent 可用的能力域】共 ${domains.length} 个：`]
+          for (const d of domains) {
+            const tools = effectiveTools(agentType, d, allowed)
+            lines.push(`- **${d.id}** · ${d.title} — ${d.scenarios}`)
+            lines.push(`  工具：${tools.join(", ")}`)
           }
 
           const skills = await loadSkills()
           if (skills?.length) {
             lines.push("", `**技能**（${skills.length} 个）`)
             for (const s of skills) {
-              lines.push(`- **${s.name}** (\`${s.id}\`) — ${s.description}`)
+              lines.push(`- ${s.name} (\`${s.id}\`) — ${s.description}`)
             }
           } else if (skills === null) {
             lines.push("", "（技能系统不可用，仅工具可检索）")
           }
 
-          lines.push("", '用 search(action="enable", keyword="<工具名>") 启用需要的工具。')
+          lines.push("", '加载工具契约：search(action="contract", keyword="<工具名>")。')
           return lines.join("\n")
         }
 
         default:
-          return `未知 action: ${action}。支持: search, enable, read, list`
+          return `未知 action: ${action}。支持: domain, contract, search, read, list`
       }
     },
     {
       name: "search",
       description:
-        "能力检索与按需启用。你当前只绑定了本工具和少量转交工具，其余能力要「先检索、再启用」才能调用。\n" +
+        "能力检索与按需加载。你当前只绑定了本工具和少量转交工具，其余能力要「先取域、再加载契约」才能调用。\n" +
         "\n用法：\n" +
-        '1) action="search" keyword="行情 下载" —— 检索工具与技能；多个关键词用空格分隔。\n' +
-        '2) action="enable" keyword="data_manager" —— 启用工具；启用后它的完整参数说明会自动进入你的工具列表，直接调用即可。\n' +
-        '3) action="read" keyword="<技能ID>" —— 读取技能正文（领域工作流、最佳实践、约束规则）。\n' +
-        '4) action="list" —— 列出本 Agent 可用的全部工具与技能。\n' +
-        "\n可检索的能力域：行情与数据下载、财务数据、策略图与回测、风控与止损、绩效指标、持仓与资金、订单成交、期权定价、统计分析（EMD/协整/CUSUM/PCA/波动率/突变）、图表与可视化、知识库检索、联网搜索、日期时间、系统信息、计算器。\n" +
-        "\n注意：直接调用尚未启用的工具会失败，必须先 enable。",
+        '1) action="domain" keyword="行情" —— 按能力域检索（场景、限制、域内工具与动作）。域 id 见下。\n' +
+        '2) action="contract" keyword="data_manager" —— 加载工具契约；加载后它的完整参数说明自动进入你的工具列表，下一轮即可调用。\n' +
+        '3) action="search" keyword="下载 行情" —— 关键词模糊检索（域路由失败时的兜底）。\n' +
+        '4) action="read" keyword="<技能ID>" —— 读取技能正文（领域工作流、最佳实践、约束规则）。\n' +
+        '5) action="list" —— 列出本 Agent 可用的全部能力域与技能。\n' +
+        "\n可用能力域：market_data 行情与基础数据、strategy_backtest 策略与回测、quant_analytics 统计与计量分析、" +
+        "option_derivatives 期权与衍生品、risk_monitoring 风控指标、account_funds 账户资金、position_holdings 持仓、" +
+        "order_history 订单流水、knowledge_web 知识库与联网、render_ui 图表与交互展示、script_exec 脚本执行（计算/时间/系统信息）。" +
+        "\n注意：直接调用尚未加载契约的工具会被拒绝并要求先加载。",
       schema: z.object({
-        action: z.enum(["search", "enable", "read", "list"]).describe("操作类型：search 检索 / enable 启用 / read 读技能 / list 列全部"),
+        action: z.enum(["domain", "contract", "enable", "search", "read", "list"]).describe("操作类型：domain 取能力域 / contract 加载工具契约（enable 是它的旧别名）/ search 模糊检索 / read 读技能 / list 列全部"),
         keyword: z
           .string()
           .optional()
-          .describe("search=关键词（空格分隔多个）；enable=工具名；read=技能 ID"),
+          .describe("domain=域 id 或要做的事；contract=工具名；search=关键词（空格分隔多个）；read=技能 ID"),
       }),
     },
   )

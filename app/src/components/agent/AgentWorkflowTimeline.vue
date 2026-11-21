@@ -62,6 +62,7 @@ const EVENT_LABELS: Record<string, string> = {
   artifact: '生成产物',
   response: '回复',
   error: '错误',
+  gap: '能力缺口',
 }
 
 function agentLabel(agent: AgentType | string): string {
@@ -159,6 +160,13 @@ watch(
 .wf-item.ev-error {
   border-left-color: #ef5350;
   background: rgba(239, 35, 42, 0.05);
+}
+
+/* 能力缺口：不是错误，是「这件事当前做不到」的显式声明 */
+.wf-item.ev-gap {
+  border-left-color: #ffb300;
+  border-left-style: dashed;
+  background: rgba(255, 179, 0, 0.06);
 }
 
 .wf-head {

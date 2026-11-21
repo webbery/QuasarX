@@ -507,58 +507,16 @@ async function proposeStrategyUpdate(id: string, data: any): Promise<ToolArtifac
   return { text: lines.join('\n'), artifact }
 }
 
-/** 更新策略图 */
-async function updateStrategy(id: string, data: any): Promise<string> {
-  const historyStore = useHistoryStore()
-  const strategy = historyStore.strategies.find(s => s.id === id)
-  if (!strategy) return `未找到策略图 "${id}"，请先使用 create_strategy 创建`
+/**
+ * 策略图更新的直写入口已移除
+ *
+ * 以前 update_strategy 直接调用 applyStrategyUpdate 写库，绕过了用户确认 ——
+ * 与 propose_update「只出 diff、用户确认才写」的范式冲突，也是一个静默改写策略图的后门。
+ * 现在 update_strategy 与 propose_update 走同一条路：产出提案 → 用户确认 → apply_patch 写入。
+ */
 
-  // 解析并规范化策略图数据
-  const sourceFlowData = data.nodes && data.edges ? data : data.graph || data
-  let flowData: any
-  try {
-    flowData = normalizeStrategyGraphNodes(sourceFlowData)
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    return `策略图 "${strategy.name}" (${id}) 更新失败：${reason}`
-  }
-
-  // 验证策略图结构
-  const validation = validateStrategyGraph(flowData)
-  if (!validation.valid) {
-    return [
-      `策略图 "${strategy.name}" (${id}) 更新失败：结构验证未通过`,
-      ``,
-      `错误信息：`,
-      ...validation.errors.map(e => `- ${e}`),
-      ``,
-      `修正建议：`,
-      ...validation.suggestions.map(s => `- ${s}`)
-    ].join('\n')
-  }
-
-  // 保存为新版本（写入口统一走 applyStrategyUpdate）
-  const applied = await applyStrategyUpdate(id, flowData)
-  if (!applied.ok || !applied.versionId) {
-    return `策略图 "${strategy.name}" (${id}) 更新失败：${applied.message}`
-  }
-  const versionId = applied.versionId
-
-  // 返回更新结果 + 策略图 JSON 内容（方便调试检查）
-  return [
-    `✅ 策略图 "${strategy.name}" (${id}) 已更新为版本 \`${versionId}\``,
-    `- 节点数: ${flowData.nodes.length}`,
-    `- 边数: ${flowData.edges.length}`,
-    ``,
-    `策略图结构：`,
-    `\`\`\`json`,
-    JSON.stringify(flowData, null, 2),
-    `\`\`\``
-  ].join('\n')
-}
-
-/** 删除策略图 */
-async function deleteStrategy(id: string): Promise<string> {
+/** 删除策略图（由「待确认动作」调用） */
+export async function deleteStrategyById(id: string): Promise<string> {
   const historyStore = useHistoryStore()
   const strategy = historyStore.strategies.find(s => s.id === id)
   if (!strategy) return `未找到策略图 "${id}"`
@@ -1451,7 +1409,18 @@ export const strategyTool = tool(
       case "update_strategy": {
         if (!keyword) return "错误：update_strategy 需要提供 keyword 参数（策略 id）"
         if (!data) return "错误：update_strategy 需要提供 data 参数（新策略图 JSON）"
-        return await updateStrategy(keyword, data)
+        // update_strategy 不再直接写入 —— 统一走提案模式：
+        // 只产出 diff，用户在界面上确认后才落库（与 propose_update 同一条路径）
+        const proposal = await proposeStrategyUpdate(keyword, data)
+        if (typeof proposal === "string") return proposal
+        return {
+          text: [
+            "⚠️ update_strategy 已收敛为「提案模式」：修改不会直接写入，需用户确认后应用。",
+            "",
+            proposal.text,
+          ].join("\n"),
+          artifact: proposal.artifact,
+        } as ToolArtifactResult
       }
 
       case "propose_update": {
@@ -1462,7 +1431,40 @@ export const strategyTool = tool(
 
       case "delete_strategy": {
         if (!keyword) return "错误：delete_strategy 需要提供 keyword 参数（策略 id）"
-        return await deleteStrategy(keyword)
+
+        const historyStore = useHistoryStore()
+        const target = historyStore.strategies.find((s) => s.id === keyword)
+
+        // 删除不可逆：产出待确认动作，用户点确认后才真删
+        const artifact = makeArtifact(
+          "action",
+          `删除策略图 · ${target?.name ?? keyword}`,
+          {
+            context: `即将删除策略图「${target?.name ?? keyword}」及其全部版本历史。该操作不可撤销。`,
+            actions: [
+              {
+                id: "confirm-delete-strategy",
+                kind: "strategy.delete_strategy",
+                label: "确认删除",
+                params: { strategyId: keyword },
+                destructive: true,
+                confirm: {
+                  title: `确认删除策略图「${target?.name ?? keyword}」？`,
+                  body: "该策略的全部版本历史会一并删除，操作不可撤销。",
+                },
+                pendingLabel: "删除中…",
+                doneLabel: "已删除",
+              },
+            ],
+          },
+          { subtitle: keyword, source: "strategy · delete_strategy" },
+        )
+
+        const text = [
+          `删除策略图「${target?.name ?? keyword}」需要用户确认 —— 已生成待确认动作卡。`,
+          `在用户点击「确认删除」之前，策略图不会被删除。`,
+        ].join("\n")
+        return { text, artifact } as ToolArtifactResult
       }
 
       // === 语法和约束文档 ===

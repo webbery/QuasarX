@@ -20,6 +20,8 @@
 import { toJsonSchema } from "@langchain/core/utils/json_schema"
 import type { StructuredToolInterface } from "@langchain/core/tools"
 import { getAllTools } from "../tools"
+import { verifyCapabilityMap } from "./capabilityMap"
+import { AGENT_TOOL_CONFIG } from "./types"
 
 /**
  * 中文别名表（手写静态）
@@ -36,14 +38,12 @@ const TOOL_ALIASES: Record<string, string[]> = {
   strategy: ["策略", "策略图", "节点", "回测", "参数", "信号语法", "公式语法", "均线", "技术指标", "指标"],
   backtest: ["回测", "绩效指标", "最大回撤", "策略回测"],
   quote: ["实时行情", "报价", "最新价", "历史行情"],
-  option_pricing: ["期权", "定价", "希腊", "隐波", "IV", "波动率曲面"],
+  option_pricing: ["期权", "定价", "希腊", "隐波", "IV", "波动率曲面", "期权收益", "组合收益", "盈亏", "盈亏平衡"],
   account: ["账户", "资金", "杠杆", "保证金"],
   position: ["持仓", "仓位", "持仓结构", "集中度"],
-  calculator: ["计算", "期权收益", "盈亏", "汇率", "百分比"],
+  javascript: ["计算", "脚本", "百分比", "复利", "单利", "标准差", "均值", "方差", "日期", "时间", "今天", "几点", "系统环境", "操作系统", "平台"],
   knowledge: ["知识库", "文档", "检索"],
   web_search: ["联网", "搜索", "新闻", "网络"],
-  datetime: ["时间", "日期", "今天", "几点"],
-  platform: ["系统环境", "操作系统", "平台"],
 }
 
 /**
@@ -316,7 +316,16 @@ export class ToolCatalog {
 /** 目录构建（异步，含插件工具） */
 export async function buildToolCatalog(): Promise<ToolCatalog> {
   const tools = await getAllTools()
-  return new ToolCatalog(tools)
+  const catalog = new ToolCatalog(tools)
+
+  // 能力地图与真实工具的一致性自检：地图会注入 system prompt，漂移了就是模型被误导
+  const issues = verifyCapabilityMap(catalog, AGENT_TOOL_CONFIG)
+  if (issues.length) {
+    console.warn("[CapabilityMap] 能力地图与工具目录不一致：")
+    for (const issue of issues) console.warn(`  - ${issue}`)
+  }
+
+  return catalog
 }
 
 /**

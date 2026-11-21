@@ -62,6 +62,16 @@ export function useAgentSession() {
   )
 
   /**
+   * 持久化到消息里的思考记录
+   *
+   * 能力缺口（gap）也一起持久化 —— 回合结束后工作流时间线会清空，
+   * 但「这件事做不了」是用户需要带走的结论，不能只活在时间线里。
+   */
+  const persistedThoughts = computed(() =>
+    events.value.filter((e) => e.eventType === 'thought' || e.eventType === 'gap'),
+  )
+
+  /**
    * 构造注入 LLM 的历史：当前路径中，anchor 之前的消息。
    * 排除空 assistant 占位，且不包含 anchor 本身（它作为 userInput 单独传入）。
    */
@@ -183,7 +193,7 @@ export function useAgentSession() {
 
       const finalAnswer = extractFinalAnswer(result) || 'Agent 未返回回复'
 
-      const thoughts = thoughtEvents.value.map((e, i) => ({
+      const thoughts = persistedThoughts.value.map((e, i) => ({
         id: `lg-${i}`,
         content: e.content,
         timestamp: e.timestamp,
