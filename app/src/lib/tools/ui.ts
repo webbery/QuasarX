@@ -106,7 +106,10 @@ function intakeOf(def: { intake?: string; resolver?: string }): 'llm' | 'resolve
 /** 生成 builder 清单文本（给 LLM 看，只列不 hidden 的） */
 function buildersText(): string {
   const defs = listBuildableUiTypes()
-  const lines = [`【UI 构建器】共 ${defs.length} 个。用 ui(action="build", builder="<id>", input={...}) 构建。`]
+  const lines = [
+    `【UI 构建器】共 ${defs.length} 个。用 ui(action="build", builder="<id>", input={...}) 构建。`,
+    `同一组数据只选一种最合适的表示，不要为同一内容重复建多张卡（如直方图与频次表二选一）。`,
+  ]
 
   for (const def of defs) {
     const intake =
@@ -189,7 +192,7 @@ export const uiTool = tool(
           source: source ?? `ui · ${def.id}`,
         })
         return {
-          text: `已生成「${specTitle}」（${def.label}），数据由系统取。用户在产物卡上可切换参数。`,
+          text: `已生成「${specTitle}」（${def.label}），数据由系统取。用户在产物卡上可切换参数。这些数值已展示给用户，正文不要再重复列出，只做结论与解读。`,
           artifact,
         } as ToolArtifactResult
       } catch (e) {
@@ -228,7 +231,7 @@ export const uiTool = tool(
     })
 
     return {
-      text: `已生成「${specTitle}」（${def.label}）。${summarize(def.id, data)}`,
+      text: `已生成「${specTitle}」（${def.label}）。${summarize(def.id, data)}这些数值已展示给用户，正文不要再重复列出，只做结论与解读。`,
       artifact,
     } as ToolArtifactResult
   },

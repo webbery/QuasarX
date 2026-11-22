@@ -181,6 +181,7 @@ export const CAPABILITY_DOMAINS: CapabilityDomain[] = [
       "脚本默认超时 5 秒（上限 15 秒），长任务请拆小",
       "不提供汇率表：汇率必须来自实时行情或联网结果，不能写死",
       "期权定价与组合收益归 option_derivatives 域（option_pricing 工具），不要在这里手搓",
+      "统计/计量分析归 quant_analytics 域（analysis 工具）：域内有对应 action 时不要手搓，域内没有（如正态性检验、自定义分布拟合）才用脚本兜底",
     ],
     tools: ["javascript"],
     notCovered: [{ topic: "需要访问本地文件或网络的批处理脚本" }],

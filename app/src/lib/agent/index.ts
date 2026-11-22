@@ -127,3 +127,11 @@ export {
   type CapabilityDomain,
 } from "./capabilityMap"
 export { createGapTool, formatGap, type CapabilityGap } from "./gapTool"
+
+// 工作流痕迹导出（调试用）
+export {
+  formatEventsMarkdown,
+  buildTraceJson,
+  traceFilename,
+  type TraceMessage,
+} from "./traceExport"

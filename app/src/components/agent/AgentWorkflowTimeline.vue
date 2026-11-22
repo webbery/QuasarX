@@ -1,6 +1,26 @@
 <template>
-  <div ref="scrollRef" class="workflow">
-    <div class="workflow-col">
+  <div class="workflow">
+    <div v-if="canExport" class="wf-toolbar">
+      <button
+        class="wf-tool-btn"
+        type="button"
+        title="复制当前回合的完整痕迹（markdown）"
+        @click="copyTrace"
+      >
+        <i class="fas fa-copy"></i> 复制记录
+      </button>
+      <button
+        class="wf-tool-btn"
+        type="button"
+        title="下载完整痕迹 JSON（含会话历史的持久化思考，保存到下载文件夹）"
+        @click="downloadTrace"
+      >
+        <i class="fas fa-download"></i> 下载 JSON
+      </button>
+      <span v-if="toolHint" class="wf-tool-hint">{{ toolHint }}</span>
+    </div>
+
+    <div ref="scrollRef" class="workflow-col">
       <div v-if="events.length === 0" class="empty">
         <i class="fas fa-diagram-project"></i>
         <p>Agent 工作流将在此展示多 Agent 协作过程</p>
@@ -39,12 +59,88 @@
 import { computed, inject, nextTick, ref, watch } from 'vue'
 import type { AgentType } from '@/lib/agent/types'
 import { AGENT_SESSION_KEY } from './sessionContext'
+import { useChatStore } from '@/stores/chatStore'
+import {
+  buildTraceJson,
+  formatEventsMarkdown,
+  traceFilename,
+} from '@/lib/agent/traceExport'
 
 const session = inject(AGENT_SESSION_KEY)!
 const scrollRef = ref<HTMLElement | null>(null)
+const chatStore = useChatStore()
 
 const events = computed(() => session.events.value)
 const loading = computed(() => session.loading.value)
+
+/** 会话里是否有可导出的历史思考（回合结束后事件流会清空，但历史还在） */
+const hasHistory = computed(() =>
+  chatStore.messages.some((m) => (m.thoughts?.length ?? 0) > 0),
+)
+const canExport = computed(() => events.value.length > 0 || hasHistory.value)
+
+/** 复制/下载后的短暂提示 */
+const toolHint = ref('')
+let hintTimer: ReturnType<typeof setTimeout> | undefined
+function flashHint(text: string) {
+  toolHint.value = text
+  clearTimeout(hintTimer)
+  hintTimer = setTimeout(() => (toolHint.value = ''), 2500)
+}
+
+/** 写剪贴板（clipboard API 失败时退回 execCommand 兜底） */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch { /* 走兜底 */ }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** 复制当前回合的完整痕迹（markdown，可贴进对话/工单） */
+async function copyTrace() {
+  const ok = await copyText(formatEventsMarkdown(events.value))
+  flashHint(ok ? '已复制' : '复制失败，请重试')
+}
+
+/** 下载完整痕迹（JSON：当前回合事件 + 会话历史持久化思考） */
+function downloadTrace() {
+  const history = chatStore.messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    timestamp: m.timestamp,
+    thoughts: m.thoughts,
+    tokenUsage: m.tokenUsage,
+    error: m.error,
+  }))
+
+  const json = buildTraceJson(events.value, history)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = traceFilename()
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  flashHint(`已下载 ${a.download}`)
+}
 
 const AGENT_LABELS: Record<string, string> = {
   supervisor: 'Supervisor',
@@ -92,13 +188,52 @@ watch(
 .workflow {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px 0;
+}
+
+/* 导出工具栏：固定在滚动区上方 */
+.wf-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px 8px;
+}
+
+.wf-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-bg, #1a2236);
+  color: #a0aec0;
+  border: 1px solid var(--border, #2a3449);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.wf-tool-btn:hover {
+  color: #e0e0e0;
+  border-color: #2962ff;
+}
+
+.wf-tool-hint {
+  font-size: 11.5px;
+  color: #00c853;
 }
 
 .workflow-col {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   max-width: 812px;
+  width: 100%;
   margin: 0 auto;
+  padding-bottom: 16px;
   display: flex;
   flex-direction: column;
   gap: 7px;

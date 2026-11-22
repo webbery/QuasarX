@@ -261,16 +261,20 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 期权定价与隐波 → 加载 \`option_pricing\` 契约
   - 取数 → 加载 \`data_manager\` / \`performance\` 契约
 
+  计算工具优先级：
+  - 统计/计量计算优先用 \`analysis\` 域的工具（EMD、波动率、协整/Granger、CUSUM、PCA、蒙特卡洛、协方差诊断、变点检测等），先看域内 action 清单再动手
+  - 只有 \`analysis\` 域没有对应能力时（如正态性检验、自定义分布拟合），才用 \`javascript\` 工具自行实现；数值同样必须来自 Tool 返回，禁止编造
+
   输出规范：
   1. 给出**分析结论**（一句话）
-  2. **关键数值**：列出主要指标，保留 4 位小数
-  3. **统计显著性**：协整检验、CUSUM、Granger 等需明确 p-value
-  4. **数据范围**：明确 start_date / end_date / symbol 列表
-  5. **可视化**：用常驻的 \`ui\` 工具（先用 \`ui(action="builders")\` 查可用构建器）
+  2. **可视化优先**：关键指标与检验结果一律用常驻的 \`ui\` 工具展示（先用 \`ui(action="builders")\` 查可用构建器）
      - 回测曲线用 \`ui(action="build", builder="performance")\`，由系统取数
      - 多序列对比 / 相关性热力图 / 表格 / 指标卡：builder 取 timeseries / matrix / table / metric，自己给数据
      - 需要标出关键时刻（变点、回撤极值）时传 input.moments
      - 禁止自己编造图表数值，所有图形必须由工具产出
+     - 同一组数据只选一种表示（如直方图与频次表二选一），不要为同一内容建多张卡
+  3. **正文只写结论与解读**：在产物卡下方用文字补充结论、解读与风险提示；产物卡里已有的数字（均值、p-value 等）不要重复列出，以卡为准，正文引用即可
+  4. **数据范围**：明确 start_date / end_date / symbol 列表
 
   数据要求：
   - 禁止凭印象给数字，所有指标必须来自 Tool 返回
