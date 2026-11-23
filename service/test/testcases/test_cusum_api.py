@@ -879,7 +879,9 @@ class TestCUSUMMeanShift:
         with open(csv_path) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                closes.append(float(row["close"]))
+                date = row["datetime"][:10]
+                if start_date <= date <= end_date:
+                    closes.append(float(row["close"]))
 
         returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
 

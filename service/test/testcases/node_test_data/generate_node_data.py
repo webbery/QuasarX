@@ -38,6 +38,7 @@ ORG_DIR.mkdir(parents=True, exist_ok=True)
 
 TEST_DATA_DIR = Path(__file__).parent
 START_DATE = datetime(2024, 1, 1)
+BACKTEST_END_DATE = datetime(2024, 9, 7)
 
 
 def gen_sine(n_bars=200, amplitude=10.0, period=40, noise_std=0.5, base=100.0, seed=42):
@@ -395,7 +396,7 @@ def _strategy_builder(strategy_id, source="A_hfq"):
         description="节点单元测试",
         backtest={
             "start": START_DATE.strftime("%Y-%m-%d"),
-            "end": (START_DATE + timedelta(days=250)).strftime("%Y-%m-%d"),
+            "end": BACKTEST_END_DATE.strftime("%Y-%m-%d"),
         },
         source=source,
     )

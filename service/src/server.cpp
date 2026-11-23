@@ -1259,13 +1259,12 @@ void Server::Schedules(time_t t) {
 #endif
     ) {
         daily_init_done = true;
-        // 节假日检查：节假日不执行日终策略
+        // 交易日检查：周末与法定节假日都不跑日终
         int year = 1900 + ltm->tm_year;
         int month = 1 + ltm->tm_mon;
         int day = ltm->tm_mday;
-        bool isHoliday = HolidayCalendar::instance().isHoliday(year, month, day);
-        if (isHoliday) {
-            INFO("[Schedules] Today is holiday ({}-{:02d}-{:02d}), skip daily strategy execution",
+        if (!IsTradingDay(DateOnly(t))) {
+            INFO("[Schedules] Today is not a trading day ({}-{:02d}-{:02d}), skip daily strategy execution",
                  year, month, day);
         } else if (_strategySystem) {
             _strategySystem->EnsureDailyReady();

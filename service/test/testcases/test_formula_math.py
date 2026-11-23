@@ -41,6 +41,10 @@ TEST_DIR = Path(__file__).parent / "node_test_data"
 SYMBOL = "sz.800001"
 TOLERANCE = 1e-5
 
+BACKTEST_START = "2024-01-01"
+BACKTEST_END = "2024-09-07"
+BACKTEST_BARS = 180
+
 
 # ============================================================
 # Fixtures
@@ -71,7 +75,7 @@ def _build_strategy(expression: str, strategy_id: str, extra_ma=()) -> dict:
                    strategy_id,
                    f"数学函数测试_{strategy_id}",
                    description="FormulaParser 数学函数测试",
-                   backtest={"start": "2024-01-01", "end": "2024-09-07"},
+                   backtest={"start": BACKTEST_START, "end": BACKTEST_END},
                    source="A_hfq")
                .input("1", symbol=SYMBOL)
                .function("2", "MA", 5, label="ma5"))
@@ -395,8 +399,10 @@ class TestArgmax:
 
         # 仅对比双方都有效的 bar（warmup 期任何一者 NaN 时跳过）
         valid_mask = np.isfinite(ma5) & np.isfinite(ma15)
-        actual_valid = actual.values[:len(valid_mask)][valid_mask]
-        expected_valid = expected_per_bar[valid_mask]
+        n = min(len(actual), len(valid_mask), BACKTEST_BARS)
+        mask = valid_mask[:n]
+        actual_valid = actual.values[:n][mask]
+        expected_valid = expected_per_bar[:n][mask]
         diff = np.abs(actual_valid - expected_valid)
         max_diff = np.max(diff)
         assert max_diff < 1e-6, \

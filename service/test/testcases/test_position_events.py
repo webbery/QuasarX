@@ -296,10 +296,11 @@ SCENARIOS = [
 
 
 def _load_bt_strategy():
-    """加载已有策略，替换标的为 BT_SYMBOL"""
+    """加载策略，替换标的并把回测区间对齐到本用例的行情窗口。"""
     path = Path(__file__).parent.parent / "script" / "ma_graph_strategy.json"
     with open(path, 'r', encoding='utf-8') as f:
         strategy = json.load(f)
+    strategy["backtest"] = {"start": "2024-01-01", "end": "2024-01-31"}
     for node in strategy.get("nodes", []):
         params = node.get("data", {}).get("params", {})
         if "code" in params:

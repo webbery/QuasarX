@@ -40,6 +40,7 @@ SUMMARY_FILE = TEST_DIR / "test_data_summary.json"
 DEBUG_COLUMN_SUFFIX = "STD(15)"  # 窗口 15 的 STD 列名后缀
 WINDOW = 15
 TOLERANCE = 1e-5  # 总体标准差精度
+BACKTEST_BARS = 180
 
 
 # ============================================================
@@ -335,7 +336,7 @@ class TestCumMaxNode:
 
         closes = _load_close_prices(symbol)
         checked = 0
-        for i in range(window, len(closes)):
+        for i in range(window, min(len(closes), len(actual), BACKTEST_BARS)):
             prev_max = closes[i - window:i].max()       # 即将滑出的那个窗口
             cur_max = closes[i - window + 1:i + 1].max()  # 当前窗口
             if prev_max <= cur_max + TOLERANCE:

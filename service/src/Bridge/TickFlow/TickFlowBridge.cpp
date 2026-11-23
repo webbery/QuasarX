@@ -468,7 +468,7 @@ void TickFlowBridge::workerLoop() {
 
         // 检查工作时间（测试模式跳过）
         static bool isTestMode = _server && _server->GetConfig().IsTestMode();
-        if (!isTestMode && (!IsWorking(curr) || IsHoliday(curr))) {
+        if (!isTestMode && (!IsWorking(curr) || !IsTradingDay(curr))) {
             // 非工作时间，暂停 5s 再检查
             std::this_thread::sleep_for(std::chrono::seconds(5));
             continue;
@@ -634,10 +634,11 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     refreshAdjFactor(quote._symbol);
 
     // 通知策略子系统：该标的数据已就绪
+    // 归属日取 bar 的交易日（行情时间戳），不取挂钟日期
     if (_server) {
         auto* strategySys = _server->GetStrategySystem();
         if (strategySys) {
-            strategySys->MarkSymbolReady(to_symbol(bar.symbol));
+            strategySys->MarkSymbolReady(to_symbol(bar.symbol), bar.datetime.substr(0, 10));
         }
     }
 }

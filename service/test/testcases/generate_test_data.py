@@ -748,7 +748,7 @@ def main():
         expected = compute_expected_metrics_from_csv(hfq_path)
 
         # 4. 生成策略脚本
-        end_date = START_DATE + timedelta(days=len(prices) + 30)
+        end_date = datetime.strptime(daily_rows[-1]["date"], "%Y-%m-%d")
         strategy = generate_strategy_script(
             symbol, f"test_{case_id}", START_DATE, end_date, True
         )
