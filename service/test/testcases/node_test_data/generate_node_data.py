@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # 路径统一从 tool.py 解析
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tool import _DATA_DIR as SERVICE_DATA_DIR
 
 # 策略图构造统一走 strategy_builder（节点/边/参数结构的唯一事实来源）
@@ -36,7 +36,7 @@ ORG_DIR = SERVICE_DATA_DIR / "AStock"
 HFQ_DIR.mkdir(parents=True, exist_ok=True)
 ORG_DIR.mkdir(parents=True, exist_ok=True)
 
-TEST_DATA_DIR = Path(__file__).parent
+TEST_DATA_DIR = Path(__file__).resolve().parent
 START_DATE = datetime(2024, 1, 1)
 BACKTEST_END_DATE = datetime(2024, 9, 7)
 
@@ -671,6 +671,18 @@ def single_node_strategy(symbol, dataset_id, node_suffix, func_name, range_val, 
             .build())
 
 
+def effective_backtest_window(dates):
+    """策略声明的回测窗口与行情数据的交集（C++ 实际会跑的 bar 范围）。
+
+    BACKTEST_END_DATE 可能晚于最后一根 bar，C++ 会停在数据末尾；
+    summary 必须记录裁剪后的窗口，参考实现才能按同一 bar 数对齐。
+    """
+    start = START_DATE.strftime("%Y-%m-%d")
+    end = min(BACKTEST_END_DATE.strftime("%Y-%m-%d"), dates[-1])
+    bars = sum(1 for d in dates if start <= d <= end)
+    return {"start": start, "end": end, "bars": bars}
+
+
 def main():
     datasets = {
         "sine": {
@@ -696,6 +708,7 @@ def main():
     }
 
     all_strategies = {}
+    dataset_windows = {}
     # 节点类型定义: (策略生成函数, 参数, 节点标签)
     node_configs = [
         (std_strategy, [5], "STD(5)"),
@@ -740,7 +753,10 @@ def main():
         anomaly_bar = ds["kwargs"].get("anomaly_bar")
         dates = write_csv(symbol, prices, START_DATE,
                           HFQ_DIR / f"{symbol}.csv", ORG_DIR / f"{symbol}.csv", anomaly_bar)
-        print(f"  CSV: {len(prices)} bars")
+        dataset_windows[ds_id] = effective_backtest_window(dates)
+        window = dataset_windows[ds_id]
+        print(f"  CSV: {len(prices)} bars, 回测窗口: {window['start']} ~ {window['end']} "
+              f"({window['bars']} bars)")
 
         # sz.800001 生成分红测试数据 (ex_div at bar 100, 每10股派5元)
         if symbol == "sz.800001":
@@ -777,9 +793,15 @@ def main():
     all_strategies["pair_trading"] = {"dataset": "pair", "symbol": PAIR_SYMBOL_A,
                                       "node": "pair"}
 
-    summary = {"datasets": {k: {"symbol": v["symbol"], "name": v["name"]} for k, v in datasets.items()},
-               "strategies": all_strategies,
-               "pair": pair_summary}
+    summary = {
+        "datasets": {
+            k: {"symbol": v["symbol"], "name": v["name"],
+                "backtest": dataset_windows[k]}
+            for k, v in datasets.items()
+        },
+        "strategies": all_strategies,
+        "pair": pair_summary,
+    }
     with open(TEST_DATA_DIR / "test_data_summary.json", 'w') as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     print(f"\n汇总: test_data_summary.json")

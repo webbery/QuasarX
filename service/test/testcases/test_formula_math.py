@@ -41,9 +41,26 @@ TEST_DIR = Path(__file__).parent / "node_test_data"
 SYMBOL = "sz.800001"
 TOLERANCE = 1e-5
 
-BACKTEST_START = "2024-01-01"
-BACKTEST_END = "2024-09-07"
-BACKTEST_BARS = 180
+SUMMARY_FILE = TEST_DIR / "test_data_summary.json"
+
+
+def _load_backtest_window(dataset_id: str = "sine") -> dict:
+    """读取 generate_node_data.py 写入的实际回测窗口（策略窗口 ∩ 行情数据窗口）。"""
+    with open(SUMMARY_FILE) as f:
+        return json.load(f)["datasets"][dataset_id]["backtest"]
+
+
+try:
+    _BACKTEST_WINDOW = _load_backtest_window()
+except (FileNotFoundError, KeyError) as exc:
+    raise RuntimeError(
+        f"无法从 {SUMMARY_FILE} 读取回测窗口；"
+        f"请先运行 python node_test_data/generate_node_data.py"
+    ) from exc
+
+BACKTEST_START = _BACKTEST_WINDOW["start"]
+BACKTEST_END = _BACKTEST_WINDOW["end"]
+BACKTEST_BARS = _BACKTEST_WINDOW["bars"]
 
 
 # ============================================================
@@ -427,12 +444,17 @@ class TestArgmax:
         stacked = np.column_stack([ma5, ma15, ma30])
         expected = np.argmax(stacked, axis=1).astype(float)
 
+        # 回测只覆盖策略声明的窗口（summary 记录），参考序列必须按同一 bar 数
+        # 截断，否则 200 根参考与 180 根 C++ 输出会在布尔掩码处广播失败。
+        n = min(len(actual), len(expected), BACKTEST_BARS)
+        actual = actual.iloc[:n]
+        expected = expected[:n]
+
         # 注意: argmax 在 NaN 上行为不同，先填充 NaN 让比较有意义
         actual_filled = actual.fillna(-1)
         # 仅对比双方都有效的 bar (避开 NaN 不一致)
         valid = ~np.isnan(expected)
-        valid &= ~np.isnan(actual)
-        n = min(len(actual_filled), len(expected))
+        valid &= ~np.isnan(actual.to_numpy())
         for i in range(n):
             if not valid[i]:
                 continue

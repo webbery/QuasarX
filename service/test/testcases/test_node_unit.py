@@ -55,12 +55,24 @@ def summary():
         return json.load(f)
 
 
-def _load_close_prices(symbol: str) -> np.ndarray:
-    """从 A_hfq 目录读取收盘价"""
+def _load_close_prices(symbol: str, start: str = None, end: str = None) -> np.ndarray:
+    """从 A_hfq 目录读取收盘价，可选按 [start, end] 日期窗口裁剪。
+
+    节点测试策略声明的回测窗口可能短于整份 CSV（多出的尾部 bar 不会进入
+    DebugNode 输出），参考序列必须按同一窗口截取，否则 bar 数对不上。
+    """
     csv_path = CSV_DATA_DIR / f"{symbol}.csv"
+    closes = []
     with open(csv_path) as f:
         reader = csv.DictReader(f)
-        return np.array([float(row["close"]) for row in reader])
+        for row in reader:
+            date = row["datetime"][:10]
+            if start is not None and date < start:
+                continue
+            if end is not None and date > end:
+                continue
+            closes.append(float(row["close"]))
+    return np.array(closes)
 
 
 def _load_volume(symbol: str) -> np.ndarray:
@@ -934,7 +946,14 @@ class TestCUSUMNode:
         _run_backtest(strategy_path, headers)
         df = read_debug_csv(strategy_id, "debug_cusum_1")
 
-        closes = _load_close_prices(symbol)
+        # 按策略实际回测窗口截取参考数据（summary 由 generate_node_data.py 写入，
+        # 已取策略窗口与行情数据窗口的交集）。C++ DebugNode 只输出窗口内 bar。
+        bt = summary["datasets"][dataset_id]["backtest"]
+        closes = _load_close_prices(symbol, start=bt["start"], end=bt["end"])
+        assert len(closes) == bt["bars"], (
+            f"[{dataset_id}] 行情按窗口 {bt['start']}~{bt['end']} 裁剪后 {len(closes)} 根，"
+            f"与 summary 记录的 {bt['bars']} 根不一致"
+        )
         det = CUSUMDetectorRef(
             calibrate_period=0,
             mu=float(params["mu"]["value"]),
