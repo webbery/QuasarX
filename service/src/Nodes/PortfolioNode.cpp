@@ -415,8 +415,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     }
 
     // ── 策略日志：本轮资金/决策/执行计划（仅实盘模式）──
-    if (_server->GetRunningMode() != RuningType::Backtest &&
-        DuckDBLogger::instance().is_initialized()) {
+    if (_server->GetRunningMode() != RuningType::Backtest) {
         nlohmann::json ctx;
         ctx["node_type"] = "portfolio";
         ctx["node_id"] = std::to_string(_id);

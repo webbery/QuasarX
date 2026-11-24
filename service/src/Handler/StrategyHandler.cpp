@@ -19,7 +19,6 @@
 #include "BrokerSubSystem.h"
 #include "StrategySubSystem.h"
 #include "Util/DecisionDB.h"
-#include "Util/DuckDBLogger.h"
 #include <boost/hana.hpp>
 #include "Nodes/FunctionNode.h"
 #include "Nodes/OnnxInferenceNode.h"
@@ -371,9 +370,6 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
         return;
     }
 
-    // Stop 流程可能异步产生日志（如 Shadow mode deactivated），等待落盘后再清理
-    DuckDBLogger::instance().flush_logs();
-
     String erase_file(SCRIPTS_DIR);
     erase_file += "/" + name;
     std::filesystem::remove(erase_file);
@@ -394,16 +390,15 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
         }
     }
 
-    // 清理该策略的历史记录（decisions + daily_positions + strategy_logs）
+    // 清理该策略的历史记录（decisions + daily_positions）
     int decisionDeleted = DecisionDB::instance().deleteByStrategy(name);
     // 同步清掉 BrokerSubSystem 的内存决策缓存：否则残留记录会被
     // GET /trade/decisions 的内存兜底重新返回，随后的 PUT 关闭报 404
     if (auto* broker = _server->GetBrokerSubSystem()) {
         broker->PurgeStrategyDecisions(name);
     }
-    auto logResult = DuckDBLogger::instance().delete_strategy_logs(name, "", "", "");
-    INFO("[StrategyHandler] Deleted strategy '{}': {} decision/position records, {} log records",
-         name, decisionDeleted, logResult.deleted_count > 0 ? logResult.deleted_count : 0);
+    INFO("[StrategyHandler] Deleted strategy '{}': {} decision/position records",
+         name, decisionDeleted);
 
     res.status = 200;
     nlohmann::json result;

@@ -1,6 +1,5 @@
 #include "KBarBuilder.h"
 #include "Util/datetime.h"
-#include "Util/DuckDBLogger.h"
 #include "Util/log.h"
 
 KBarBuilder::KBarBuilder(BarFreq freq, int tolerance_seconds)

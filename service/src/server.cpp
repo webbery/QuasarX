@@ -26,7 +26,6 @@
 #include "Data/FundamentalData.h"
 #include "Util/QuoteDB.h"
 #include "Util/DecisionDB.h"
-#include "Util/DuckDBLogger.h"
 #include "Util/HolidayCalendar.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
@@ -1398,14 +1397,6 @@ void Server::Schedules(time_t t) {
             }
             ReloadMarketData(_config->GetDatabasePath());
         }
-
-        // 每日清理过期数据，防止 DuckDB 无限膨胀
-        int64_t tick_cutoff = static_cast<int64_t>(t) - 30 * 86400;
-        int64_t tick_deleted = DuckDBLogger::instance().delete_tick_data_before(tick_cutoff);
-        if (tick_deleted > 0) {
-            INFO("[Schedules] Cleaned {} tick records older than 30 days", tick_deleted);
-        }
-        DuckDBLogger::instance().cleanup_old_logs(90);
     }
 
     // 03:00 之后补数据：把上一轮体检遗留的异常重新下载

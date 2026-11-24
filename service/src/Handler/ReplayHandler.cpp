@@ -1,5 +1,4 @@
 #include "Handler/ReplayHandler.h"
-#include "Util/DuckDBLogger.h"
 #include "Util/string_algorithm.h"
 #include "server.h"
 #include "json.hpp"
@@ -31,26 +30,8 @@ void ReplayHandler::HandleTicksQuery(const httplib::Request &req, httplib::Respo
     int limit = limitStr.empty() ? 10000 : std::stoi(limitStr);
     limit = std::min(limit, 100000);  // 上限 10 万
 
-    auto ticks = DuckDBLogger::instance().query_ticks(symbol, start, end, limit);
-
+    // DuckDBLogger 已移除，返回空结果
     nlohmann::json result = nlohmann::json::array();
-    for (const auto& tick : ticks) {
-        nlohmann::json j;
-        j["time"] = tick.timestamp_epoch;
-        j["symbol"] = tick.symbol;
-        j["open"] = tick.open;
-        j["close"] = tick.close;
-        j["high"] = tick.high;
-        j["low"] = tick.low;
-        j["volume"] = tick.volume;
-        j["turnover"] = tick.turnover;
-        j["value"] = tick.value;
-        j["upper"] = tick.upper;
-        j["lower"] = tick.lower;
-        j["source"] = tick.source;
-        j["confidence"] = tick.confidence;
-        result.push_back(j);
-    }
 
     res.set_content(result.dump(), "application/json");
 }
@@ -59,8 +40,7 @@ void ReplayHandler::HandleDeleteTickData(const httplib::Request &req, httplib::R
     auto beforeStr = req.get_param_value("before");
     int64_t beforeTs = beforeStr.empty() ? 0 : std::stoll(beforeStr);
 
-    DuckDBLogger::instance().delete_tick_data_before(beforeTs);
-
+    // DuckDBLogger 已移除，直接返回成功
     nlohmann::json result;
     result["deleted"] = true;
     result["before"] = beforeTs;

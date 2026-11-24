@@ -387,10 +387,9 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
             feedView(context, _curQuotes);
             context.SetTime(min_t);
 
-            // 实盘模式：本轮行情摘要写入策略日志（DuckDB strategy_logs）
+            // 实盘模式：本轮行情摘要写入策略日志（仅 spdlog）
             // 只记符号/时间/写入的字段名；逐笔 OHLCV 由行情落库负责，避免日志表膨胀
-            if (_server->GetRunningMode() != RuningType::Backtest &&
-                DuckDBLogger::instance().is_initialized()) {
+            if (_server->GetRunningMode() != RuningType::Backtest) {
                 nlohmann::json ctx;
                 ctx["node_type"] = "input";
                 ctx["node_id"] = std::to_string(_id);

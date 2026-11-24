@@ -26,7 +26,6 @@
 #include "server.h"
 #include "Handler/QuoteDownloadHandler.h"
 #include "Util/string_algorithm.h"
-#include "Util/DuckDBLogger.h"
 #include "Util/QuoteDB.h"
 #include "Util/FinanceDB.h"
 #include "Util/DecisionDB.h"
@@ -591,7 +590,6 @@ void graceful_shutdown(int signo) {
     }
 #endif
     // 退化路径（管道不可用）：只能 CHECKPOINT 后退出，账本不落盘
-    try { DuckDBLogger::instance().shutdown(); } catch (...) {}
     try { QuoteDB::instance().shutdown(); } catch (...) {}
     try { FinanceDB::instance().shutdown(); } catch (...) {}
     try { DecisionDB::instance().shutdown(); } catch (...) {}
@@ -925,11 +923,6 @@ int main(int argc, char* argv[])
     print_cpu_features();
     INFO("VERSION: {}\n", QS_VERSION);
 
-    // 初始化 DuckDB 策略日志（表不存在则自动创建）
-    if (!DuckDBLogger::instance().init("logs/strategy_logs.db")) {
-        SPDLOG_WARN("[Main] DuckDB logger init failed, strategy logs will not be stored");
-    }
-
     Server server;
     g_server = &server;
     g_start_time = time(nullptr);
@@ -959,7 +952,6 @@ int main(int argc, char* argv[])
     QuoteDB::instance().shutdown();
     FinanceDB::instance().shutdown();
     DecisionDB::instance().shutdown();
-    DuckDBLogger::instance().shutdown();
     spdlog::shutdown();
 
     return 0;

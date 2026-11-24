@@ -314,8 +314,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
     }
 
     // ── 策略日志：执行计划与信号消费明细（仅实盘模式，在 ConsumeSignals 之前）──
-    if (_server->GetRunningMode() != RuningType::Backtest &&
-        DuckDBLogger::instance().is_initialized()) {
+    if (_server->GetRunningMode() != RuningType::Backtest) {
         nlohmann::json ctx;
         ctx["node_type"] = "execution";
         ctx["node_id"] = std::to_string(_id);

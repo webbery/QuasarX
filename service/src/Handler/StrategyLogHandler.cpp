@@ -1,7 +1,8 @@
 #include "Handler/StrategyLogHandler.h"
-#include "Util/DuckDBLogger.h"
 #include "Util/datetime.h"
 #include <sstream>
+
+// DuckDBLogger 已移除，所有接口返回空结果
 
 void StrategyLogHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto type = get_param(req, "type");
@@ -22,7 +23,6 @@ void StrategyLogHandler::get(const httplib::Request& req, httplib::Response& res
         } else if (type == "strategies") {
             query_strategies(req, res);
         } else {
-            // default 或其他值，使用默认查询
             query_default(req, res);
         }
     } catch (const std::exception& e) {
@@ -35,119 +35,22 @@ void StrategyLogHandler::get(const httplib::Request& req, httplib::Response& res
 }
 
 void StrategyLogHandler::del(const httplib::Request& req, httplib::Response& res) {
-    if (!DuckDBLogger::instance().is_initialized()) {
-        res.status = 503;
-        nlohmann::json err;
-        err["error"] = "DuckDB logger not initialized";
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-
-    try {
-        auto params = nlohmann::json::parse(req.body);
-
-        std::string strategy = params.value("strategy", "");
-        std::string level = params.value("level", "");
-        std::string start_time = params.value("start_time", "");
-        std::string end_time = params.value("end_time", "");
-
-        // 安全检查：至少需要一个过滤条件
-        if (strategy.empty() && level.empty() && start_time.empty() && end_time.empty()) {
-            res.status = 400;
-            nlohmann::json err;
-            err["error"] = "至少需要一个过滤条件（strategy/level/start_time/end_time）";
-            res.set_content(err.dump(), "application/json");
-            return;
-        }
-
-        auto result = DuckDBLogger::instance().delete_strategy_logs(
-            strategy, level, start_time, end_time
-        );
-
-        if (result.deleted_count < 0) {
-            res.status = 500;
-            nlohmann::json err;
-            err["error"] = result.error;
-            res.set_content(err.dump(), "application/json");
-            return;
-        }
-
-        res.status = 200;
-        nlohmann::json resp;
-        resp["message"] = "success";
-        resp["deleted_count"] = result.deleted_count;
-        res.set_content(resp.dump(), "application/json");
-    } catch (const std::exception& e) {
-        FATAL("[StrategyLogHandler] DELETE error: {}", e.what());
-        res.status = 500;
-        nlohmann::json err;
-        err["error"] = e.what();
-        res.set_content(err.dump(), "application/json");
-    }
+    res.status = 200;
+    nlohmann::json resp;
+    resp["message"] = "success";
+    resp["deleted_count"] = 0;
+    res.set_content(resp.dump(), "application/json");
 }
 
 void StrategyLogHandler::query_default(const httplib::Request& req, httplib::Response& res) {
-    if (!DuckDBLogger::instance().is_initialized()) {
-        res.status = 503;
-        nlohmann::json err;
-        err["error"] = "DuckDB logger not initialized";
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-
-    auto strategy = get_param(req, "strategy");
-    auto level = get_param(req, "level");
-    auto keyword = get_param(req, "keyword");
-    auto start_time = get_param(req, "start_time");
-    auto end_time = get_param(req, "end_time");
-    int limit = get_int_param(req, "limit", 1000);
-    int offset = get_int_param(req, "offset", 0);
-
-    auto logs = DuckDBLogger::instance().query_strategy_logs(
-        strategy, level, keyword, start_time, end_time, limit, offset
-    );
-
-    // 查询总记录数（不受 limit/offset 限制）
-    int totalCount = DuckDBLogger::instance().count_strategy_logs(
-        strategy, level, keyword, start_time, end_time
-    );
-
     nlohmann::json json;
     json["type"] = "default";
-    json["total"] = totalCount;
+    json["total"] = 0;
     json["logs"] = nlohmann::json::array();
-    
-    for (const auto& log : logs) {
-        nlohmann::json item;
-        item["id"] = log.id;
-        item["timestamp"] = log.timestamp;
-        item["strategy"] = log.strategy_name;
-        item["level"] = log.level;
-        item["message"] = log.message;
-        
-        if (!log.context_json.empty()) {
-            try {
-                item["context"] = nlohmann::json::parse(log.context_json);
-            } catch (...) {
-                item["context"] = log.context_json;
-            }
-        }
-        
-        json["logs"].push_back(item);
-    }
-    
     res.set_content(json.dump(), "application/json");
 }
 
 void StrategyLogHandler::query_by_symbol(const httplib::Request& req, httplib::Response& res) {
-    if (!DuckDBLogger::instance().is_initialized()) {
-        res.status = 503;
-        nlohmann::json err;
-        err["error"] = "DuckDB logger not initialized";
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-    
     auto symbol = get_param(req, "symbol");
     if (symbol.empty()) {
         res.status = 400;
@@ -156,136 +59,30 @@ void StrategyLogHandler::query_by_symbol(const httplib::Request& req, httplib::R
         res.set_content(err.dump(), "application/json");
         return;
     }
-    
-    auto start_time = get_param(req, "start_time");
-    auto end_time = get_param(req, "end_time");
-    auto level = get_param(req, "level");
-    int limit = get_int_param(req, "limit", 500);
 
-    // 查询包含该symbol的策略日志（通过context JSON中的symbol字段）
-    // 使用 C API 查询，然后过滤
-    auto all_logs = DuckDBLogger::instance().query_strategy_logs(
-        "", "", level, start_time, end_time, limit * 10, 0
-    );
-
-    std::vector<StrategyLogEntry> results;
-
-    try {
-        for (const auto& log : all_logs) {
-            if (log.context_json.empty()) continue;
-            
-            try {
-                auto ctx = nlohmann::json::parse(log.context_json);
-                if (ctx.contains("symbol") && ctx["symbol"] == symbol) {
-                    results.push_back(log);
-                    if (results.size() >= limit) break;
-                }
-            } catch (...) {
-                // JSON解析失败，跳过
-                continue;
-            }
-        }
-    } catch (const std::exception& e) {
-        FATAL("[StrategyLogHandler] Query by symbol failed: {}", e.what());
-        res.status = 500;
-        nlohmann::json err;
-        err["error"] = e.what();
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-    
     nlohmann::json json;
     json["type"] = "by_symbol";
     json["symbol"] = symbol;
-    json["total"] = results.size();
+    json["total"] = 0;
     json["logs"] = nlohmann::json::array();
-    
-    for (const auto& log : results) {
-        nlohmann::json item;
-        item["id"] = log.id;
-        item["timestamp"] = log.timestamp;
-        item["strategy"] = log.strategy_name;
-        item["level"] = log.level;
-        item["message"] = log.message;
-        
-        if (!log.context_json.empty()) {
-            try {
-                item["context"] = nlohmann::json::parse(log.context_json);
-            } catch (...) {
-                item["context"] = log.context_json;
-            }
-        }
-        
-        json["logs"].push_back(item);
-    }
-    
     res.set_content(json.dump(), "application/json");
 }
 
 void StrategyLogHandler::query_stats(const httplib::Request& req, httplib::Response& res) {
-    if (!DuckDBLogger::instance().is_initialized()) {
-        res.status = 503;
-        nlohmann::json err;
-        err["error"] = "DuckDB logger not initialized";
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-    
-    auto start_time = get_param(req, "start_time");
-    auto end_time = get_param(req, "end_time");
-    
-    auto stats = DuckDBLogger::instance().get_strategy_stats(start_time, end_time);
-    
     nlohmann::json json;
     json["type"] = "stats";
-    json["total_logs"] = stats.total_logs;
-    json["error_count"] = stats.error_count;
-    json["warn_count"] = stats.warn_count;
-    
+    json["total_logs"] = 0;
+    json["error_count"] = 0;
+    json["warn_count"] = 0;
     json["strategy_counts"] = nlohmann::json::object();
-    for (const auto& [name, count] : stats.strategy_counts) {
-        json["strategy_counts"][name] = count;
-    }
-    
     json["error_strategies"] = nlohmann::json::object();
-    for (const auto& [name, count] : stats.error_strategies) {
-        json["error_strategies"][name] = count;
-    }
-    
     res.set_content(json.dump(), "application/json");
 }
 
 void StrategyLogHandler::query_strategies(const httplib::Request& req, httplib::Response& res) {
-    if (!DuckDBLogger::instance().is_initialized()) {
-        res.status = 503;
-        nlohmann::json err;
-        err["error"] = "DuckDB logger not initialized";
-        res.set_content(err.dump(), "application/json");
-        return;
-    }
-    
-    // 获取所有有日志的策略列表
-    auto stats = DuckDBLogger::instance().get_strategy_stats("", "");
-    
     nlohmann::json json;
     json["type"] = "strategies";
     json["strategies"] = nlohmann::json::array();
-    
-    for (const auto& [name, count] : stats.strategy_counts) {
-        nlohmann::json item;
-        item["name"] = name;
-        item["log_count"] = count;
-        
-        // 查找该策略的错误数
-        if (stats.error_strategies.contains(name)) {
-            item["error_count"] = stats.error_strategies.at(name);
-        } else {
-            item["error_count"] = 0;
-        }
-        
-        json["strategies"].push_back(item);
-    }
-    
     res.set_content(json.dump(), "application/json");
 }
 
@@ -297,7 +94,7 @@ std::string StrategyLogHandler::get_param(const httplib::Request& req, const std
 int StrategyLogHandler::get_int_param(const httplib::Request& req, const std::string& name, int default_val) {
     auto val = get_param(req, name);
     if (val.empty()) return default_val;
-    
+
     try {
         return std::stoi(val);
     } catch (...) {

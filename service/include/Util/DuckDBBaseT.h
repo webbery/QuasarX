@@ -48,10 +48,17 @@ public:
             return false;
         }
 
-        // 恢复上次非正常关闭时未 checkpoint 的 WAL 数据
+        // 恢复上次非正常关闭时未 checkpoint 的 WAL 数据，并截断 WAL 避免其持续膨胀。
+        //
+        // 注意：DuckDB 没有 PRAGMA wal_checkpoint 这个 pragma（调用会报
+        // "Pragma Function with name wal_checkpoint does not exist"）。
+        // PRAGMA force_checkpoint 也不行 —— 它只是把 config.options.force_checkpoint
+        // 置为 true（见 src/function/pragma/pragma_functions.cpp），并不会触发任何刷写，
+        // WAL 不会变小。真正能立即 checkpoint 并截断 WAL 的是 FORCE CHECKPOINT 语句
+        // （映射到 force_checkpoint() table function），v1.5 / v2.0 语法一致。
         {
             duckdb_result r;
-            duckdb_query(conn_, "PRAGMA wal_checkpoint(RESTART)", &r);
+            duckdb_query(conn_, "FORCE CHECKPOINT", &r);
             duckdb_destroy_result(&r);
         }
 

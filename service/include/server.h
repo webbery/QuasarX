@@ -14,7 +14,6 @@
 #include "nng/nng.h"
 #include "Handler/RecordHandler.h"
 #include "StrategySubSystem.h"
-#include "Util/TickMap.h"
 #include "Data/DataPipeline.h"
 #include "Util/ThreadPool.h"
 #include "Util/JobSession.h"

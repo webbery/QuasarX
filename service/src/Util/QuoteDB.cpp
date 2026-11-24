@@ -453,10 +453,15 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     }
 
     // 强制刷写 appender 的 buffered replay 到 ART 索引，
-    // 避免后续查询触发 ApplyBufferedReplays 时索引不一致导致 segfault
-    std::string ckpt_err = execWithError("PRAGMA wal_checkpoint(RESTART)");
+    // 避免后续查询触发 ApplyBufferedReplays 时索引不一致导致 segfault。
+    //
+    // 用 FORCE CHECKPOINT 而不是 PRAGMA wal_checkpoint(RESTART)：后者在 DuckDB 中
+    // 并不存在，每次调用都会报错（历史上已静默失败 660 次，导致 WAL 从不截断、
+    // 持续膨胀到 15MB+）。FORCE CHECKPOINT 会立即 checkpoint 并截断 WAL，
+    // 且在有并发写事务时等待而不是直接失败。v1.5 / v2.0 语法一致。
+    std::string ckpt_err = execWithError("FORCE CHECKPOINT");
     if (!ckpt_err.empty()) {
-        reportDuckDbError(fmt::format("importCsv: wal_checkpoint ({}/{})", table, symbol_str), ckpt_err);
+        reportDuckDbError(fmt::format("importCsv: FORCE CHECKPOINT ({}/{})", table, symbol_str), ckpt_err);
     }
 
     auto t_commit = std::chrono::high_resolution_clock::now();

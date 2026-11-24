@@ -80,7 +80,7 @@ jobs:
         with:
           path: |
             deps-cache/duckdb/install
-          key: ${{ runner.os }}-duckdb-v1.5.4
+          key: ${{ runner.os }}-duckdb-v2.0.1
           restore-keys: |
             ${{ runner.os }}-duckdb-
 
@@ -171,7 +171,7 @@ jobs:
       - name: Build DuckDB (if cache miss)
         if: steps.cache-duckdb.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --branch v1.5.4 https://github.com/duckdb/duckdb
+          git clone --depth 1 --branch v2.0.1 https://github.com/duckdb/duckdb
           cd duckdb
           mkdir build && cd build
           cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_UNIT_TESTS=OFF -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/deps-cache/duckdb/install ..
