@@ -78,6 +78,10 @@ Vector<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs, bool ze
 
     for (int n = 0; n < numIMFs; ++n) {
         Vector<double> h = residual;
+        // 是否真的减过均值包络（真正做过筛选）。
+        // 极值点不足时筛选直接 break，h 原样等于残差 —— 那是趋势而非振荡分量，
+        // 不适用 IMF 的零均值条件（PyEMD 在同样的退化输入下也保留原始残差）。
+        bool sifted = false;
 
         for (int iter = 0; iter < maxSiftingIter; ++iter) {
             // 找极值点
@@ -111,6 +115,26 @@ Vector<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs, bool ze
             // 逐元素减法: h = h - meanEnv
             for (size_t i = 0; i < h.size(); ++i) {
                 h[i] = h[i] - meanEnv[i];
+            }
+            sifted = true;
+        }
+
+        // IMF 零均值条件（EMD 基本性质之一）：真正筛选过的分量必须零均值。
+        //
+        // 为什么需要显式处理：均值包络的直流分量在「窗口被截断」时会漏进高阶 IMF。
+        // 例：sine 数据集 200 根 bar（正好 5 个周期），回测窗口只跑到 180 根
+        // （4.5 个周期），末尾半个周期让均值包络带上净直流，IMF_0 因此带上
+        // -0.287 的偏置，mean/signal 比值 0.48 —— 零均值性质被破坏。
+        //
+        // 零均值化后把偏移量转移给残差：下面 residual -= h 用的是零均值化后的 h，
+        // 于是 residual = residual_before - (h - mean) = 原残差 + mean，
+        // 「Σ IMF + 残差 == 原信号」的重构不变式仍然成立。
+        if (sifted && !h.empty()) {
+            double sum = 0.0;
+            for (double v : h) sum += v;
+            const double meanShift = sum / static_cast<double>(h.size());
+            if (std::abs(meanShift) > 0.0) {
+                for (double& v : h) v -= meanShift;
             }
         }
 

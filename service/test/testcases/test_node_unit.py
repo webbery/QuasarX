@@ -994,6 +994,36 @@ class TestCUSUMNode:
 # L1: EMD 节点测试（迁自 test_signal_emd.py）
 # ============================================================
 
+# EMD 的 IMF 定义要求两条：① 分量绕零振荡（存在零点穿越）；② 分量均值为零。
+#
+# 服务端 EMD::emd 对真正做过筛选（sifting）的分量做了零均值化，并把偏移量
+# 转移给残差，保持「Σ IMF + 残差 == 原信号」的重构不变式。
+#
+# 但极值点不足时筛选根本不会发生，IMF 退化成原始残差（严格单调序列就是
+# 这种情况）—— 那不是振荡分量，零均值性质不适用（PyEMD 在同样输入下也
+# 保留原始残差）。所以下面按「是否绕零振荡」区分，而不是按数据集硬编码。
+EMD_ZERO_MEAN_TOL = 1e-6
+
+# 各数据集是否应当能筛出振荡分量（决定零均值断言是否适用，也用来防空通过）
+#   sine         —— 正弦+噪声，能筛出振荡分量，零均值必须成立
+#   deterministic —— 严格单调递增序列，筛不出振荡分量（IMF 就是原始残差）
+EMD_EXPECT_OSCILLATORY = {"sine": True, "deterministic": False}
+
+
+def _has_zero_crossing(series) -> bool:
+    """IMF 条件之一：分量必须绕零振荡（存在零点穿越）。
+
+    单调趋势 / 常量没有过零点，零均值性质对它们不适用。
+    """
+    values = np.asarray(series, dtype=float)
+    values = values[np.isfinite(values)]
+    values = values[values != 0.0]
+    if values.size < 2:
+        return False
+    signs = np.sign(values)
+    return bool(np.any(signs[1:] != signs[:-1]))
+
+
 class TestEMDNode:
     """EMD 经验模态分解节点
 
@@ -1023,7 +1053,12 @@ class TestEMDNode:
 
     @pytest.mark.parametrize("dataset_id", ["sine", "deterministic"])
     def test_emd_imf_mean_zero(self, headers, summary, dataset_id):
-        """验证每个 IMF 均值接近零（EMD 基本性质）"""
+        """验证振荡型 IMF 的均值为零（EMD 基本性质）
+
+        服务端对真正筛选过的分量做了零均值化，均值应当只剩浮点噪声
+        （实测 ~1e-16）。旧阈值是「自适应 15%~60%」，那是给「不保证零均值」
+        的实现留的余量——算法修好后继续用它只会掩盖回归，所以收紧到 1e-6。
+        """
         strategy_id = f"test_{dataset_id}_emd_5"
         strategy_path = TEST_DIR / f"{dataset_id}_emd_5.json"
         symbol = summary["datasets"][dataset_id]["symbol"]
@@ -1032,21 +1067,33 @@ class TestEMDNode:
         df = read_debug_csv(strategy_id, "debug_emd_5")
 
         imf_cols = [c for c in df.columns if "nimf_" in c]
-        for idx, col in enumerate(imf_cols):
+        assert imf_cols, f"[{dataset_id}] 没有 nimf 列: {list(df.columns)}"
+
+        checked = 0
+        max_amplitude = 0.0
+        for col in imf_cols:
             series = pd.to_numeric(df[col], errors="coerce").dropna()
-            mean_val = series.mean()
-            # IMF 均值应接近零，但有限长度信号的端点效应导致非零均值
-            # 低阶 IMF（振荡快）影响小，中阶 IMF 端点效应显著，高阶接近残余
             signal_amplitude = series.abs().mean()
-            if signal_amplitude > 0:
-                relative_mean = abs(mean_val) / signal_amplitude
-                # 跳过退化分量（ratio≈1.0 表示无振荡）
-                if relative_mean > 0.9:
-                    continue
-                # 自适应阈值：低阶 15%，中阶 40%，高阶 60%
-                threshold = min(0.15 + idx * 0.15, 0.6)
-                assert relative_mean < threshold, \
-                    f"[{dataset_id}] {col} mean/signal ratio {relative_mean:.4f} exceeds threshold {threshold}"
+            max_amplitude = max(max_amplitude, signal_amplitude)
+            if signal_amplitude <= 0:
+                # 补零的 IMF（实际筛出的分量不足 numIMFs）
+                continue
+            if not _has_zero_crossing(series.to_numpy()):
+                # 退化分量：极值点不足时 IMF 就是原始残差（单调趋势），
+                # 不具备振荡分量的零均值性质
+                continue
+            checked += 1
+            relative_mean = abs(series.mean()) / signal_amplitude
+            assert relative_mean < EMD_ZERO_MEAN_TOL, \
+                f"[{dataset_id}] {col} mean/signal ratio {relative_mean:.3e} " \
+                f"exceeds threshold {EMD_ZERO_MEAN_TOL}"
+
+        # 非平凡护栏：分解退化成全零时用例会空通过
+        assert max_amplitude > 0, \
+            f"[{dataset_id}] 所有 IMF 幅度都是 0 —— 用例退化为空通过"
+        if EMD_EXPECT_OSCILLATORY.get(dataset_id, False):
+            assert checked > 0, \
+                f"[{dataset_id}] 没有振荡型 IMF —— 用例退化为空通过"
 
 
 # ============================================================

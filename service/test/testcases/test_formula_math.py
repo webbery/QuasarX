@@ -74,10 +74,32 @@ BACKTEST_BARS = _BACKTEST_WINDOW["bars"]
 # ============================================================
 
 def _load_close_prices() -> np.ndarray:
+    """从 A_hfq 目录读取收盘价 —— 只取有效回测窗口内的 bar。
+
+    C++ 的 DebugNode 只输出「有效回测窗口」内的 bar（策略声明窗口 ∩ 行情数据
+    窗口，见 node_test_data/generate_node_data.py 的 effective_backtest_window，
+    数值记录在 test_data_summary.json 里）。参考序列若按整份 CSV 算，长度和
+    C++ 输出对不上（200 vs 180），在布尔掩码处直接广播失败：
+        ValueError: operands could not be broadcast together with shapes (180,) (200,)
+
+    窗口起点与 CSV 首根 bar 同日（2024-01-01），所以裁剪不会影响 MA 的预热
+    段：窗口内每根 bar 的均线值与整份 CSV 算出来的完全一致。
+    """
     csv_path = CSV_DATA_DIR / f"{SYMBOL}.csv"
+    closes = []
     with open(csv_path) as f:
         reader = csv.DictReader(f)
-        return np.array([float(row["close"]) for row in reader])
+        for row in reader:
+            date = row["datetime"][:10]
+            if date < BACKTEST_START or date > BACKTEST_END:
+                continue
+            closes.append(float(row["close"]))
+    assert len(closes) == BACKTEST_BARS, (
+        f"{SYMBOL}.csv 按窗口 {BACKTEST_START}~{BACKTEST_END} 裁剪后 {len(closes)} 根，"
+        f"与 test_data_summary.json 记录的 {BACKTEST_BARS} 根不一致；"
+        f"请重新运行 node_test_data/generate_node_data.py"
+    )
+    return np.array(closes)
 
 
 def _build_strategy(expression: str, strategy_id: str, extra_ma=()) -> dict:
@@ -627,8 +649,12 @@ class TestCount:
             valid = ma5[:i+1][np.isfinite(ma5[:i+1])]
             expected[i] = np.sum(valid > 0)
 
-        n = min(len(actual), len(expected))
-        valid = (~np.isnan(actual)) & (~np.isnan(expected))
+        # 回测只覆盖有效回测窗口（summary 记录），C++ 输出与参考序列必须按同一
+        # bar 数截断，否则布尔掩码处会广播失败 (180,) vs (200,)
+        n = min(len(actual), len(expected), BACKTEST_BARS)
+        actual = actual.iloc[:n]
+        expected = expected[:n]
+        valid = (~np.isnan(actual.to_numpy())) & (~np.isnan(expected))
         # NaN 出现时 expected=0 但 actual 可能 NaN，单独处理
         for i in range(n):
             if not np.isfinite(ma5[i]):
