@@ -24,6 +24,7 @@ import { backtestTool } from "./backtest"
 import { skillTool } from "./skill"
 import { dataTool } from "./data"
 import { analysisTool } from "./analysis"
+import { timeSeriesTool } from "./timeSeries"
 import { optionPricingTool } from "./optionPricing"
 import { riskMonitorTool } from "./riskMonitor"
 import { orderQueryTool } from "./orderQuery"
@@ -42,6 +43,7 @@ const builtinTools: StructuredToolInterface[] = [
   skillTool,
   dataTool,
   analysisTool,
+  timeSeriesTool,
   optionPricingTool,
   riskMonitorTool,
   orderQueryTool,

@@ -685,11 +685,11 @@ static void appendContractMeta(nlohmann::json& result,
     auto& cal = HolidayCalendar::instance();
     auto ed   = finance::computeExerciseDate(expiry_year, expiry_month, rule, cal);
     meta["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",
-                                        ed.year, ed.month, ed.day);
+                                        ed._year, ed._month, ed._day);
     if (sym._year == 0) {
         WARN("[OptionDataDB] symbol_id={} decoded _year=0, exchange={}, product={}, "
              "exercise_date={}-{:02d}-{:02d}",
-             symbol_id, exchange, product, ed.year, ed.month, ed.day);
+             symbol_id, exchange, product, ed._year, ed._month, ed._day);
     }
 
     // dte_today: 以系统当前日期为基准。
@@ -703,7 +703,7 @@ static void appendContractMeta(nlohmann::json& result,
                                                     expiry_year, expiry_month, rule, cal);
         INFO("[OptionDataDB] DTE calc: today={}, exercise_date={}-{:02d}-{:02d}, "
              "dte_today={}, last_trade_date={}, _year={}, _month={}",
-             today, ed.year, ed.month, ed.day,
+             today, ed._year, ed._month, ed._day,
              meta["dte_today"].get<int>(), last_date, (int)sym._year, (int)sym._month);
     }
 
@@ -807,7 +807,7 @@ nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
         auto& cal = HolidayCalendar::instance();
         auto ed   = finance::computeExerciseDate(2000 + sym._year, sym._month, rule, cal);
         row["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",
-                                           ed.year, ed.month, ed.day);
+                                           ed._year, ed._month, ed._day);
 
         contracts.push_back(std::move(row));
     }

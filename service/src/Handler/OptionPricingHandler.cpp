@@ -41,7 +41,7 @@ static int daysToExpiry(int expiry_year, int expiry_month, int trade_year, int t
     auto rule = finance::exerciseRuleForExchange(exchange);
     auto& cal = HolidayCalendar::instance();
     auto ed = finance::computeExerciseDate(expiry_year, expiry_month, rule, cal);
-    auto expiry = sys_days{year_month_day{year{ed.year}, month{static_cast<unsigned>(ed.month)}, day{static_cast<unsigned>(ed.day)}}};
+    auto expiry = sys_days{year_month_day{year{ed._year}, month{static_cast<unsigned>(ed._month)}, day{static_cast<unsigned>(ed._day)}}};
     long days = (expiry - trade).count();
     return static_cast<int>(std::max(days, 1L));
 }

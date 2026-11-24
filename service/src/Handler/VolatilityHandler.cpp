@@ -723,7 +723,7 @@ void VolatilityHandler::computeLeadLagSection(
 
             result._lead_lag_results.push_back({
                 rm._symbols[i], rm._symbols[j],
-                ccf.lead_lag, ccf.max_correlation, ccf.ccf
+                ccf._lead_lag, ccf._max_correlation, ccf._ccf
             });
 
             const auto t_gr = PerfClock::now();
@@ -732,8 +732,8 @@ void VolatilityHandler::computeLeadLagSection(
                 rets_i, rets_j, granger_max_lag, rm._symbols[i], rm._symbols[j]);
             result._granger_results.push_back({
                 rm._symbols[j], rm._symbols[i],
-                gr_yx.f_statistic, gr_yx.p_value,
-                gr_yx.is_significant, gr_yx.optimal_lag
+                gr_yx._f_statistic, gr_yx._p_value,
+                gr_yx._is_significant, gr_yx._optimal_lag
             });
 
             auto gr_xy = finance::grangerCausalityTest(
@@ -741,8 +741,8 @@ void VolatilityHandler::computeLeadLagSection(
             if (perf_on) c_granger.add(ms_since(t_gr));
             result._granger_results.push_back({
                 rm._symbols[i], rm._symbols[j],
-                gr_xy.f_statistic, gr_xy.p_value,
-                gr_xy.is_significant, gr_xy.optimal_lag
+                gr_xy._f_statistic, gr_xy._p_value,
+                gr_xy._is_significant, gr_xy._optimal_lag
             });
         }
     }
@@ -909,19 +909,19 @@ nlohmann::json VolatilityHandler::spectrumToJson(
 {
     nlohmann::json j;
     j["dates"] = nlohmann::json::array();
-    for (const auto& d : spectrum.dates) {
+    for (const auto& d : spectrum._dates) {
         j["dates"].push_back(std::string(d.begin(), d.end()));
     }
-    j["m_plus"] = spectrum.m_plus;
-    j["m_minus"] = spectrum.m_minus;
-    j["n_effective"] = spectrum.n_effective;
-    j["signal_var_ratio"] = spectrum.signal_var_ratio;
-    j["lambda_max"] = spectrum.lambda_max;
-    j["lambda_max_ratio"] = spectrum.lambda_max_ratio;
-    j["lambda_plus"] = spectrum.lambda_plus;
-    j["lambda_minus"] = spectrum.lambda_minus;
-    j["original_n"] = spectrum.original_n;
-    j["window_size"] = spectrum.window_size;
+    j["m_plus"] = spectrum._m_plus;
+    j["m_minus"] = spectrum._m_minus;
+    j["n_effective"] = spectrum._n_effective;
+    j["signal_var_ratio"] = spectrum._signal_var_ratio;
+    j["lambda_max"] = spectrum._lambda_max;
+    j["lambda_max_ratio"] = spectrum._lambda_max_ratio;
+    j["lambda_plus"] = spectrum._lambda_plus;
+    j["lambda_minus"] = spectrum._lambda_minus;
+    j["original_n"] = spectrum._original_n;
+    j["window_size"] = spectrum._window_size;
     return j;
 }
 
@@ -1303,7 +1303,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         }
         if (sections._spectrum) {
             if (vr._action == VolatilityAction::All) {
-                if (!result._multi._spectrum_indicators.dates.empty()) {
+                if (!result._multi._spectrum_indicators._dates.empty()) {
                     multi["spectrum_indicators"] =
                         spectrumToJson(result._multi._spectrum_indicators);
                 }

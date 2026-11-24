@@ -28,42 +28,51 @@ double amihud_illiquidity(const Vector<double>& prices,
 
 // ──────────────────────────────────────────────────────────────────────
 // 时间序列分析工具函数（多标的）
+//
+// TODO(剥离重构计量检验工具):
+//   下面这一组（OLSResult / CrossCorrelationResult / GrangerCausalityResult /
+//   CointegrationResult / ADFResult / KPSSResult / OUProcessResult / EGFullResult /
+//   JohansenResult / MultivariateGrangerResult 及对应的 adfTestFull / kpssTest /
+//   engleGrangerFull / johansenTest / grangerCausalityTest / multivariateGrangerTest）
+//   与上面「金融工具」（Kyle's Lambda、Amihud 等）和下面「协方差收缩 / 组合优化」混在同一文件。
+//   目标是把这组计量检验内核剥离到 Util/TimeSeries（或其下的独立子模块），
+//   finance.cpp 回归「金融工具」定位。详见 Util/TimeSeries.h 与 service/doc/time_series.md。
 // ──────────────────────────────────────────────────────────────────────
 
 /// OLS 回归结果
 struct OLSResult {
-    double alpha;              // 截距
-    double beta;               // 斜率
-    Vector<double> residuals;  // 残差序列
-    double r_squared;          // R²
-    double std_error;          // 回归标准误差
+    double _alpha = 0;              // 截距
+    double _beta = 0;               // 斜率
+    Vector<double> _residuals;      // 残差序列
+    double _r_squared = 0;          // R²
+    double _std_error = 0;          // 回归标准误差
 };
 
 /// 交叉相关分析结果
 struct CrossCorrelationResult {
-    Vector<double> ccf;        // lag -max_lag ~ +max_lag 的相关系数
-    int max_lag_index;         // CCF 向量中最大相关的索引
-    double max_correlation;    // 最大 |相关系数|
-    int lead_lag;              // >0: y领先x, <0: x领先y
+    Vector<double> _ccf;            // lag -max_lag ~ +max_lag 的相关系数
+    int _max_lag_index = 0;         // CCF 向量中最大相关的索引
+    double _max_correlation = 0;    // 最大 |相关系数|
+    int _lead_lag = 0;              // >0: y领先x, <0: x领先y
 };
 
 /// 格兰杰因果检验结果
 struct GrangerCausalityResult {
-    double f_statistic;
-    double p_value;
-    bool is_significant;       // p < 0.05
-    int optimal_lag;           // AIC 最小的滞后阶数
-    String direction;          // "X→Y" 或 "Y→X"
+    double _f_statistic = 0;
+    double _p_value = 1;
+    bool _is_significant = false;   // p < 0.05
+    int _optimal_lag = 0;           // AIC 最小的滞后阶数
+    String _direction;              // "X→Y" 或 "Y→X"
 };
 
 /// 协整检验结果 (Engle-Granger)
 struct CointegrationResult {
-    double beta;               // y = α + βx + ε
-    double alpha;
-    double adf_statistic;      // 残差 ADF 检验统计量
-    double p_value;
-    bool is_cointegrated;      // p < 0.05
-    double half_life;          // 均值回归半衰期 (bar 数)
+    double _beta = 0;               // y = α + βx + ε
+    double _alpha = 0;
+    double _adf_statistic = 0;      // 残差 ADF 检验统计量
+    double _p_value = 1;
+    bool _is_cointegrated = false;  // p < 0.05
+    double _half_life = 0;          // 均值回归半衰期 (bar 数)
 };
 
 /// ADF 检验结果 (含 MacKinnon 临界值)
@@ -311,26 +320,26 @@ Vector<double> ewmaVolatilityStandardize(const Vector<double>& returns, double d
 
 /// 单个时间点的谱指标
 struct SpectrumSnapshot {
-    int m_plus = 0;           // 特征值 > λ₊ 的数量
-    int m_minus = 0;          // 特征值 < λ₋ 的数量
-    int n_effective = 0;      // 降维后的有效标的数 k (若未降维则 = n)
-    double lambda_plus = 0;   // MP 上界
-    double lambda_minus = 0;  // MP 下界
+    int _m_plus = 0;           // 特征值 > λ₊ 的数量
+    int _m_minus = 0;          // 特征值 < λ₋ 的数量
+    int _n_effective = 0;      // 降维后的有效标的数 k (若未降维则 = n)
+    double _lambda_plus = 0;   // MP 上界
+    double _lambda_minus = 0;  // MP 下界
 };
 
 /// 滚动窗口谱指标结果
 struct SpectrumIndicatorResult {
-    Vector<String> dates;              // 每个窗口结束日期
-    Vector<int> m_plus;                // m+ 时间序列
-    Vector<int> m_minus;               // m- 时间序列
-    Vector<int> n_effective;           // 有效标的数时间序列
-    Vector<double> signal_var_ratio;   // 信号方差占比时间序列 (0~1)
-    Vector<double> lambda_max;         // 最大特征值时间序列
-    Vector<double> lambda_max_ratio;   // λ_max/λ₊ 倍数时间序列
-    double lambda_plus = 0;            // MP 上界 (由 Q=T/N 决定，窗口固定则不变)
-    double lambda_minus = 0;           // MP 下界
-    int original_n = 0;                // 原始标的数
-    int window_size = 0;               // 滚动窗口大小
+    Vector<String> _dates;             // 每个窗口结束日期
+    Vector<int> _m_plus;               // m+ 时间序列
+    Vector<int> _m_minus;              // m- 时间序列
+    Vector<int> _n_effective;          // 有效标的数时间序列
+    Vector<double> _signal_var_ratio;  // 信号方差占比时间序列 (0~1)
+    Vector<double> _lambda_max;        // 最大特征值时间序列
+    Vector<double> _lambda_max_ratio;  // λ_max/λ₊ 倍数时间序列
+    double _lambda_plus = 0;           // MP 上界 (由 Q=T/N 决定，窗口固定则不变)
+    double _lambda_minus = 0;          // MP 下界
+    int _original_n = 0;               // 原始标的数
+    int _window_size = 0;              // 滚动窗口大小
 };
 
 /// 贪心层次聚类降维：基于相关系数将 n 个标的聚成 k 个簇
@@ -441,9 +450,9 @@ enum class OptionExerciseRule {
 };
 
 struct ExerciseDate {
-    int year = 0;
-    int month = 0;
-    int day = 0;
+    int _year = 0;
+    int _month = 0;
+    int _day = 0;
 };
 
 /// 根据交易所代码返回对应的行权日规则

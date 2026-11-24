@@ -125,7 +125,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - **strategy**: 策略创建与优化、回测执行、数据下载与行情/财务数据查询、技术指标分析、策略查询（本地缓存/历史版本/参数结构/远程 service 策略）
   - **risk**: 风控分析、账户风险、持仓风险、止损建议
   - **portfolio**: 投资组合管理、组合收益分析、资产配置建议
-  - **analysis**: 数据深度分析（EMD 分解、波动率/ACF、协整/Granger、CUSUM、PCA、突变检测、期权定价、协方差诊断）
+  - **analysis**: 数据深度分析（EMD 分解、波动率/ACF、CUSUM、PCA、突变检测、协方差诊断；单位根/协整/Johansen 迹检验与最大特征值/Granger 等计量检验）
 
   路由规则（按优先级从高到低）：
   - 如果任务已完成 → respond
@@ -134,7 +134,8 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 行情数据下载、行情/财务数据查询、股票列表、期权合约列表 → strategy
   - 策略相关（创建、修改、回测、分析策略表现，以及查询策略列表、策略参数、历史版本、远程 service 策略）→ strategy
   - 投资组合、资产配置、组合收益 → portfolio
-  - 深度数据分析、信号分解、波动率/协整/Granger、变点检测、突变检测、期权定价 → analysis
+  - 深度数据分析、信号分解、波动率、变点检测、突变检测、期权定价 → analysis
+  - 平稳性/单位根/协整/Johansen/Granger 等时间序列计量检验 → analysis
   - 普通聊天、知识问答、搜索 → chat
   - 无法归入上述任何类别 → respond（返回「无法理解，请重新描述」）
 
@@ -257,13 +258,14 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - 能力不足时用 \`report_gap\` 登记缺口，不要用相近的工具硬凑
 
   典型动线：
-  - 统计/计量分析 → 加载 \`analysis\` 契约（EMD、波动率、协整、CUSUM、PCA、蒙特卡洛、XGBoost、协方差诊断、回测序列突变检测）
+  - 统计/计量分析 → 加载 \`analysis\` 契约（EMD、波动率、CUSUM、PCA、蒙特卡洛、XGBoost、协方差诊断、回测序列突变检测）
+  - 时间序列计量检验 → 加载 \`time_series\` 契约（ADF 单位根、KPSS 平稳性、Engle-Granger 协整、Johansen 迹检验/最大特征值、Granger 因果）
   - 期权定价与隐波 → 加载 \`option_pricing\` 契约
   - 取数 → 加载 \`data_manager\` / \`performance\` 契约
 
   计算工具优先级：
-  - 统计/计量计算优先用 \`analysis\` 域的工具（EMD、波动率、协整/Granger、CUSUM、PCA、蒙特卡洛、协方差诊断、变点检测等），先看域内 action 清单再动手
-  - 只有 \`analysis\` 域没有对应能力时（如正态性检验、自定义分布拟合），才用 \`javascript\` 工具自行实现；数值同样必须来自 Tool 返回，禁止编造
+  - 统计/计量计算优先用 \`analysis\` / \`time_series\` 的工具（EMD、波动率、CUSUM、PCA、蒙特卡洛、协方差诊断、变点检测；单位根/协整/Johansen/Granger），先看域内 action 清单再动手
+  - 只有 \`analysis\` / \`time_series\` 都没有对应能力时（如自定义分布拟合），才用 \`javascript\` 工具自行实现；数值同样必须来自 Tool 返回，禁止编造
 
   输出规范：
   1. 给出**分析结论**（一句话）

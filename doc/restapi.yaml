@@ -2420,25 +2420,50 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /analysis/cointegration:
+  /analysis/time_series:
     get:
-      summary: 协整分析 (Engle-Granger / Johansen / Granger / 单位根)
+      summary: 时间序列计量分析 (ADF / KPSS / 协整 / Johansen / Granger)
       description: |
-        对指定标的进行协整分析，包含：
-        - **单位根检验**: 各标的 ADF (MacKinnon 临界值) + KPSS 互补检验
-        - **二元 Engle-Granger 两步法**: 协整回归 → 残差 ADF/KPSS → OU 过程 MLE 拟合 → 残差序列
-        - **Johansen 多元协整**: trace + max-eigen 统计量 (≥3 标的时返回)
-        - **Granger 因果检验**: 二元 F 检验 + 多元 VAR+Wald 检验 (≥3 标的时返回多元)
+        **一个 action 一项检验**。替代原 `/analysis/cointegration`（已删除）。
+        - `adf`: ADF 单位根检验 (MacKinnon 临界值 + p 值)
+        - `kpss`: KPSS 平稳性检验 (H0: 序列平稳，与 ADF 相反)
+        - `cointegration`: Engle-Granger 两步法 (协整回归 → 残差 ADF/KPSS → 半衰期 → OU 拟合)
+        - `johansen_trace`: Johansen 迹检验 (逐秩统计量 + 95%/99% 临界值 + 显著性)
+        - `johansen_max_eigen`: Johansen 最大特征值检验
+        - `granger`: Granger 因果 (逐对二元 F 检验 + 多元 VAR/Wald)
+
+        `on=residuals` 仅对 adf / kpss 有效：先做协整回归再检验残差（EG 两步法的第二步），要求恰好 2 条序列。
       tags:
         - Analysis
       parameters:
+        - in: query
+          name: action
+          required: true
+          schema:
+            type: string
+            enum: [adf, kpss, cointegration, johansen_trace, johansen_max_eigen, granger]
+          description: 检验类型
         - in: query
           name: symbols
           required: true
           schema:
             type: string
-          description: 标的代码列表，逗号分隔（至少 2 个）
-          example: sz.000001,sz.000002,sz.000003
+          description: 标的代码，逗号分隔（GET 只能按标的取数；需要直接传序列请用 POST）
+          example: sh.600000,sh.600036
+        - in: query
+          name: field
+          schema:
+            type: string
+            enum: [close, open, high, low, volume, turnover]
+            default: close
+          description: ohlcv 域
+        - in: query
+          name: "on"
+          schema:
+            type: string
+            enum: [prices, residuals]
+            default: prices
+          description: adf/kpss 的检验对象；residuals = 协整回归残差，要求恰好 2 条序列
         - in: query
           name: start_date
           schema:
@@ -2452,14 +2477,27 @@ paths:
             format: date
           description: 结束日期（YYYY-MM-DD）
         - in: query
+          name: freq
+          schema:
+            type: string
+            default: 1d
+          description: 频率，如 1d / 5m / 1w
+        - in: query
+          name: fill
+          schema:
+            type: string
+            enum: [none, forward, backward, linear, zero]
+            default: none
+          description: 缺失值填充
+        - in: query
           name: max_lag
           schema:
             type: integer
             default: 10
-          description: Granger 检验最大滞后阶数
+          description: Granger 最大滞后阶数
       responses:
         '200':
-          description: 协整分析结果
+          description: 检验结果（按 action 返回对应顶层键）
           content:
             application/json:
               schema:
@@ -2467,39 +2505,46 @@ paths:
                 properties:
                   symbols:
                     type: array
-                    items:
-                      type: string
+                    items: { type: string }
                   dates:
                     type: array
-                    items:
-                      type: string
-                  unit_root:
+                    items: { type: string }
+                  adf:
                     type: object
-                    description: 各标的单位根检验 (key=标的代码)
+                    description: action=adf；key 为标的代码，on=residuals 时为 "X~Y"
                     additionalProperties:
                       type: object
                       properties:
-                        adf:
-                          type: object
-                          properties:
-                            statistic: { type: number }
-                            p_value: { type: number }
-                            cv_1pct: { type: number }
-                            cv_5pct: { type: number }
-                            cv_10pct: { type: number }
-                            lags: { type: integer }
-                            is_stationary: { type: boolean }
-                        kpss:
-                          type: object
-                          properties:
-                            statistic: { type: number }
-                            p_value: { type: number }
-                            lags: { type: integer }
-                            lr_variance: { type: number }
-                            is_stationary: { type: boolean }
+                        statistic: { type: number }
+                        p_value: { type: number }
+                        cv_1pct: { type: number }
+                        cv_5pct: { type: number }
+                        cv_10pct: { type: number }
+                        lags: { type: integer }
+                        is_stationary: { type: boolean }
+                  kpss:
+                    type: object
+                    description: action=kpss；key 为标的代码，on=residuals 时为 "X~Y"
+                    additionalProperties:
+                      type: object
+                      properties:
+                        statistic: { type: number }
+                        p_value: { type: number }
+                        lags: { type: integer }
+                        lr_variance: { type: number }
+                        is_stationary: { type: boolean }
+                  pair:
+                    type: object
+                    description: on=residuals 时返回的残差对
+                    properties:
+                      symbol_x: { type: string }
+                      symbol_y: { type: string }
+                      residuals:
+                        type: array
+                        items: { type: number }
                   pairwise_eg:
                     type: array
-                    description: 二元 Engle-Granger 两步法结果
+                    description: action=cointegration
                     items:
                       type: object
                       properties:
@@ -2508,34 +2553,17 @@ paths:
                         alpha: { type: number }
                         beta: { type: number }
                         r_squared: { type: number }
-                        adf:
-                          type: object
-                          description: 残差 ADF 检验 (MacKinnon)
-                        kpss:
-                          type: object
-                          description: 残差 KPSS 检验
+                        adf: { type: object }
+                        kpss: { type: object }
                         half_life: { type: number }
                         is_cointegrated: { type: boolean }
-                        ou:
-                          type: object
-                          description: OU 过程 MLE 拟合
-                          properties:
-                            theta: { type: number, description: 均值回复速度 }
-                            mu: { type: number, description: 长期均值 }
-                            sigma: { type: number, description: 波动率 }
-                            half_life: { type: number }
-                            log_likelihood: { type: number }
-                            aic: { type: number }
-                            se_theta: { type: number }
-                            se_mu: { type: number }
-                            se_sigma: { type: number }
+                        ou: { type: object }
                         residuals:
                           type: array
                           items: { type: number }
-                          description: 协整残差序列
                   johansen:
                     type: object
-                    description: Johansen 多元协整检验 (≥3 标的)
+                    description: action=johansen_trace / johansen_max_eigen
                     properties:
                       n_variables: { type: integer }
                       rank: { type: integer, description: 估计的协整秩 }
@@ -2547,24 +2575,24 @@ paths:
                       max_eigen_cv_95: { type: array, items: { type: number } }
                       max_eigen_cv_99: { type: array, items: { type: number } }
                       max_eigen_significant: { type: array, items: { type: boolean } }
-                      eigenvectors: { type: array, items: { type: array, items: { type: number } } }
                   granger:
                     type: object
                     properties:
                       pairwise:
                         type: array
-                        description: 二元 Granger F 检验
+                        description: 二元 Granger F 检验（双向）
                         items:
                           type: object
                           properties:
                             from: { type: string }
+                            to: { type: string }
                             f_statistic: { type: number }
                             p_value: { type: number }
                             is_significant: { type: boolean }
                             optimal_lag: { type: integer }
                       multivariate:
                         type: array
-                        description: 多元 Granger Wald 检验 (≥3 标的)
+                        description: 多元 Granger Wald 检验 (≥3 序列)
                         items:
                           type: object
                           properties:
@@ -2589,7 +2617,81 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-
+    post:
+      summary: 时间序列计量分析（支持直接传入序列）
+      description: |
+        与 GET 相同，但 body 支持 `series` 直接传入时间序列，不再要求标的已有行情。
+        `symbols` 在 `series` 模式下只用于给各序列命名。
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [adf, kpss, cointegration, johansen_trace, johansen_max_eigen, granger]
+                symbols:
+                  type: string
+                  description: 逗号分隔；series 模式下用于命名
+                  example: sh.600000,sh.600036
+                field:
+                  type: string
+                  enum: [close, open, high, low, volume, turnover]
+                  default: close
+                series:
+                  type: array
+                  description: 二维数组，每行一条时间序列
+                  items:
+                    type: array
+                    items: { type: number }
+                dates:
+                  type: array
+                  description: 配合 series 的日期轴
+                  items: { type: string }
+                start_date:
+                  type: string
+                  format: date
+                end_date:
+                  type: string
+                  format: date
+                freq:
+                  type: string
+                  default: 1d
+                fill:
+                  type: string
+                  enum: [none, forward, backward, linear, zero]
+                  default: none
+                max_lag:
+                  type: integer
+                  default: 10
+                on:
+                  type: string
+                  enum: [prices, residuals]
+                  default: prices
+      responses:
+        '200':
+          description: 检验结果（结构同 GET）
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /analysis/covariance_diagnostics:
     post:
       summary: 协方差质量诊断 / Marchenko-Pastur 噪声分析

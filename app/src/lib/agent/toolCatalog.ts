@@ -31,7 +31,8 @@ import { AGENT_TOOL_CONFIG } from "./types"
  */
 const TOOL_ALIASES: Record<string, string[]> = {
   data_manager: ["行情", "数据下载", "下载数据", "财务", "股票列表", "期权", "期货", "数据管理", "导入", "导出", "K线"],
-  analysis: ["波动率", "协整", "granger", "pca", "分解", "信号", "蒙特卡洛", "突变", "变点", "变点检测", "cusum", "emd", "xgboost", "协方差", "矩阵", "特征值", "正定性"],
+  analysis: ["波动率", "pca", "分解", "信号", "蒙特卡洛", "突变", "变点", "变点检测", "cusum", "emd", "xgboost", "协方差", "矩阵", "特征值", "正定性"],
+  time_series: ["协整", "单位根", "ADF", "KPSS", "平稳性", "平稳", "迹检验", "最大特征值", "Johansen", "Granger", "因果", "时序", "时间序列", "半衰期", "配对", "Engle-Granger"],
   risk_monitor: ["风控", "风险", "止损", "资本", "敞口", "断路器"],
   order_query: ["订单", "成交", "交易查询", "资金流水"],
   performance: ["绩效", "收益", "业绩", "年化", "夏普"],

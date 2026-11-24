@@ -56,30 +56,30 @@ OLSResult olsRegression(const Vector<double>& x, const Vector<double>& y) {
     }
 
     if (sxx < 1e-15) {
-        result.alpha = my;
-        result.beta = 0;
-        result.r_squared = 0;
-        result.std_error = calcStdDev(y);
-        result.residuals.assign(n, 0);
-        for (size_t i = 0; i < n; ++i) result.residuals[i] = y[i] - my;
+        result._alpha = my;
+        result._beta = 0;
+        result._r_squared = 0;
+        result._std_error = calcStdDev(y);
+        result._residuals.assign(n, 0);
+        for (size_t i = 0; i < n; ++i) result._residuals[i] = y[i] - my;
         return result;
     }
 
-    result.beta = sxy / sxx;
-    result.alpha = my - result.beta * mx;
+    result._beta = sxy / sxx;
+    result._alpha = my - result._beta * mx;
 
     // 残差和R²
     double ss_res = 0, ss_tot = 0;
-    result.residuals.resize(n);
+    result._residuals.resize(n);
     for (size_t i = 0; i < n; ++i) {
-        double predicted = result.alpha + result.beta * x[i];
-        result.residuals[i] = y[i] - predicted;
-        ss_res += result.residuals[i] * result.residuals[i];
+        double predicted = result._alpha + result._beta * x[i];
+        result._residuals[i] = y[i] - predicted;
+        ss_res += result._residuals[i] * result._residuals[i];
         double dy = y[i] - my;
         ss_tot += dy * dy;
     }
-    result.r_squared = (ss_tot > 1e-15) ? (1.0 - ss_res / ss_tot) : 0.0;
-    result.std_error = (n > 2) ? std::sqrt(ss_res / (n - 2)) : 0.0;
+    result._r_squared = (ss_tot > 1e-15) ? (1.0 - ss_res / ss_tot) : 0.0;
+    result._std_error = (n > 2) ? std::sqrt(ss_res / (n - 2)) : 0.0;
 
     return result;
 }
@@ -101,9 +101,9 @@ CrossCorrelationResult crossCorrelation(
     if (denom < 1e-15) return result;
 
     int total_lags = 2 * max_lag + 1;
-    result.ccf.resize(total_lags);
-    result.max_correlation = 0;
-    result.max_lag_index = max_lag;  // lag=0 的索引
+    result._ccf.resize(total_lags);
+    result._max_correlation = 0;
+    result._max_lag_index = max_lag;  // lag=0 的索引
 
     for (int lag = -max_lag; lag <= max_lag; ++lag) {
         int idx = lag + max_lag;
@@ -118,13 +118,13 @@ CrossCorrelationResult crossCorrelation(
             }
         }
 
-        result.ccf[idx] = (count > 0) ? (sum_xy / (count * denom)) : 0.0;
+        result._ccf[idx] = (count > 0) ? (sum_xy / (count * denom)) : 0.0;
 
-        double abs_corr = std::abs(result.ccf[idx]);
-        if (abs_corr > result.max_correlation) {
-            result.max_correlation = abs_corr;
-            result.max_lag_index = idx;
-            result.lead_lag = lag;
+        double abs_corr = std::abs(result._ccf[idx]);
+        if (abs_corr > result._max_correlation) {
+            result._max_correlation = abs_corr;
+            result._max_lag_index = idx;
+            result._lead_lag = lag;
         }
     }
 
@@ -172,8 +172,8 @@ static std::pair<double, double> adfTest(
 
     // 受限回归 (无滞后差分): Δy_t = α + β·y_{t-1} + ε
     auto ols_basic = olsRegression(y_lag, dy);
-    double beta = ols_basic.beta;
-    double se_beta = ols_basic.std_error;
+    double beta = ols_basic._beta;
+    double se_beta = ols_basic._std_error;
 
     // ADF 统计量
     double adf_stat = (se_beta > 1e-15) ? (beta / se_beta) : 0.0;
@@ -266,12 +266,12 @@ GrangerCausalityResult grangerCausalityTest(
     const String& x_name, const String& y_name)
 {
     GrangerCausalityResult result{};
-    result.direction = y_name + "→" + x_name;
+    result._direction = y_name + "→" + x_name;
     size_t n = x.size();
     if (n < (size_t)(max_lag * 2 + 10) || y.size() != n) return result;
 
     double best_aic = std::numeric_limits<double>::max();
-    result.optimal_lag = 1;
+    result._optimal_lag = 1;
 
     for (int p = 1; p <= max_lag; ++p) {
         // 受限模型: x_t = α + Σβ_i·x_{t-i} + ε_r
@@ -311,7 +311,7 @@ GrangerCausalityResult grangerCausalityTest(
             }
 
             auto ols = olsRegression(pred, y_vec);
-            for (auto r : ols.residuals) rss_r += r * r;
+            for (auto r : ols._residuals) rss_r += r * r;
         }
 
         // 非受限模型RSS
@@ -329,7 +329,7 @@ GrangerCausalityResult grangerCausalityTest(
                 y_target.push_back(x[t]);
             }
             auto ols_x = olsRegression(x_pred, y_target);
-            Vector<double> res_x = ols_x.residuals;
+            Vector<double> res_x = ols_x._residuals;
 
             // 再回归 y 的滞后对残差的影响
             Vector<double> y_pred;
@@ -339,7 +339,7 @@ GrangerCausalityResult grangerCausalityTest(
 
             // 用残差作为目标
             auto ols_y = olsRegression(y_pred, res_x);
-            for (auto r : ols_y.residuals) rss_u += r * r;
+            for (auto r : ols_y._residuals) rss_u += r * r;
         }
 
         // F 统计量: ((RSS_r - RSS_u) / p) / (RSS_u / (n - 2p - 1))
@@ -359,13 +359,13 @@ GrangerCausalityResult grangerCausalityTest(
 
         if (aic < best_aic) {
             best_aic = aic;
-            result.optimal_lag = p;
-            result.f_statistic = f_stat;
-            result.p_value = p_val;
+            result._optimal_lag = p;
+            result._f_statistic = f_stat;
+            result._p_value = p_val;
         }
     }
 
-    result.is_significant = (result.p_value < 0.05);
+    result._is_significant = (result._p_value < 0.05);
     return result;
 }
 
@@ -382,30 +382,30 @@ CointegrationResult engleGrangerTest(
 
     // Step 1: OLS 回归 y = α + βx + ε
     auto ols = olsRegression(x, y);
-    result.alpha = ols.alpha;
-    result.beta = ols.beta;
+    result._alpha = ols._alpha;
+    result._beta = ols._beta;
 
     // Step 2: 对残差做 ADF 检验
-    auto [adf_stat, p_val] = adfTest(ols.residuals, 0);
-    result.adf_statistic = adf_stat;
-    result.p_value = p_val;
-    result.is_cointegrated = (p_val < 0.05);
+    auto [adf_stat, p_val] = adfTest(ols._residuals, 0);
+    result._adf_statistic = adf_stat;
+    result._p_value = p_val;
+    result._is_cointegrated = (p_val < 0.05);
 
     // Step 3: 计算均值回归半衰期
     // 从 ADF 回归: Δε_t = γ·ε_{t-1} + ...
     // 半衰期 = -log(2) / γ
-    if (ols.residuals.size() > 2) {
+    if (ols._residuals.size() > 2) {
         Vector<double> eps_lag, d_eps;
-        for (size_t i = 1; i < ols.residuals.size(); ++i) {
-            eps_lag.push_back(ols.residuals[i - 1]);
-            d_eps.push_back(ols.residuals[i] - ols.residuals[i - 1]);
+        for (size_t i = 1; i < ols._residuals.size(); ++i) {
+            eps_lag.push_back(ols._residuals[i - 1]);
+            d_eps.push_back(ols._residuals[i] - ols._residuals[i - 1]);
         }
         auto ar_ols = olsRegression(eps_lag, d_eps);
-        double gamma = ar_ols.beta;
+        double gamma = ar_ols._beta;
         if (gamma < 0) {
-            result.half_life = -std::log(2.0) / gamma;
+            result._half_life = -std::log(2.0) / gamma;
         } else {
-            result.half_life = -1.0;  // 不收敛
+            result._half_life = -1.0;  // 不收敛
         }
     }
 
@@ -630,7 +630,7 @@ KPSSResult kpssTest(const Vector<double>& series, int lags,
         Vector<double> t_vec(n);
         for (size_t i = 0; i < n; ++i) t_vec[i] = (double)i;
         auto ols = olsRegression(t_vec, series);
-        for (size_t i = 0; i < n; ++i) e[i] = ols.residuals[i];
+        for (size_t i = 0; i < n; ++i) e[i] = ols._residuals[i];
     }
 
     // 部分和 S_t = Σ e_i (i=1..t)
@@ -865,27 +865,27 @@ EGFullResult engleGrangerFull(const Vector<double>& x, const Vector<double>& y,
 
     // Step 1: 协整回归 y = α + βx + ε
     auto ols = olsRegression(x, y);
-    result._alpha = ols.alpha;
-    result._beta = ols.beta;
-    result._r_squared = ols.r_squared;
+    result._alpha = ols._alpha;
+    result._beta = ols._beta;
+    result._r_squared = ols._r_squared;
     result._residuals = Eigen::Map<const Eigen::VectorXd>(
-        ols.residuals.data(), ols.residuals.size());
+        ols._residuals.data(), ols._residuals.size());
 
     // Step 2: 残差 ADF 检验 (MacKinnon)
-    result._adf = adfTestFull(ols.residuals, -1, "c");
+    result._adf = adfTestFull(ols._residuals, -1, "c");
 
     // KPSS 互补检验
-    result._kpss = kpssTest(ols.residuals, -1, "level");
+    result._kpss = kpssTest(ols._residuals, -1, "level");
 
     // 半衰期: 从 AR(1) 系数反推
-    if (ols.residuals.size() > 2) {
+    if (ols._residuals.size() > 2) {
         Vector<double> eps_lag, d_eps;
-        for (size_t i = 1; i < ols.residuals.size(); ++i) {
-            eps_lag.push_back(ols.residuals[i - 1]);
-            d_eps.push_back(ols.residuals[i] - ols.residuals[i - 1]);
+        for (size_t i = 1; i < ols._residuals.size(); ++i) {
+            eps_lag.push_back(ols._residuals[i - 1]);
+            d_eps.push_back(ols._residuals[i] - ols._residuals[i - 1]);
         }
         auto ar_ols = olsRegression(eps_lag, d_eps);
-        double gamma = ar_ols.beta;
+        double gamma = ar_ols._beta;
         result._half_life = (gamma < 0) ? (-std::log(2.0) / gamma) : -1.0;
     }
 
@@ -1823,8 +1823,8 @@ SpectrumIndicatorResult computeSpectrumIndicators(
 
     if (n < 2 || T < window_size || window_size < 3) return result;
 
-    result.original_n = n;
-    result.window_size = window_size;
+    result._original_n = n;
+    result._window_size = window_size;
 
     // 确定有效标的数 k (若 n > window_size 则需降维)
     int k = n;
@@ -1836,15 +1836,15 @@ SpectrumIndicatorResult computeSpectrumIndicators(
 
     // MP 边界 (基于 Q = window/k)
     double Q = static_cast<double>(window_size) / k;
-    result.lambda_plus = std::pow(1.0 + 1.0 / std::sqrt(Q), 2);
-    result.lambda_minus = std::pow(1.0 - 1.0 / std::sqrt(Q), 2);
+    result._lambda_plus = std::pow(1.0 + 1.0 / std::sqrt(Q), 2);
+    result._lambda_minus = std::pow(1.0 - 1.0 / std::sqrt(Q), 2);
 
     // 滚动窗口
     int num_windows = T - window_size + 1;
-    result.dates.reserve(num_windows);
-    result.m_plus.reserve(num_windows);
-    result.m_minus.reserve(num_windows);
-    result.n_effective.reserve(num_windows);
+    result._dates.reserve(num_windows);
+    result._m_plus.reserve(num_windows);
+    result._m_minus.reserve(num_windows);
+    result._n_effective.reserve(num_windows);
 
     // 子阶段打点：计数器在循环外取一次，避免每窗口按名字查 map
     const bool perf_on = perf_stages != nullptr && perf_stages->enabled();
@@ -1958,20 +1958,20 @@ SpectrumIndicatorResult computeSpectrumIndicators(
         double total_var = 0, signal_var = 0;
         for (double ev : sorted_evals) {
             total_var += ev;
-            if (ev > result.lambda_plus) {
+            if (ev > result._lambda_plus) {
                 ++m_plus;
                 signal_var += ev;
             }
-            if (ev < result.lambda_minus) ++m_minus;
+            if (ev < result._lambda_minus) ++m_minus;
         }
 
-        result.m_plus.push_back(m_plus);
-        result.m_minus.push_back(m_minus);
-        result.n_effective.push_back(effective_n);
-        result.signal_var_ratio.push_back(total_var > 0 ? signal_var / total_var : 0);
-        result.lambda_max.push_back(sorted_evals[0]);
-        result.lambda_max_ratio.push_back(result.lambda_plus > 0 ? sorted_evals[0] / result.lambda_plus : 0);
-        result.dates.push_back(dates[w_end - 1]);  // 窗口结束日期
+        result._m_plus.push_back(m_plus);
+        result._m_minus.push_back(m_minus);
+        result._n_effective.push_back(effective_n);
+        result._signal_var_ratio.push_back(total_var > 0 ? signal_var / total_var : 0);
+        result._lambda_max.push_back(sorted_evals[0]);
+        result._lambda_max_ratio.push_back(result._lambda_plus > 0 ? sorted_evals[0] / result._lambda_plus : 0);
+        result._dates.push_back(dates[w_end - 1]);  // 窗口结束日期
     }
 
     return result;
@@ -2275,9 +2275,9 @@ ExerciseDate computeExerciseDate(int year, int month, OptionExerciseRule rule,
 
     ExerciseDate out;
     auto ymd = year_month_day{adjusted};
-    out.year  = (int)ymd.year();
-    out.month = (unsigned)ymd.month();
-    out.day   = (unsigned)ymd.day();
+    out._year  = (int)ymd.year();
+    out._month = (unsigned)ymd.month();
+    out._day   = (unsigned)ymd.day();
     return out;
 }
 
@@ -2293,9 +2293,9 @@ int daysToExercise(int trade_year, int trade_month, int trade_day,
         day{static_cast<unsigned>(trade_day)}
     }};
     auto exp_sd = sys_days{year_month_day{
-        year{ex.year},
-        month{static_cast<unsigned>(ex.month)},
-        day{static_cast<unsigned>(ex.day)}
+        year{ex._year},
+        month{static_cast<unsigned>(ex._month)},
+        day{static_cast<unsigned>(ex._day)}
     }};
     long days = (exp_sd - trade_sd).count();
     return static_cast<int>(days);

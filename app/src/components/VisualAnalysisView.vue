@@ -59,11 +59,6 @@
           <CapacityTab />
         </div>
 
-        <!-- 协整分析 Tab -->
-        <div v-show="activeTab === 'cointegration'" class="tab-content">
-          <CointegrationTab />
-        </div>
-
         <!-- 非线性分析 Tab -->
         <div v-show="activeTab === 'nonlinear'" class="tab-content">
           <NonlinearTab />
@@ -278,7 +273,6 @@ import FeatureGateTab from './ml/FeatureGateTab.vue'
 import HMMTab from './hmm/HMMTab.vue'
 import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
-import CointegrationTab from './cointegration/CointegrationTab.vue'
 import NonlinearTab from './nonlinear/NonlinearTab.vue'
 import AgentPanel from './agent/AgentPanel.vue'
 
@@ -296,7 +290,6 @@ const allTabs = [
   { label: 'HMM 隐马尔可夫', name: 'hmm' },
   { label: '基本面分析', name: 'fundamental' },
   { label: '容量分析', name: 'capacity' },
-  { label: '协整分析', name: 'cointegration' },
   { label: '非线性分析', name: 'nonlinear' },
   { label: '资金流向', name: 'flow' },
   { label: '策略数据', name: 'strategyData' }

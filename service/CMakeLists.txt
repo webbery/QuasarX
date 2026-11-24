@@ -291,10 +291,11 @@ if(SIMD_COMPILE_FLAG)
         src/Metric/RiskMetric.cpp        # 风险指标（自相关、Sharpe 等）
         src/Metric/Covariance.cpp        # 协方差 + 特征分解
         src/Handler/CUSUMHandler.cpp     # CUSUM 相关性结构检测
-        src/Handler/CointegrationHandler.cpp  # Johansen 协整检验
+        src/Handler/TimeSeriesHandler.cpp   # 时间序列计量分析（ADF/KPSS/协整/Johansen/Granger）
         src/Handler/PortfolioHandler.cpp # 组合优化
         src/Handler/PCAHandler.cpp       # PCA 特征分解
         src/Handler/VolatilityHandler.cpp # 波动率模型
+        src/Util/TimeSeries.cpp         # 时序检验编排
         src/Util/finance.cpp            # 金融工具（LedoitWolf、风险平价等）
     )
     foreach(src ${SIMD_SOURCE_FILES})

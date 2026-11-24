@@ -395,68 +395,6 @@ export const analysisTool = tool(
           return lines.join("\n")
         }
 
-        // ========== 协整检验 ==========
-
-        case "cointegration": {
-          const { symbols, start_date, end_date, max_lag } = params
-          if (!symbols) return "错误：cointegration 需要 symbols 参数（≥2 个，逗号分隔）"
-
-          const symbolList = symbols.split(",").map((s: string) => s.trim()).filter(Boolean)
-          if (symbolList.length < 2) return "错误：cointegration 至少需要 2 个标的"
-
-          const res = await axios!.get(`${BASE_URL}/analysis/cointegration`, {
-            params: {
-              symbols,
-              ...(start_date ? { start_date } : {}),
-              ...(end_date ? { end_date } : {}),
-              max_lag: max_lag ?? 10,
-            },
-          })
-          const d = res.data
-          if (!d) return "协整分析无结果"
-
-          const lines = [`**协整分析** — ${symbols}`]
-          lines.push(`  标的数: ${symbolList.length}，日期点: ${d.dates?.length ?? 0}`)
-
-          if (d.unit_root) {
-            lines.push("\n**单位根检验** (ADF)：")
-            for (const [sym, ur] of Object.entries(d.unit_root as Record<string, any>)) {
-              const adf = ur.adf
-              if (adf) {
-                lines.push(`  ${sym}: statistic=${formatNumber(adf.statistic, 4)}, p_value=${formatNumber(adf.p_value, 4)}, ${adf.is_stationary ? "平稳" : "非平稳"}`)
-              }
-            }
-          }
-
-          if (d.pairwise_eg && Array.isArray(d.pairwise_eg)) {
-            lines.push(`\n**Engle-Granger 检验**（${d.pairwise_eg.length} 对）：`)
-            for (const eg of d.pairwise_eg) {
-              const adf = eg.adf ?? {}
-              lines.push(`  ${eg.symbol_x} ~ ${eg.symbol_y}: β=${formatNumber(eg.beta, 4)}, R²=${formatNumber(eg.r_squared, 4)}, 半衰期=${formatNumber(eg.half_life, 2)}, 协整=${eg.is_cointegrated ? "是" : "否"} (ADF p=${formatNumber(adf.p_value, 4)})`)
-            }
-          }
-
-          if (d.johansen && d.johansen.rank !== undefined) {
-            const j = d.johansen
-            lines.push(`\n**Johansen 多元协整**：rank=${j.rank}/${j.n_variables}`)
-            if (j.trace_stats && j.trace_stats.length > 0) {
-              lines.push(`  Trace stats: ${j.trace_stats.map((v: number) => formatNumber(v, 3)).join(", ")}`)
-            }
-            if (j.max_eigen_stats && j.max_eigen_stats.length > 0) {
-              lines.push(`  Max eigen stats: ${j.max_eigen_stats.map((v: number) => formatNumber(v, 3)).join(", ")}`)
-            }
-          }
-
-          if (d.granger?.pairwise && d.granger.pairwise.length > 0) {
-            lines.push(`\n**Granger 因果检验**：`)
-            for (const g of d.granger.pairwise) {
-              lines.push(`  ${g.from} → ${g.to ?? "(其他)"}: F=${formatNumber(g.f_statistic, 4)}, p=${formatNumber(g.p_value, 4)}, ${g.is_significant ? "显著" : "不显著"}`)
-            }
-          }
-
-          return lines.join("\n")
-        }
-
         // ========== CUSUM 变点检测（行情序列） ==========
 
         case "cusum": {
@@ -733,7 +671,6 @@ export const analysisTool = tool(
       "\n**行情类（用 symbols）**\n",
       "- signal_emd 经验模态分解（method=emd/ceemdan, num_imfs）\n",
       "- volatility 滚动波动率/ACF/AR预测/VaR/CVaR；多标的返回相关矩阵与条件数\n",
-      "- cointegration 单位根 + Engle-Granger + Johansen + Granger 因果\n",
       "- cusum CUSUM 累积和变点（threshold 默认 4.0, drift 0.5, mode=change_point/momentum/mean_revert）\n",
       "- pca 主成分分析（n_components 默认 3）\n",
       "- monte_carlo 价格路径模拟（times, steps）\n",
@@ -748,7 +685,7 @@ export const analysisTool = tool(
     ].join(""),
     schema: z.object({
       action: z.enum([
-        "signal_emd", "volatility", "cointegration", "cusum", "pca", "monte_carlo",
+        "signal_emd", "volatility", "cusum", "pca", "monte_carlo",
         "xgboost_train", "xgboost_shap", "xgboost_delete",
         "covariance_diagnostics",
         "change_point", "check_date", "list_targets",
@@ -767,7 +704,6 @@ export const analysisTool = tool(
       num_imfs: z.number().optional().describe("IMF 数量 1-20（signal_emd 默认 5）"),
       windows: z.string().optional().describe("滚动窗口，逗号分隔（volatility 默认 20,60,120）"),
       n_components: z.number().optional().describe("PCA 主成分数（默认 3）"),
-      max_lag: z.number().optional().describe("Granger 最大滞后阶数（cointegration 默认 10）"),
       threshold: z.number().optional().describe("阈值：cusum 默认 4.0；change_point 默认 2.5（Z-Score）"),
       drift: z.number().optional().describe("CUSUM 漂移参数（默认 0.5）"),
       mode: z.string().optional().describe("CUSUM 模式: change_point/momentum/mean_revert（默认 change_point）"),

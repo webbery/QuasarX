@@ -88,17 +88,17 @@ export const CAPABILITY_DOMAINS: CapabilityDomain[] = [
   {
     id: "quant_analytics",
     title: "统计与计量分析",
-    scenarios: "EMD 分解、协整/Granger、CUSUM/变点检测、PCA、波动率、蒙特卡洛、协方差诊断",
+    scenarios: "EMD 分解、波动率、CUSUM/变点检测、PCA、蒙特卡洛、协方差诊断；单位根/KPSS 平稳性、Engle-Granger 协整、Johansen 迹检验与最大特征值检验、Granger 因果",
     limits: [
       "只读：不写库、不改策略、不动仓位",
       "需要先有行情序列或回测结果作为输入",
-      "多标的相关性分析至少需要 2 个标的",
+      "单位根/平稳性检验单序列即可；协整、Granger、Johansen 至少需要 2 条序列",
       "所有指标必须来自工具返回，不得插值或估算",
     ],
-    tools: ["analysis", "performance"],
+    tools: ["analysis", "time_series", "performance"],
     requires: ["本地已有行情数据或回测结果"],
     notCovered: [{ topic: "模型训练与实盘预测", routeTo: "strategy" }],
-    keywords: ["协整", "波动率", "突变", "变点", "CUSUM", "EMD", "PCA", "蒙特卡洛", "夏普", "回撤"],
+    keywords: ["协整", "单位根", "ADF", "KPSS", "平稳性", "迹检验", "最大特征值", "Johansen", "波动率", "突变", "变点", "CUSUM", "EMD", "PCA", "蒙特卡洛", "配对交易", "半衰期", "夏普", "回撤"],
   },
   {
     id: "option_derivatives",
@@ -182,7 +182,7 @@ export const CAPABILITY_DOMAINS: CapabilityDomain[] = [
       "脚本默认超时 5 秒（上限 15 秒），长任务请拆小",
       "不提供汇率表：汇率必须来自实时行情或联网结果，不能写死",
       "期权定价与组合收益归 option_derivatives 域（option_pricing 工具），不要在这里手搓",
-      "统计/计量分析归 quant_analytics 域（analysis 工具）：域内有对应 action 时不要手搓，域内没有（如正态性检验、自定义分布拟合）才用脚本兜底",
+      "统计/计量分析归 quant_analytics 域（analysis / time_series 工具）：域内有对应 action 时不要手搓，域内没有（如自定义分布拟合）才用脚本兜底",
     ],
     tools: ["javascript"],
     notCovered: [{ topic: "需要访问本地文件或网络的批处理脚本" }],
@@ -227,12 +227,12 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   ],
   strategy: [
     "strategy", "backtest", "quote", "javascript",
-    "data_manager", "analysis", "performance",
+    "data_manager", "analysis", "time_series", "performance",
     "ask_risk", "ask_portfolio", "ask_chat",
   ],
   risk: [
     "account", "position", "javascript", "knowledge",
-    "risk_monitor", "order_query", "performance", "analysis",
+    "risk_monitor", "order_query", "performance", "analysis", "time_series",
     "ask_chat",
   ],
   portfolio: [
@@ -241,7 +241,7 @@ export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
     "ask_chat",
   ],
   analysis: [
-    "analysis", "option_pricing", "data_manager", "performance", "javascript",
+    "analysis", "time_series", "option_pricing", "data_manager", "performance", "javascript",
   ],
 }
 
