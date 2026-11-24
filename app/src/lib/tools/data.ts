@@ -123,21 +123,34 @@ export const dataTool = tool(
           })
           const data = res.data ?? {}
           const freqLabel = freq ?? "daily"
-          const jobId = typeof data.job_id === "string" ? data.job_id : ""
+          const rawJobId = data.job_id
+          const jobId = typeof rawJobId === "number" ? rawJobId : Number(rawJobId)
           const total = (data.stock_count ?? 0) + (data.etf_count ?? 0)
+          const skipped: string[] = Array.isArray(data.skipped_symbols) ? data.skipped_symbols : []
 
           const lines = [`**行情下载已触发** — 标的: ${symbols}，频率: ${freqLabel}`]
           lines.push(`  - 股票 → ${data.table_stock}: ${data.stock_count ?? 0} 个标的`)
           lines.push(`  - ETF → ${data.table_etf}: ${data.etf_count ?? 0} 个标的`)
+          if (skipped.length > 0) {
+            // 服务端说这些标的已经在下载了：复用进行中的任务，不再重复下
+            lines.push(
+              `  - 已在下载中（复用任务 #${jobId}，本次跳过）: ${skipped.join(", ")}`,
+            )
+          }
           lines.push(
-            jobId
+            Number.isFinite(jobId) && jobId > 0
               ? "\n进度在对话里的进度卡上实时更新；也可以事后用 list_tables 核对结果。"
               : "\n数据在后台异步下载（服务端未返回 job_id，无法订阅进度），可用 list_tables 查看。",
+          )
+          lines.push(
+            "\n下载是异步的：数据落库前 query_quote 会查不到，这是正常现象。" +
+              "不要因为查不到就重复提交下载，也不用报能力缺口 —— " +
+              "告诉用户进度卡在下载，等它跑完再查表。",
           )
           const text = lines.join("\n")
 
           // 没有 job_id 就没法关联事件 —— 退化成纯文本，不要造一张永远转圈的卡
-          if (!jobId) return text
+          if (!Number.isFinite(jobId) || jobId <= 0) return text
 
           const spec: UiSpec = {
             version: UI_SPEC_VERSION,
@@ -157,12 +170,17 @@ export const dataTool = tool(
               event: "quote_download",
               match: { job_id: jobId },
               stopOn: { field: "status", values: ["done", "failed"] },
+              // 服务端逐标的汇报进度，正常情况下几十秒就有一次事件。
+              // 超时没动静就自己判失败 —— 事件永远不来时卡片不能一直转圈。
+              timeoutMs: 300_000,
+              // 推送漏了（客户端没连上、后端重启）时的兜底：问服务端这任务成没成
+              statusUrl: `${BASE_URL}/quote?job_id=${jobId}`,
             },
           }
 
           const artifact = makeArtifact("ui", spec.title, spec, {
             subtitle: spec.subtitle,
-            source: `quote · ${jobId}`,
+            source: `quote · #${jobId}`,
             ui: { height: 150, collapsible: false },
           })
 

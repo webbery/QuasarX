@@ -335,6 +335,7 @@ int FundamentalData::ImportData() {
 
     checkDb();
     INFO("[Fundamental] 导入完成: {} 行", total);
+    AddRows(total);
     return total;
 }
 
@@ -396,6 +397,7 @@ int FundamentalData::refreshOne(symbol_t symbol, DataCategory category) {
     }
     int n = financeDB.importCsv(csv, CategoryKey(category));
     if (n > 0) {
+        AddRows(n);
         std::error_code ec;
         std::filesystem::remove(csv, ec);
         return 1;   // 修好了一个 (标的, 类目)

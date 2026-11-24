@@ -105,8 +105,11 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getUiType, mergeParams } from '@/lib/charts/registry'
 import sseService from '@/ts/SSEService'
 import { isTerminalEvent, matchesBinding } from '@/lib/ui/protocol'
+import type { UiBinding } from '@/lib/ui/protocol'
+import { applyAuthHeader } from '@/lib/tools/common/auth'
 import { getResolver } from '@/lib/charts/resolvers'
 import { exportCsv, exportPng } from '@/lib/charts/export'
+import { useChatStore } from '@/stores/chatStore'
 import type { UiControlDef, UiSpec } from '@/lib/charts/types'
 import type { ArtifactAction, ArtifactDensity, ArtifactEnvelope } from '@/lib/agent/artifacts'
 import { useArtifactActions } from '../useArtifactActions'
@@ -127,6 +130,7 @@ const props = withDefaults(
 
 const overlay = inject(UI_OVERLAY_KEY, null)
 const overlayHost = computed(() => overlay?.host?.value ?? null)
+const chatStore = useChatStore()
 
 /* ---------- 本地状态 ---------- */
 
@@ -188,14 +192,30 @@ const effectiveHeight = computed(() => {
  * started/progress 大概率已经发过了，不回放的话卡片会停在初始态。
  */
 let unsubscribeBinding: (() => void) | null = null
+let bindingTimer: ReturnType<typeof setTimeout> | null = null
+/** 回放阶段就命中终态时置位，避免回放后还去订阅（订阅了也没人再退订） */
+let bindingStopped = false
 
 function stopBinding() {
+  bindingStopped = true
   unsubscribeBinding?.()
   unsubscribeBinding = null
+  if (bindingTimer) {
+    clearTimeout(bindingTimer)
+    bindingTimer = null
+  }
+}
+
+/** 终态写回产物：reducer 只改本地 ref，不写回的话重载页面卡片又从 running 复活 */
+function persistData() {
+  const id = props.artifact?.id
+  if (!id) return
+  chatStore.updateArtifactData(id, data.value)
 }
 
 function startBinding() {
   stopBinding()
+  bindingStopped = false
 
   const binding = props.spec.binding
   const reducer = typeDef.value?.reducer
@@ -207,6 +227,7 @@ function startBinding() {
     if (!matchesBinding(binding, event)) return
 
     data.value = reducer(data.value, event)
+    persistData()
 
     // 两种终态信号都认：事件自带 status 字段（stopOn），或 reducer 把 data.status
     // 收敛到 done/failed（回测这类没有 status 字段的链路，只能从文案里认）
@@ -217,7 +238,85 @@ function startBinding() {
   }
 
   sseService.replay(binding.event, apply)
+  if (bindingStopped) return
   unsubscribeBinding = sseService.onEvent(binding.event, apply)
+
+  const timeoutMs = binding.timeoutMs
+  if (timeoutMs && timeoutMs > 0) armWatchdog(timeoutMs, binding, apply)
+}
+
+/**
+ * 看门狗：超时没等到终态，先问服务端这任务到底成没成，再决定判不判失败。
+ *
+ * 推送是尽力而为 —— 客户端没连上、后端重启、事件发得太早，终态事件就收不到。
+ * 直接判失败会把「服务端已经导完 4090 行」显示成失败；先查一次状态就能纠正。
+ */
+const WATCHDOG_MAX_ROUNDS = 3
+
+function armWatchdog(
+  timeoutMs: number,
+  binding: Extract<UiBinding, { kind: 'sse' }>,
+  apply: (payload: unknown) => void,
+  round = 0,
+): void {
+  bindingTimer = setTimeout(() => {
+    void onWatchdog(timeoutMs, binding, apply, round)
+  }, timeoutMs)
+}
+
+async function onWatchdog(
+  timeoutMs: number,
+  binding: Extract<UiBinding, { kind: 'sse' }>,
+  apply: (payload: unknown) => void,
+  round: number,
+): Promise<void> {
+  const status = (data.value as { status?: unknown }).status
+  if (status === 'done' || status === 'failed') return
+
+  if (binding.statusUrl) {
+    try {
+      const axios = (await import('axios')).default
+      applyAuthHeader(axios)
+      const res = await axios.get(binding.statusUrl)
+      const payload = (res.data ?? {}) as Record<string, unknown>
+      const remote = String(payload.status ?? '')
+      if (remote === 'done' || remote === 'failed' || remote === 'error') {
+        // 服务端说完了 —— 以它为准，别把已完成的任务显示成失败
+        const progress = payload.progress
+        apply(
+          progress && typeof progress === 'object'
+            ? { ...payload, ...(progress as Record<string, unknown>) }
+            : payload,
+        )
+        return
+      }
+      if (remote === 'running' && round + 1 < WATCHDOG_MAX_ROUNDS) {
+        // 还在跑：再等一轮，别急着判失败
+        armWatchdog(timeoutMs, binding, apply, round + 1)
+        return
+      }
+      if (remote === 'running') {
+        data.value = {
+          ...data.value,
+          status: 'failed',
+          detail: `服务端任务仍在进行（已等 ${Math.round((timeoutMs * WATCHDOG_MAX_ROUNDS) / 1000)} 秒），事件连接可能已断开`,
+        }
+        persistData()
+        stopBinding()
+        return
+      }
+    } catch {
+      // 查不到就按失败处理 —— 卡片不能一直转圈
+    }
+  }
+
+  data.value = {
+    ...data.value,
+    status: 'failed',
+    detail: '未收到服务端完成事件（任务可能已被服务端丢弃，或事件连接已断开）',
+  }
+  persistData()
+  stopBinding()
 }
 
 onMounted(startBinding)

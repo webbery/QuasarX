@@ -2,6 +2,7 @@
 #include "std_header.h"
 #include "Util/system.h"   // symbol_t 的 get_symbol / null_symbol / is_etf
 #include "json.hpp"
+#include <functional>
 #include <mutex>
 
 /// 数据类型
@@ -103,10 +104,31 @@ public:
     /// 这类数据补数据该用哪个下载脚本
     static const char* ToolFor(DataType type);
 
+    /// 本轮累计导入行数（入库阶段 + 补数据重试阶段）
+    int RowsImported() const { return _rowsImported; }
+
+    /// 清零（每轮链路开始时调用）
+    void ResetRows() { _rowsImported = 0; }
+
+    /// 单项进度回调：下载阶段每处理完一个标的调一次。
+    ///
+    /// 单个标的的 python 下载几十秒、大批量几分钟，阶段之间不会有任何事件。
+    /// 没有它，客户端只能看着一张不动的卡分不清「还在跑」和「已经死了」。
+    using ItemCallback = std::function<void(const String& symbol, int done, int total)>;
+
+    /// 设置单项进度回调（不设就不上报）
+    void SetItemCallback(ItemCallback cb) { _itemCb = std::move(cb); }
+
 public:
     /// 记录到全局队列（凌晨补数据时取用）
     static void RecordIssues(const Vector<DataIssue>& issues);
 protected:
+    /// 记一次导入行数。子类在 importCsv 之后调用 ——
+    /// 入库和补数据两段都要记，否则终态事件只报第一段的行数
+    void AddRows(int n) { if (n > 0) _rowsImported += n; }
+
+    int _rowsImported = 0;
+
     // ── 脚本 ──
 
     /// 跑 tools/ 下的一个 python 脚本。
@@ -155,4 +177,5 @@ protected:
 
     String _dst;                 ///< 下载根目录
     Vector<DataIssue> _issues;   ///< 本次体检结果
+    ItemCallback _itemCb;        ///< 单项进度回调
 };

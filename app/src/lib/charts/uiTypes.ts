@@ -52,19 +52,17 @@ const TIMESERIES_VIEW_CONTROLS: UiControlDef[] = [
  * ========================================================================== */
 
 /** 行情下载链路的阶段（顺序与 service 的 DataStage 一致） */
-const DOWNLOAD_STAGES = ['download', 'check', 'import', 'retry'] as const
-const DOWNLOAD_STAGE_LABEL: Record<string, string> = {
-  download: '下载数据',
-  check: '数据体检',
-  import: '入库',
-  retry: '补数据重试',
-}
+const DOWNLOAD_STAGE_LABEL = ['下载数据', '数据体检', '入库', '补数据重试'] as const
 
 /**
  * progress 的 reducer：把一条 SSE 事件并进进度数据。
  *
  * 同时吃两种载荷：
  * - `quote_download`：{ status, stage, freq, total, total_rows }
+ *   stage 是 service 的 DataStage 序号，按下标取标签 —— 用序号而不是名字，
+ *   两边少一处要对齐的字符串。
+ * - 任务状态查询（推送漏了时的兜底）：{ status, total_rows, error, progress }
+ *   形状与上面同源，status 取 running/done/error。
  * - `backtest_progress`：{ strategy, run_id, progress, message }
  *
  * 回测的 progress 值是阶段标记（0 → 0.6 → 0.7 → 0.8，永远到不了 1.0），
@@ -74,24 +72,30 @@ const DOWNLOAD_STAGE_LABEL: Record<string, string> = {
 const progressReducer: UiReducer = (data, event) => {
   const next = { ...data }
   const status = typeof event.status === 'string' ? event.status : ''
-  const stage = typeof event.stage === 'string' ? event.stage : ''
 
   // 阶段推进（行情下载）
-  const stageIdx = DOWNLOAD_STAGES.indexOf(stage as (typeof DOWNLOAD_STAGES)[number])
-  if (stageIdx >= 0) {
-    next.step = stageIdx
-    next.label = DOWNLOAD_STAGE_LABEL[stage] ?? stage
+  const stage = Number(event.stage)
+  if (Number.isInteger(stage) && stage >= 0 && stage < DOWNLOAD_STAGE_LABEL.length) {
+    next.step = stage
+    next.label = DOWNLOAD_STAGE_LABEL[stage]
+  }
+
+  // 阶段内的逐标的进度（行情下载）
+  const done = Number(event.done)
+  const total = Number(event.total)
+  if (Number.isInteger(done) && Number.isInteger(total) && total > 0 && done > 0) {
+    next.label = `${next.label ?? '下载数据'} ${done}/${total}`
   }
 
   // 文案推进（回测的 message 自带阶段信息）
   const message = typeof event.message === 'string' ? event.message : ''
   if (message) next.label = message
 
-  if (status === 'started' || status === 'progress') {
+  if (status === 'started' || status === 'progress' || status === 'running') {
     next.status = 'running'
   } else if (status === 'done') {
     next.status = 'done'
-    next.step = DOWNLOAD_STAGES.length
+    next.step = DOWNLOAD_STAGE_LABEL.length
     next.label = '完成'
     if (event.total_rows !== undefined) next.detail = `导入 ${event.total_rows} 行`
   } else if (status === 'failed' || status === 'error') {

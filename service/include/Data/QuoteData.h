@@ -1,5 +1,6 @@
 #pragma once
 #include "Data/DownloadBase.h"
+#include "Data/DataPipeline.h"
 
 /// 行情数据（股票 / ETF，单频率）
 ///
@@ -9,8 +10,8 @@
 /// 体检：
 ///   CSV 级 —— 表头必须逐列等于 datetime,open,close,high,low,volume,turnover
 ///             （QuoteDB 是按位置解析的，表头一变价格就整体错位）；
-///             datetime 严格递增不重复；OHLC 自洽（停牌 bar：volume=0 或
-///             四价全 0/全空，跳过检查）；org 与 hfq 的日期集合一致
+///             datetime 严格递增不重复；OHLC 自洽（停牌 bar：volume=0、
+///             量额空串或四价全 0/全空，跳过检查）；org 与 hfq 的日期集合一致
 ///   DB  级 —— 每个标的的 bar 数 / 最新时间 / OHLC 非法行数；
 ///             复权价与「分红事件重算」逐 bar 比对（以前只比最后一根）。
 ///             增量下载时只比对本次重写过的区间，历史部分在当初导入的那轮已比对过
@@ -38,6 +39,26 @@ public:
 
     /// 频率 → 体检子类别
     static DataCategory CategoryOf(const String& freq);
+
+    /// 下载去重键：频率 + 标的集合。
+    /// 只按频率去重会把不相干的请求一起吞掉 —— 另一批标的的下载根本没执行，
+    /// 而前端照样拿到一个 job_id，等不到任何事件。
+    static String DownloadKey(const Vector<symbol_t>& symbols, const String& freq);
+
+    /// 从请求里挑出真正要下的那批（派发时按标的粒度去重后得到）
+    static Vector<symbol_t> Pick(const Vector<symbol_t>& requested,
+                                  const Set<symbol_t>& dispatching);
+
+    /// 跑完整条行情链路：下载 → 体检 → 入库 → 补数据。
+    /// dst 是数据根目录；onProgress 汇报阶段与阶段内进度；
+    /// failedSymbols 回填体检未过、没入库的标的（去重后）。
+    ///
+    /// 阶段切换与逐标的进度合成一个回调，调用方只接一条通道。
+    using ProgressCallback =
+        std::function<void(DataStage stage, const String& symbol, int done, int total)>;
+
+    int Run(const String& dst, const ProgressCallback& onProgress = nullptr,
+            Vector<String>* failedSymbols = nullptr);
 
 private:
     struct SymbolFiles {

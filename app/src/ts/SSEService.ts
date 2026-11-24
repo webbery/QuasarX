@@ -11,7 +11,13 @@ export interface SSEMessage {
 class SSEService {
   private abortController: AbortController | null = null
   private messageHandlers: Map<string, Function[]> = new Map()
-  
+
+  /** 重连退避参数 */
+  private retryCount = 0
+  private readonly retryDelay = 1000
+  private readonly maxRetryDelay = 30000
+  private readonly maxRetries = 10
+
   public messages: Ref<SSEMessage[]> = ref([])
   public isConnected: Ref<boolean> = ref(false)
   public lastMessage: Ref<SSEMessage | null> = ref(null)
@@ -29,8 +35,10 @@ class SSEService {
     }
 
     this.abortController = new AbortController()
+    // 有 remote（登录时记下的后端地址）就直连它；没有就用同源相对路径 ——
+    // 浏览器测试台走 vite 代理转发 /v0，相对路径才连得上（直连会撞跨域+自签证书）
     const server = localStorage.getItem('remote')
-    let url = 'https://' + server + '/v0/server/event'
+    const url = server ? `https://${server}/v0/server/event` : '/v0/server/event'
     try {
       await fetchEventSource(url, {
         method: 'GET',
@@ -48,6 +56,7 @@ class SSEService {
 
         onopen: async (response: any) => {
           this.isConnected.value = true
+          this.retryCount = 0
           console.log('SSE 连接已建立')
           console.info(response)
           if (response.ok) {
@@ -73,11 +82,21 @@ class SSEService {
           console.log('SSE 连接关闭')
           this.isConnected.value = false
         },
-        
+
         onerror: (error) => {
           console.error('SSE 连接错误:', error)
           this.isConnected.value = false
-          throw error // 重新抛出以停止重试
+          // 断线后必须重连：终态事件（done/failed）只在连接期间推一次，
+          // 错过就永远收不到 —— 进度卡片会一直转圈。
+          // 返回间隔让库自动重连；抛异常则彻底停止重试。
+          if (this.retryCount >= this.maxRetries) {
+            console.error('[SSE] 重连次数用尽，放弃')
+            throw error
+          }
+          this.retryCount++
+          const delay = Math.min(this.retryDelay * this.retryCount, this.maxRetryDelay)
+          console.warn(`[SSE] ${delay}ms 后重连（第 ${this.retryCount}/${this.maxRetries} 次）`)
+          return delay
         }
       })
     } catch (error: any) {
@@ -204,6 +223,7 @@ class SSEService {
       this.abortController = null
     }
     this.isConnected.value = false
+    this.retryCount = 0
     // 不清 messageHandlers：handler 的生命周期归组件管（onMounted 注册、
     // onUnmounted 注销），服务单方面 clear 会把它们抹掉且没人补注册 ——
     // 第二次登录走 connect() → disconnect() 时，所有面板的 handler 就此失联，

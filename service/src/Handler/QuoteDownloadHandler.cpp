@@ -70,11 +70,20 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
 
     // 异步执行：下载 → CSV 体检 → 分块入库 → DB 级复查 → 补数据
     // job_id 回给调用方，前端用它把后续 SSE 进度事件关联到同一条任务
-    const String jobId = _server->SubmitQuoteDownload(parsed, freq, overwrite, env_name);
+    const DataJobDispatch dispatch =
+        _server->SubmitQuoteDownload(parsed, freq, overwrite, env_name);
 
     nlohmann::json resp;
     resp["status"] = "started";
-    resp["job_id"] = jobId;
+    resp["job_id"] = dispatch._jobId;
+    // 复用了进行中的任务：本次没真的派发，前端别再等一个不会来的新任务
+    resp["reused"] = !dispatch._dispatched;
+    resp["skipped_symbols"] = nlohmann::json::array();
+    for (const auto& sym : dispatch._skipped) resp["skipped_symbols"].push_back(get_symbol(sym));
+    resp["downloading_symbols"] = nlohmann::json::array();
+    for (const auto& sym : dispatch._dispatching) {
+        resp["downloading_symbols"].push_back(get_symbol(sym));
+    }
     resp["freq"] = freq;
     resp["table_stock"] = QuoteDB::tableName("stock", freq);
     resp["table_etf"] = QuoteDB::tableName("etf", freq);
@@ -89,6 +98,31 @@ void QuoteDownloadHandler::ShutdownDownloads() {
 }
 
 void QuoteDownloadHandler::get(const httplib::Request& req, httplib::Response& res) {
+    // 查任务状态：SSE 推送漏了（客户端没连上、后端重启）时，
+    // 前端靠这个接口把「服务端已经导完、前端卡片还在转圈」补回来
+    const String jobIdParam = req.get_param_value("job_id");
+    if (!jobIdParam.empty()) {
+        const JobId jobId = std::strtoull(jobIdParam.c_str(), nullptr, 10);
+        auto session = _server->GetJobSessions().Find(jobId);
+        if (!session) {
+            res.status = 404;
+            res.set_content(R"({"error":"unknown job_id"})", "application/json");
+            return;
+        }
+        nlohmann::json snap = session->snapshot(true);
+        nlohmann::json out = nlohmann::json::object();
+        out["job_id"] = jobId;
+        for (auto& [k, v] : snap.items()) {
+            if (k == "meta") {
+                for (auto& [mk, mv] : v.items()) out[mk] = mv;
+            } else {
+                out[k] = v;
+            }
+        }
+        res.set_content(out.dump(), "application/json");
+        return;
+    }
+
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();

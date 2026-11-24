@@ -265,6 +265,7 @@ int MarginData::ImportData() {
 
     checkDb();
     INFO("[Margin] 导入完成: {} 行", total);
+    AddRows(total);
     return total;
 }
 

@@ -17,7 +17,7 @@ import { computed, ref } from 'vue'
 import { useQuoteStore } from './quoteStore'
 import { useAccountStore } from './account'
 import { fetchSectorQuotes, calculateTotalAdvanceDecline } from '@/lib/sectorApi'
-import type { ArtifactEnvelope } from '@/lib/agent/artifacts'
+import { ArtifactKind, type ArtifactEnvelope } from '@/lib/agent/artifacts'
 import {
   META_KEYS,
   deleteArtifacts,
@@ -761,9 +761,42 @@ export const useChatStore = defineStore('chat', () => {
 
   /* ---------- 产物 ---------- */
 
+  /**
+   * UI 产物的去重键：同一个 SSE 绑定的产物只留一张卡。
+   *
+   * 服务端对重复提交复用同一个 job_id，绑定字段因此完全相同 —— 不去重的话
+   * 一次下载会叠出两张一模一样的进度卡。
+   */
+  function uiDedupKey(artifact: ArtifactEnvelope): string | null {
+    if (artifact.kind !== ArtifactKind.Ui) return null
+    const binding = (
+      artifact.payload as {
+        binding?: { kind?: string; event?: string; match?: Record<string, string> }
+      }
+    )?.binding
+    if (!binding || binding.kind !== 'sse' || !binding.event) return null
+    const match = Object.entries(binding.match ?? {})
+      .sort()
+      .map(([k, v]) => `${k}=${v}`)
+      .join(',')
+    return `${binding.event}|${match}`
+  }
+
   function attachArtifact(messageId: string, artifact: ArtifactEnvelope) {
-    artifacts.value[artifact.id] = artifact
     const entry = findMessageEntry(messageId)
+    const dedupKey = uiDedupKey(artifact)
+    if (dedupKey && entry) {
+      const existingId = (entry.message.artifactIds ?? [])
+        .map((id) => artifacts.value[id])
+        .find((a) => a && uiDedupKey(a) === dedupKey)?.id
+      if (existingId) {
+        // 同一任务的重复提交：复用已有卡片，不叠第二张
+        scheduleArtifactGC()
+        return
+      }
+    }
+
+    artifacts.value[artifact.id] = artifact
     if (entry) {
       const ids = entry.message.artifactIds ?? []
       if (!ids.includes(artifact.id)) entry.message.artifactIds = [...ids, artifact.id]
@@ -776,6 +809,21 @@ export const useChatStore = defineStore('chat', () => {
 
   function getArtifact(id: string): ArtifactEnvelope | undefined {
     return artifacts.value[id]
+  }
+
+  /**
+   * 把产物数据写回并落盘。
+   *
+   * SSE 进度更新后调用：reducer 是纯函数，只改组件内的 ref，不写回产物的话，
+   * 存进 IndexedDB 的一直是初始快照 —— 重载页面卡片又从 running 复活。
+   */
+  function updateArtifactData(id: string, data: Record<string, unknown>) {
+    const artifact = artifacts.value[id]
+    if (!artifact) return
+    const payload = artifact.payload as { data?: Record<string, unknown> }
+    if (!payload || typeof payload !== 'object' || !('data' in payload)) return
+    artifacts.value[id] = { ...artifact, payload: { ...payload, data } }
+    void persistArtifact(artifacts.value[id])
   }
 
   function artifactsFor(messageId: string): ArtifactEnvelope[] {
@@ -945,6 +993,7 @@ ${accountRiskText}
     artifacts,
     attachArtifact,
     getArtifact,
+    updateArtifactData,
     artifactsFor,
 
     // 显示

@@ -17,6 +17,7 @@
 #include "Util/TickMap.h"
 #include "Data/DataPipeline.h"
 #include "Util/ThreadPool.h"
+#include "Util/JobSession.h"
 
 // 策略验证结果结构
 struct StrategyValidationResult {
@@ -39,11 +40,6 @@ class IStopLoss;
 class StopLossHandler;
 class BrokerSubSystem;
 class RiskSubSystem;
-
-typedef enum {
-	SEND_REQ, // Sending REQ request
-	RECV_REP, // Receiving REQ reply
-} job_state;
 
 enum class REST_REQUEST_TYPE: char{
     REST_GET = 0,
@@ -98,7 +94,6 @@ enum class StockAdjustType {
 };
 
 
-class Position;
 class Broker;
 class Server {
 public:
@@ -206,15 +201,26 @@ public:
     /// freq 是 "daily"/"5m"/"15m"/"30m"/"60m"。overwrite=true 时无视库里的最新日期全量重下。
     /// progress 可为空 —— 内部自己推 SSE 的调用方（OptionDataHandler）不需要它。
     /// 返回导入行数；<0 表示失败。
+    ///
+    /// outFailedSymbols 非空时回填本轮体检未通过、没入库的标的（去重后）。
+    /// 不给的话，部分标的体检没过会被当成完全成功 —— 前端进度卡会说「完成」，
+    /// 用户以为数据齐了。
     int DownloadQuoteData(const Vector<symbol_t>& symbols, const String& freq,
                           bool overwrite, const String& env,
-                          const JobProgress& progress = nullptr);
+                          const JobProgress& progress = nullptr,
+                          Vector<String>* outFailedSymbols = nullptr);
 
     /// 异步下载并导入一批标的的行情（内部提交到数据线程池）。
     /// REST 的 QuoteDownloadHandler / OptionDataHandler 用这个，不阻塞请求线程。
-    /// 返回 job_id —— 前端拿它把后续 SSE 进度事件关联到对话里的进度产物。
-    String SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
-                               bool overwrite, const String& env);
+    ///
+    /// 返回的票据带三样东西：生效的 job_id（前端靠它订阅终态事件）、
+    /// 本次是否复用了已在跑的任务、以及被跳过的标的（已在别的任务里下载）。
+    /// 少了复用这一路：同一批标的并发下两次会同时写同一个 CSV 和同一张表。
+    DataJobDispatch SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
+                                        bool overwrite, const String& env);
+
+    /// 任务会话表：按 job_id 查任务状态（推送漏了也能查回来）
+    JobSessionStore& GetJobSessions() { return *_jobSessions; }
 
     /// 异步下载并导入两融明细（供 REST 的 MarginHandler）。
     /// date 为空 = 由脚本自动取最近有数据的交易日。
@@ -269,9 +275,23 @@ private:
     /// 三类数据依次补一遍（由 RepairDailyData 在数据线程池里调用）
     void RunDataRepair(const String& targetDay);
 
-    /// 把一条数据任务交给数据线程池，同一 key 不允许并发重复派发。
-    /// 返回 false 表示这条链路已经在跑（调用方不用再管）。
-    bool DispatchDataJob(const String& key, std::function<void()> job);
+    /// 把一条数据任务交给数据线程池。
+    ///
+    /// 同一个标的只允许一个任务在下载：requested 里已经在同频任务中下载的标的
+    /// 会被跳过（记在返回值的 _skipped 里），全部都在跑时直接复用那个任务、
+    /// 返回它的 job_id —— 前端靠 job_id 订阅终态事件，发一个永远不会有事件的 id
+    /// 会让进度卡片永远转圈。
+    ///
+    /// toDownload 由本函数填（请求减去已在跑的），派发是异步的，调用方在
+    /// 回调里读它。
+    DataJobDispatch DispatchDataJob(const String& key, JobId jobId,
+                                    const String& freq, const Set<symbol_t>& requested,
+                                    const std::shared_ptr<Set<symbol_t>>& toDownload,
+                                    std::function<void()> job);
+
+    /// 不带标的的链路（两融 / 基本面 / 日终刷新）：没有标的可跳
+    DataJobDispatch DispatchDataJob(const String& key, JobId jobId,
+                                    std::function<void()> job);
 
     /// 数据任务结果：三条链路共用，避免 SubmitXxx 各写一套 int/error/issues 约定
     struct DataJobResult {
@@ -296,15 +316,28 @@ private:
     ///                 事件关联起来 —— 只靠 freq 关联的话，同频率并发两个下载会串。
     ///
     /// run 有两个重载：需要中间进度的链路用带 JobProgress 的那个，不需要的原样传。
-    String SubmitDataJob(const String& key, const String& event,
-                         Map<String, String> started,
-                         std::function<Map<String, String>(const DataJobResult&)> finished,
-                         std::function<DataJobResult()> run);
+    JobId SubmitDataJob(const String& key, const String& event,
+                        Map<String, String> started,
+                        std::function<Map<String, String>(const DataJobResult&)> finished,
+                        std::function<DataJobResult()> run);
 
-    String SubmitDataJob(const String& key, const String& event,
-                         Map<String, String> started,
-                         std::function<Map<String, String>(const DataJobResult&)> finished,
-                         std::function<DataJobResult(const JobProgress&)> run);
+    JobId SubmitDataJob(const String& key, const String& event,
+                        Map<String, String> started,
+                        std::function<Map<String, String>(const DataJobResult&)> finished,
+                        std::function<DataJobResult(const JobProgress&)> run);
+
+    /// 带标的覆盖去重的提交骨架（行情链路用）
+    ///
+    /// requested 里的标的若已在同频任务中下载，会被跳过；全部都在跑时复用那个
+    /// 任务。run 收到的第二个参数是本次真正要下载的标的。
+    ///
+    /// 任务状态记进 JobSessionStore：推送漏了也能按 job_id 查回来。
+    DataJobDispatch SubmitDataJob(const String& key, const String& event, const String& freq,
+                                  const Set<symbol_t>& requested,
+                                  const std::shared_ptr<Set<symbol_t>>& toDownload,
+                                  Map<String, String> started,
+                                  std::function<Map<String, String>(const DataJobResult&)> finished,
+                                  std::function<DataJobResult(const JobProgress&, const Set<symbol_t>&)> run);
 
     /// 行情链路（按频率逐个跑 QuoteData，串行以免同时拉起多个 python 进程）
     void RunQuoteRefresh(const String& targetDay);
@@ -396,7 +429,17 @@ private:
     std::unique_ptr<ThreadPool> _dataPool;
     // 每条链路最后刷新的目标交易日（持久化，进程重启后仍能判断要不要补）
     std::unique_ptr<RefreshState> _refreshState;
-    // 已在跑的链路 key，避免 5 秒一个 tick 把同一个任务反复派发
+    // 任务会话表：job_id → 会话（事件日志 + 可查快照）
+    std::unique_ptr<JobSessionStore> _jobSessions;
+    // 已在跑的链路 key → {job_id, 覆盖的标的}。
+    // 避免 5 秒一个 tick 把同一个任务反复派发；带上 job_id 是为了让重复提交
+    // 能复用进行中任务的 id（前端据此收到终态事件）；带上覆盖的标的才能判断
+    // 「这批数据已经在下载了」。
     std::mutex _dataInflightMtx;
-    Set<String> _dataInflight;
+    struct DataInflightEntry {
+        JobId _jobId = 0;
+        String _freq;
+        Set<symbol_t> _symbols;
+    };
+    Map<String, DataInflightEntry> _dataInflight;
 };

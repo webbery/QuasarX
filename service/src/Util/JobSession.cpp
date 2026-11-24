@@ -3,6 +3,16 @@
 #include "server.h"
 #include <chrono>
 
+namespace {
+
+long long NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+}  // namespace
+
 void JobSession::pushEvent(const String& type, const nlohmann::json& data) {
     String dataStr;
     try {
@@ -21,7 +31,19 @@ void JobSession::finish(const nlohmann::json& res, bool error) {
     _result = res;
     _hasError = error;
     _done = true;
+    _finishedAtMs = NowMs();
     _cv.notify_all();
+}
+
+void JobSession::setMeta(const nlohmann::json& meta) {
+    std::lock_guard<std::mutex> lk(_mtx);
+    _meta = meta;
+}
+
+bool JobSession::expired(long long ttlMs, long long nowMs) const {
+    std::lock_guard<std::mutex> lk(_mtx);
+    if (!_done) return false;
+    return _finishedAtMs > 0 && (nowMs - _finishedAtMs) > ttlMs;
 }
 
 void JobSession::cancel() {
@@ -41,6 +63,7 @@ nlohmann::json JobSession::snapshot(bool includeResult) {
     if (!_done) {
         resp["status"] = "running";
         if (!_progress.is_null()) resp["progress"] = _progress;
+        if (!_meta.is_null()) resp["meta"] = _meta;
         return resp;
     }
     if (includeResult && _result.is_object()) {
@@ -49,7 +72,46 @@ nlohmann::json JobSession::snapshot(bool includeResult) {
         resp = nlohmann::json::object();
     }
     resp["status"] = _hasError ? "error" : "done";
+    if (!_meta.is_null()) resp["meta"] = _meta;
     return resp;
+}
+
+std::shared_ptr<JobSession> JobSessionStore::Create(JobId id) {
+    std::lock_guard<std::mutex> lk(_mtx);
+    pruneLocked();
+    auto it = _sessions.find(id);
+    if (it != _sessions.end()) return it->second;
+    auto session = std::make_shared<JobSession>();
+    session->_sessionId = std::to_string(id);
+    _sessions[id] = session;
+    return session;
+}
+
+std::shared_ptr<JobSession> JobSessionStore::Find(JobId id) {
+    std::lock_guard<std::mutex> lk(_mtx);
+    auto it = _sessions.find(id);
+    return it == _sessions.end() ? nullptr : it->second;
+}
+
+void JobSessionStore::Remove(JobId id) {
+    std::lock_guard<std::mutex> lk(_mtx);
+    _sessions.erase(id);
+}
+
+void JobSessionStore::Prune() {
+    std::lock_guard<std::mutex> lk(_mtx);
+    pruneLocked();
+}
+
+void JobSessionStore::pruneLocked() {
+    const long long now = NowMs();
+    for (auto it = _sessions.begin(); it != _sessions.end();) {
+        if (it->second->expired(kTtlMs, now)) {
+            it = _sessions.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void SetSseHeaders(httplib::Response& res) {

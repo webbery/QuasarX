@@ -86,6 +86,7 @@ String DataPipeline::TargetTradingDay() {
 int DataPipeline::Run(const String& dst, const StageCallback& onStage) {
     const DataType type = _data.Type();
     _data.ClearIssues();
+    _data.ResetRows();
 
     const auto stage = [&onStage](DataStage s) {
         if (onStage) onStage(s);
@@ -116,9 +117,12 @@ int DataPipeline::Run(const String& dst, const StageCallback& onStage) {
     stage(DataStage::Retry);
     int retried = _data.UpdateData();
 
-    INFO("[Pipeline] type={} 完成: 下载 {} 个, 导入 {} 行, 重试修复 {} 项, 遗留问题 {} 条",
-         static_cast<int>(type), dl, imported, retried, _data.Issues().size());
-    return imported;
+    // 返回累计行数：补数据那一段也入了库，只报第一段会少算一大截
+    const int total = _data.RowsImported();
+    INFO("[Pipeline] type={} 完成: 下载 {} 个, 导入 {} 行（入库 {} + 重试 {}）, 重试修复 {} 项, 遗留问题 {} 条",
+         static_cast<int>(type), dl, total, imported, total - imported, retried,
+         _data.Issues().size());
+    return total;
 }
 
 int DataPipeline::Repair(const String& dst) {

@@ -59,7 +59,8 @@ export const CAPABILITY_DOMAINS: CapabilityDomain[] = [
     limits: [
       "删除类动作（delete_quote / delete_finance）必须由用户确认后执行",
       "无逐笔成交与 Level-2 行情",
-      "下载是异步任务，提交后用 list_tables 核对结果",
+      "下载是异步任务：数据落库前 query_quote / list_tables 查不到是正常状态，不是能力缺口",
+      "不要因为查不到就重复提交下载 —— 服务端会复用进行中的任务；告诉用户进度卡在下载，跑完再查",
     ],
     tools: ["data_manager", "quote"],
     mutations: ["data_manager.delete_quote", "data_manager.delete_finance"],

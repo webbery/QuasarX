@@ -186,6 +186,8 @@ export function ensureAgentActionsRegistered(): void {
         kind: 'sse',
         event: 'backtest_progress',
         match: { strategy: runKey },
+        // 服务端自己 300s 就超时返回，进度每 200ms 推一次
+        timeoutMs: 600_000,
       },
     }
     ctx.emitArtifact?.(

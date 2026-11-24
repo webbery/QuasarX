@@ -120,9 +120,25 @@ export type UiBinding =
       /** SSE 事件名，如 quote_download / backtest_progress */
       event: string
       /** 事件载荷必须匹配的字段（全等） */
-      match?: Record<string, string>
+      match?: Record<string, string | number>
       /** 命中即退订（终态） */
       stopOn?: UiStopCondition
+      /**
+       * 多久没等到终态就判定失败（毫秒）。**必填**。
+       *
+       * 服务端 job 被丢弃、连接断掉、页面重载，终态事件都不会来 ——
+       * 没有它卡片就永远转圈，用户没有任何办法让它停下。
+       * 取值要盖住「两次事件之间的正常间隔」，否则会误判。
+       */
+      timeoutMs: number
+      /**
+       * 终态兜底查询地址（可选）。
+       *
+       * 推送是尽力而为：客户端没连上、后端重启、事件发得太早，
+       * 终态事件就永远收不到。这时先查这个地址问服务端「这任务到底成没成」，
+       * 查到了就照实显示 —— 服务端已经导完 4090 行，卡片不能还写着失败。
+       */
+      statusUrl?: string
     }
 
 /** 判断事件载荷是否属于某个绑定 */

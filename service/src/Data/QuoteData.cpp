@@ -50,6 +50,29 @@ DataCategory QuoteData::CategoryOf(const String& freq) {
     return DataCategory::Day;
 }
 
+String QuoteData::DownloadKey(const Vector<symbol_t>& symbols, const String& freq) {
+    Vector<String> names;
+    names.reserve(symbols.size());
+    for (const auto& s : symbols) names.push_back(get_symbol(s));
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    String joined;
+    for (const auto& name : names) {
+        if (!joined.empty()) joined += ",";
+        joined += name;
+    }
+    return "download:" + freq + ":" + joined;
+}
+
+Vector<symbol_t> QuoteData::Pick(const Vector<symbol_t>& requested,
+                                  const Set<symbol_t>& dispatching) {
+    Vector<symbol_t> out;
+    for (const auto& s : requested) {
+        if (dispatching.count(s)) out.push_back(s);
+    }
+    return out;
+}
+
 bool QuoteData::downloadOne(symbol_t symbol, const String& start) {
     const String sym = get_symbol(symbol);
     bool etf = is_etf(symbol);
@@ -131,6 +154,8 @@ int QuoteData::Download(const String& dst) {
     }
 
     int downloaded = 0;
+    const int total = static_cast<int>(_symbols.size());
+    int index = 0;
     for (const auto& symbol : _symbols) {
         String asset = is_etf(symbol) ? "etf" : "stock";
         const String& table = tableOfAsset[asset];
@@ -150,6 +175,8 @@ int QuoteData::Download(const String& dst) {
         } else {
             AddIssue(CategoryOf(_freq), symbol, "", DataReason::Missing);
         }
+        index++;
+        if (_itemCb) _itemCb(get_symbol(symbol), index, total);
     }
 
     INFO("[Quote] 下载完成 {}: {} 个标的", _freq, downloaded);
@@ -196,7 +223,7 @@ bool QuoteData::checkCsv(symbol_t symbol, const SymbolFiles& files) {
         String line;
         std::getline(ifs, line);
         String prev;
-        int rows = 0, badOhlc = 0, badOrder = 0;
+        int rows = 0, badOhlc = 0, badOrder = 0, suspendedRows = 0;
         String firstBad;
         while (std::getline(ifs, line)) {
             if (line.empty()) continue;
@@ -214,11 +241,10 @@ bool QuoteData::checkCsv(symbol_t symbol, const SymbolFiles& files) {
             rows++;
 
             if (checkOhlc) {
-                // BaoStock 的停牌日：volume 为 0，价格字段可能是 0 或空。
-                // 停牌 bar 没有可比价格，直接跳过 OHLC 自洽检查 —— 否则
-                // 窗口里只要有一天停牌，整个标的都会被判成 invalid 而不入库。
-                // 判定口径与 QuoteDB::importCsv 写 ext 的口径一致：
-                // volume == 0 或四价全 0/全空。
+                // 停牌日要放过，否则窗口里只要有一天停牌，整个标的都不入库。
+                // BaoStock 的三种编码：volume 字面 0 / 量额空串 / 四价全 0 或全空。
+                // 量额空串时 std::stod 抛异常，导入侧会把该行跳过（"Skip invalid row"），
+                // 体检必须与之一致：放行但丢弃，不能反过来把整个标的毙掉。
                 double open = 0, close = 0, high = 0, low = 0;
                 double volume = 0, turnover = 0;
                 auto num = [](const String& s, double& out) -> bool {
@@ -240,11 +266,21 @@ bool QuoteData::checkCsv(symbol_t symbol, const SymbolFiles& files) {
                 const bool pricesZero = okOpen && okClose && okHigh && okLow &&
                                         open == 0 && close == 0 && high == 0 && low == 0;
                 const bool pricesEmpty = !okOpen && !okClose && !okHigh && !okLow;
-                // volume 有值且非 0，就说明当天有成交；这时价格缺失是真异常，
-                // 不能当成停牌放过去。
+                // 停牌日的特征价：四价相等（沿用停牌前收盘价）。
+                const bool pricesFlat = okOpen && okClose && okHigh && okLow &&
+                                        open == close && close == high && high == low;
+                // 量额字段缺失：空串（解析失败）或者解析出来是 0。
+                const bool noVolume = !okVolume || volume == 0;
+                const bool noTurnover = !okTurnover || turnover == 0;
+                // volume 有值且非 0 就说明当天有成交，这时价格/量额缺失是真异常。
+                // 量额双空且四价相等是停牌编码，同样不算异常。
                 const bool suspended = (okVolume && volume == 0) ||
                                        pricesZero ||
-                                       (pricesEmpty && !okVolume);
+                                       (pricesEmpty && !okVolume) ||
+                                       (noVolume && noTurnover && pricesFlat);
+                if (suspended && !okVolume) {
+                    suspendedRows++;
+                }
                 if (!suspended) {
                     if (!okOpen || !okClose || !okHigh || !okLow) {
                         badOhlc++;
@@ -281,6 +317,10 @@ bool QuoteData::checkCsv(symbol_t symbol, const SymbolFiles& files) {
             WARN("[Quote] {} 有 {} 行时间乱序或重复（{}）", sym, badOrder, firstBad);
             AddIssue(cat, symbol, "", DataReason::Invalid);
             return false;
+        }
+        if (checkOhlc && suspendedRows > 0) {
+            INFO("[Quote] {} 有 {} 行停牌无量额（空 volume/turnover），体检放行，导入时按噪声跳过",
+                 sym, suspendedRows);
         }
         return true;
     };
@@ -326,6 +366,34 @@ bool QuoteData::Check() {
     return allOk;
 }
 
+int QuoteData::Run(const String& dst, const ProgressCallback& onProgress,
+                   Vector<String>* failedSymbols) {
+    DataPipeline pipeline(*this);
+
+    // 逐标的进度 → 同一个回调，阶段固定为 Download
+    if (onProgress) {
+        SetItemCallback([&onProgress](const String& symbol, int done, int total) {
+            onProgress(DataStage::Download, symbol, done, total);
+        });
+    }
+    DataPipeline::StageCallback onStage;
+    if (onProgress) {
+        onStage = [&onProgress](DataStage stage) {
+            onProgress(stage, "", 0, 0);
+        };
+    }
+
+    const int rows = pipeline.Run(dst, onStage);
+    if (failedSymbols) {
+        Set<String> failed;
+        for (const auto& issue : pipeline.issues()) {
+            failed.insert(get_symbol(issue._symbol));
+        }
+        failedSymbols->assign(failed.begin(), failed.end());
+    }
+    return rows;
+}
+
 int QuoteData::ImportData() {
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
@@ -365,6 +433,7 @@ int QuoteData::ImportData() {
 
     checkDb();
     INFO("[Quote] {} 导入完成: {} 行", _freq, total);
+    AddRows(total);
     return total;
 }
 
@@ -537,6 +606,7 @@ int QuoteData::UpdateData() {
         int n = QuoteDB::instance().importCsv(org, hfq, table, sym, false);
         if (n > 0) {
             fixed++;
+            AddRows(n);
             // 补数据走的是全量重下，整段历史刚被重写；这里必须全区间复查一遍，
             // 否则下一轮增量比对会认为这段历史「已经检查过」而跳过它。
             if ((_freq == "daily" || _freq == "1d") && !etf) {

@@ -267,6 +267,7 @@ _defaultPortfolio(1), _timer(nullptr)
     for (auto mt: {MT_Shanghai, MT_Beijing, MT_Shenzhen}) {
         _working_times[mt] = std::move(GetWorkingRange(mt));
     }
+    _jobSessions = std::make_unique<JobSessionStore>();
     _runType = RuningType::Simualtion;
     if (!_svr.is_valid()) {
         FATAL("SSLServer initialization failed. Check your certificate and key files.");
@@ -1508,14 +1509,57 @@ Vector<symbol_t> Server::CollectStrategySymbols() {
     return result;
 }
 
-bool Server::DispatchDataJob(const String& key, std::function<void()> job) {
-    if (!_dataPool) return false;
+DataJobDispatch Server::DispatchDataJob(const String& key, JobId jobId,
+                                        const String& freq, const Set<symbol_t>& requested,
+                                        const std::shared_ptr<Set<symbol_t>>& toDownload,
+                                        std::function<void()> job) {
+    DataJobDispatch out;
+    if (!_dataPool) return out;
     {
         std::lock_guard<std::mutex> lock(_dataInflightMtx);
-        if (_dataInflight.count(key) > 0) {
-            return false;   // 已经在跑，别重复派发
+
+        // 同 key 已在跑：整个请求都被那个任务覆盖，直接复用
+        auto same = _dataInflight.find(key);
+        if (same != _dataInflight.end()) {
+            out._jobId = same->second._jobId;
+            out._skipped = requested;
+            return out;
         }
-        _dataInflight.insert(key);
+
+        // 同一标的只允许一个任务在下载：两个任务写同一个 CSV、入同一张表会打架
+        for (const auto& [k, entry] : _dataInflight) {
+            if (!freq.empty() && entry._freq != freq) continue;
+            bool coversAll = true;
+            for (const auto& sym : requested) {
+                if (!entry._symbols.count(sym)) { coversAll = false; break; }
+            }
+            if (!requested.empty() && coversAll) {
+                // 一个任务就盖住了全部请求：复用它，等它的终态事件
+                out._jobId = entry._jobId;
+                out._skipped = requested;
+                return out;
+            }
+            for (const auto& sym : entry._symbols) {
+                if (!requested.count(sym)) continue;
+                out._skipped.insert(sym);
+                if (out._jobId == 0) out._jobId = entry._jobId;
+            }
+        }
+        for (const auto& sym : requested) {
+            if (!out._skipped.count(sym)) toDownload->insert(sym);
+        }
+        if (!requested.empty() && toDownload->empty()) {
+            // 全被别的任务覆盖：复用那个任务，不再派发
+            return out;
+        }
+
+        DataInflightEntry entry;
+        entry._jobId = jobId;
+        entry._freq = freq;
+        entry._symbols = *toDownload;
+        _dataInflight.emplace(key, std::move(entry));
+        out._dispatched = true;
+        out._jobId = jobId;
     }
 
     _dataPool->submit([this, key, job = std::move(job)]() {
@@ -1529,7 +1573,13 @@ bool Server::DispatchDataJob(const String& key, std::function<void()> job) {
         std::lock_guard<std::mutex> lock(_dataInflightMtx);
         _dataInflight.erase(key);
     });
-    return true;
+    return out;
+}
+
+DataJobDispatch Server::DispatchDataJob(const String& key, JobId jobId,
+                                        std::function<void()> job) {
+    return DispatchDataJob(key, jobId, String(), Set<symbol_t>(),
+                            std::make_shared<Set<symbol_t>>(), std::move(job));
 }
 
 namespace {
@@ -1537,9 +1587,33 @@ namespace {
 /// 只按 freq 关联的话，同频率并发两个下载会互相污染进度。
 /// HTTP worker 有多线程，所以用 atomic 自增。
 std::atomic<uint64_t> g_dataJobSeq{1};
+
+/// 事件 payload → JSON。数值字段转成数字，前端不用再猜类型。
+nlohmann::json PayloadToJson(const Map<String, String>& payload) {
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& [k, v] : payload) {
+        if (k == "total_rows" || k == "rows" || k == "imported" || k == "issues" ||
+            k == "stage" || k == "done" || k == "total") {
+            j[k] = std::atoi(v.c_str());
+        } else {
+            j[k] = v;
+        }
+    }
+    return j;
 }
 
-String Server::SubmitDataJob(
+/// 会话里的事件类型：决定这条要不要当 progress（快照里只留最近一次）。
+const char* EventTypeOf(const Map<String, String>& payload) {
+    auto it = payload.find("status");
+    const String status = it == payload.end() ? String() : it->second;
+    if (status == "started") return "started";
+    if (status == "progress") return "progress";
+    if (status == "failed" || status == "error") return "error";
+    return "done";
+}
+}
+
+JobId Server::SubmitDataJob(
         const String& key, const String& event,
         Map<String, String> started,
         std::function<Map<String, String>(const DataJobResult&)> finished,
@@ -1550,25 +1624,56 @@ String Server::SubmitDataJob(
         [run = std::move(run)](const JobProgress&) -> DataJobResult { return run(); });
 }
 
-String Server::SubmitDataJob(
+JobId Server::SubmitDataJob(
         const String& key, const String& event,
         Map<String, String> started,
         std::function<Map<String, String>(const DataJobResult&)> finished,
         std::function<DataJobResult(const JobProgress&)> run) {
-    const String jobId = "job-" + std::to_string(g_dataJobSeq.fetch_add(1));
+    // 不带标的去重的链路：requested 为空即可（没有标的可跳）
+    auto empty = std::make_shared<Set<symbol_t>>();
+    auto dispatch = SubmitDataJob(
+        key, event, String(), Set<symbol_t>(), empty, std::move(started), std::move(finished),
+        [run = std::move(run)](const JobProgress& emit, const Set<symbol_t>&) -> DataJobResult {
+            return run(emit);
+        });
+    return dispatch._jobId;
+}
 
-    auto job = [this, key, event, jobId,
+DataJobDispatch Server::SubmitDataJob(
+        const String& key, const String& event, const String& freq,
+        const Set<symbol_t>& requested,
+        const std::shared_ptr<Set<symbol_t>>& toDownload,
+        Map<String, String> started,
+        std::function<Map<String, String>(const DataJobResult&)> finished,
+        std::function<DataJobResult(const JobProgress&, const Set<symbol_t>&)> run) {
+    const JobId jobId = g_dataJobSeq.fetch_add(1);
+    // 会话先建好：POST 返回后客户端就能按 job_id 查到「在跑」
+    auto session = _jobSessions->Create(jobId);
+
+    auto job = [this, key, event, jobId, freq, toDownload, session,
                 started = std::move(started),
                 finished = std::move(finished),
                 run = std::move(run)]() {
         // 数据线程池的 worker 是共享的，socket 必须在本线程创建并随任务关闭
         ScopedSocket sse = OpenSseSocket();
 
-        // 所有事件统一盖 job_id，链路自己只关心业务字段
-        const JobProgress emit = [&sse, &event, &jobId](Map<String, String> payload) {
-            payload["job_id"] = jobId;
+        // 事件既推 SSE 也记进会话：推送漏了（客户端没连上）还能按 job_id 查回来
+        const JobProgress emit = [&sse, &event, &jobId, &session](Map<String, String> payload) {
+            payload["job_id"] = std::to_string(jobId);
             SendSSE(sse.get(), event, payload);
+            session->pushEvent(EventTypeOf(payload), PayloadToJson(payload));
         };
+
+        nlohmann::json meta = nlohmann::json::object();
+        meta["event"] = event;
+        if (!freq.empty()) meta["freq"] = freq;
+        String symbols;
+        for (const auto& sym : *toDownload) {
+            if (!symbols.empty()) symbols += ",";
+            symbols += get_symbol(sym);
+        }
+        meta["symbols"] = symbols;
+        session->setMeta(meta);
 
         if (!started.empty()) {
             emit(started);
@@ -1576,7 +1681,7 @@ String Server::SubmitDataJob(
 
         DataJobResult result;
         try {
-            result = run(emit);
+            result = run(emit, *toDownload);
         } catch (const std::exception& e) {
             result.rows = -1;
             result.error = e.what();
@@ -1588,19 +1693,24 @@ String Server::SubmitDataJob(
         }
 
         if (finished) {
-            emit(finished(result));
+            const Map<String, String> payload = finished(result);
+            emit(payload);
+            session->finish(PayloadToJson(payload), result.rows < 0);
         }
     };
 
-    if (!DispatchDataJob(key, std::move(job))) {
-        WARN("[DataJob] {} 已在运行，忽略重复提交", key);
+    auto dispatch = DispatchDataJob(key, jobId, freq, requested, toDownload, std::move(job));
+    if (!dispatch._dispatched) {
+        // 没派发出去：会话也别留 —— 否则查得到却永远不会有结果
+        _jobSessions->Remove(jobId);
+        WARN("[DataJob] {} 已在运行（{}），复用进行中的任务", key, dispatch._jobId);
     }
-    return jobId;
+    return dispatch;
 }
 
 int Server::DownloadQuoteData(const Vector<symbol_t>& symbols, const String& freq,
                               bool overwrite, const String& env,
-                              const JobProgress& progress) {
+                              const JobProgress& progress, Vector<String>* outFailedSymbols) {
     String dbPath = _config->GetDatabasePath();
     String interpreter = PythonEnv::fromConfig(_config->GetRawConfig()).resolve(env);
 
@@ -1608,49 +1718,74 @@ int Server::DownloadQuoteData(const Vector<symbol_t>& symbols, const String& fre
     data.SetSymbols(symbols);
     data.SetOverwrite(overwrite);
 
-    DataPipeline pipeline(data);
-
-    // 阶段 → SSE 进度。下标与 DataStage 的声明顺序一一对应。
-    DataPipeline::StageCallback onStage;
+    QuoteData::ProgressCallback onProgress;
     if (progress) {
-        static constexpr const char* kStageNames[] = {"download", "check", "import", "retry"};
-        constexpr size_t kStageCount = sizeof(kStageNames) / sizeof(kStageNames[0]);
         const String total = std::to_string(symbols.size());
-        onStage = [progress, freq, total](DataStage stage) {
-            const auto idx = static_cast<size_t>(stage);
-            progress({
+        onProgress = [progress, freq, total](DataStage stage, const String& symbol,
+                                             int done, int n) {
+            Map<String, String> payload = {
                 {"status", "progress"},
-                {"stage", idx < kStageCount ? kStageNames[idx] : "unknown"},
+                {"stage", std::to_string(static_cast<int>(stage))},
                 {"freq", freq},
-                {"total", total}
-            });
+                {"total", total},
+            };
+            if (!symbol.empty()) {
+                payload["symbol"] = symbol;
+                payload["done"] = std::to_string(done);
+                payload["total"] = std::to_string(n);
+            }
+            progress(payload);
         };
     }
 
-    return pipeline.Run(dbPath + "/quote", onStage);
+    return data.Run(dbPath + "/quote", onProgress, outFailedSymbols);
 }
 
-String Server::SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
-                                   bool overwrite, const String& env) {
-    return SubmitDataJob(
-        "download:" + freq, "quote_download",
+DataJobDispatch Server::SubmitQuoteDownload(const Vector<symbol_t>& symbols, const String& freq,
+                                            bool overwrite, const String& env) {
+    Set<symbol_t> requested(symbols.begin(), symbols.end());
+    auto toDownload = std::make_shared<Set<symbol_t>>();
+
+    auto dispatch = SubmitDataJob(
+        QuoteData::DownloadKey(symbols, freq), "quote_download", freq, requested, toDownload,
         {
             {"status", "started"},
             {"freq", freq},
-            {"total", std::to_string(symbols.size())}
+            {"total", std::to_string(requested.size())}
         },
         [freq](const DataJobResult& r) -> Map<String, String> {
             const bool ok = r.rows >= 0;
-            return {
+            Map<String, String> out = {
                 {"status", ok ? "done" : "failed"},
                 {"freq", freq},
                 {"total_rows", std::to_string(r.rows)},
                 {"success", ok ? "true" : "false"}
             };
+            if (r.issues > 0) {
+                out["issues"] = std::to_string(r.issues);
+            }
+            if (!r.error.empty()) {
+                out["error"] = r.error;
+            } else if (!ok) {
+                out["error"] = "下载任务失败，见服务端日志";
+            }
+            return out;
         },
-        [this, symbols, freq, overwrite, env](const JobProgress& progress) -> DataJobResult {
-            return {DownloadQuoteData(symbols, freq, overwrite, env, progress), 0, {}};
+        [this, symbols, freq, overwrite, env](const JobProgress& progress,
+                                              const Set<symbol_t>& dispatching) -> DataJobResult {
+            Vector<String> failed;
+            const int rows = DownloadQuoteData(QuoteData::Pick(symbols, dispatching), freq,
+                                               overwrite, env, progress, &failed);
+            String error;
+            if (!failed.empty()) {
+                error = fmt::format("{} 个标的体检未过、未入库：{}", failed.size(),
+                                    fmt::join(failed, ", "));
+            }
+            return {rows, failed.size(), error};
         });
+
+    dispatch._dispatching = *toDownload;
+    return dispatch;
 }
 
 void Server::SubmitMarginDownload(const String& date, const String& env) {
@@ -1853,13 +1988,16 @@ void Server::RefreshDailyData() {
     const String target = DataPipeline::TargetTradingDay();
 
     if (_refreshState->NeedRefresh("quote", target)) {
-        DispatchDataJob("quote", [this, target]() { RunQuoteRefresh(target); });
+        DispatchDataJob("quote", g_dataJobSeq.fetch_add(1),
+                        [this, target]() { RunQuoteRefresh(target); });
     }
     if (_refreshState->NeedRefresh("margin", target)) {
-        DispatchDataJob("margin", [this, target]() { RunMarginRefresh(target); });
+        DispatchDataJob("margin", g_dataJobSeq.fetch_add(1),
+                        [this, target]() { RunMarginRefresh(target); });
     }
     if (_refreshState->NeedRefresh("fundamental", target)) {
-        DispatchDataJob("fundamental", [this, target]() { RunFundamentalRefresh(target); });
+        DispatchDataJob("fundamental", g_dataJobSeq.fetch_add(1),
+                        [this, target]() { RunFundamentalRefresh(target); });
     }
 }
 
@@ -1909,10 +2047,11 @@ void Server::RepairDailyData() {
     const String target = DataPipeline::TargetTradingDay();
     if (!_refreshState->NeedRefresh("repair", target)) return;
 
-    if (DispatchDataJob("repair", [this, target]() {
-            RunDataRepair(target);
-            _refreshState->MarkDone("repair", target);
-        })) {
+    if (DispatchDataJob("repair", g_dataJobSeq.fetch_add(1),
+                        [this, target]() {
+                            RunDataRepair(target);
+                            _refreshState->MarkDone("repair", target);
+                        })._dispatched) {
         INFO("[DataRefresh] 开始补数据，目标交易日 {}", target);
     }
 }
