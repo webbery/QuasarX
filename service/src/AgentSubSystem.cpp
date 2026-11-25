@@ -1718,15 +1718,21 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                                 const String& simDate,
                                 bool forceReload) {
     // 异步执行，不阻塞调用线程；线程句柄保存到 flow，Stop/ClearFlow 时 join，
-    // 避免线程执行期间 flow 内对象（ExecuteNode/ManualTiming）被并发释放导致悬空崩溃
+    // 避免线程执行期间 flow 内对象（ExecuteNode/ManualTiming 被并发释放导致悬空崩溃
     auto it = _flows.find(strategy);
     if (it == _flows.end()) {
         WARN("[StartDaily] Strategy not found: {}", strategy);
         return;
     }
     auto& flow = it->second;
-    // 清理旧线程（异步 join，不阻塞当前 detached 线程）
-    joinDailyWorkerAsync(flow, strategy);
+    // 同一策略的日终回放必须串行。
+    // 两次回放驱动的是同一个 flow._graph（长生命周期），ManualTiming 的
+    // _positions / _positionSnapshots / _decisions 是无锁成员：先前那轮还在
+    // push 快照，本轮结尾的 ClearRun() 就会把它清掉，两次持仓序列互相污染
+    // （实测同一窗口 Day1 写 31 条、Day2 写 63 条就是这么来的）。
+    // 同步 join 只阻塞发起线程（MarkSymbolReady 起的 detached 线程），
+    // 不阻塞 HTTP 请求线程。
+    joinDailyWorkerSync(flow, strategy);
     // Stop() 可能在 detach 线程调度期间被调用，检查 _running 避免创建孤儿线程
     if (!flow._running) {
         WARN("[StartDaily] Strategy '{}' stopped before StartDaily, skipping", strategy);

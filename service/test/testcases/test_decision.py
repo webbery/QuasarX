@@ -370,31 +370,29 @@ class TestStrategyPerformance:
         bar2 = dict(bar, datetime=f"{day2_date} 00:00:00")
         api_simulate_bar(auth_token, bar2)
 
-        # 等待 Day 2 执行完成：决策数量增加（Day 2 产生新决策）
-        prev_count = len(api_get_decisions(auth_token, date=day2_date))
-        deadline = time.time() + 15
+        # 轮询 performance 接口：决策可见到持仓落库之间有延迟（邮件发送阻塞 +
+        # 批量 INSERT 耗时），不能靠 sleep 固定时长。条件带 "metrics" in data：
+        # Day1 落库后窗口内只有 1 个日期，走 "insufficient data" 分支，trading_days
+        # 同样是 1 但没有 metrics 键，后续 data["metrics"] 会 KeyError。
+        data = {}
+        deadline = time.time() + 30
         while time.time() < deadline:
-            curr_count = len(api_get_decisions(auth_token, date=day2_date))
-            if curr_count > prev_count:
+            resp = requests.get(
+                f"{BASE_URL}/strategy/performance",
+                params={
+                    "name": STRATEGY_NAME,
+                    "start": day1_date,
+                    "end": day2_date
+                },
+                headers={"Authorization": auth_token},
+                verify=False,
+                timeout=15,  # 并发回放期间读 DuckDB 会偶发超时
+            )
+            assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
+            data = resp.json()
+            if data.get("trading_days", 0) >= 1 and "metrics" in data:
                 break
             time.sleep(0.5)
-
-        # recordDailyPositions 在决策创建后的回调中执行，需额外等待
-        time.sleep(1)
-
-        resp = requests.get(
-            f"{BASE_URL}/strategy/performance",
-            params={
-                "name": STRATEGY_NAME,
-                "start": day1_date,
-                "end": day2_date
-            },
-            headers={"Authorization": auth_token},
-            verify=False,
-            timeout=10,
-        )
-        assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
-        data = resp.json()
 
         assert data["strategy"] == STRATEGY_NAME
         assert data["trading_days"] >= 1, f"trading_days 应 >= 1，实际: {data.get('trading_days')}, message: {data.get('message')}"
