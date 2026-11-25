@@ -144,7 +144,7 @@ async function runAgentLoop(
   onEvent?: (event: AgentEvent) => void,
   onUsage?: UsageReporter,
   signal?: AbortSignal,
-  maxToolCalls = 30,
+  maxToolCalls = 500,
   config?: AgentConfig,
 ): Promise<AgentRunResult> {
   let rawLlm: any;

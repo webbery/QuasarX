@@ -58,10 +58,10 @@ export const GraphState = Annotation.Root({
     default: () => 0,
   }),
 
-  /** 最大迭代轮次（默认 50） */
+  /** 最大迭代轮次（默认 200） */
   maxIterations: Annotation<number>({
     reducer: (_state, update) => update,
-    default: () => 50,
+    default: () => 200,
   }),
 
   /** Agent 工作流事件列表（推送到前端展示） */

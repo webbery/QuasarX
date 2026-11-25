@@ -7,7 +7,7 @@
  *
  * 存储与 AgentConfig 分开：
  * - 旧的单配置 `quasarx_agent_config` 首次读取时自动迁移成最匹配的基底；
- * - `getAgentConfig()` 仍返回当前 active 基底，兼容 ChatApi / 知识库等旧调用方。
+ * - `getAgentConfig()` 仍返回当前 active 基底，兼容知识库等旧调用方。
  */
 
 export type ModelProtocol = 'openai' | 'anthropic' | 'custom'

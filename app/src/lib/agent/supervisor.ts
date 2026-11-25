@@ -8,7 +8,7 @@
  * 4. Agent 完成后返回 Supervisor，形成循环
  * 5. Supervisor 决定 respond 时结束
  *
- * recursion_limit: 50
+ * max_iterations: 200 / recursion_limit: 450
  */
 
 import { StateGraph } from "@langchain/langgraph";
@@ -20,6 +20,16 @@ import { createAgentNode } from "./agents";
 import { internalTools, INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { AgentEvent } from "./types";
 import { IndexedDBSaver } from "./checkpointer";
+
+/** Supervisor ↔ Agent 往返的最大轮数 */
+export const MAX_ITERATIONS = 200;
+
+/**
+ * LangGraph 的 recursionLimit 数的是「节点执行步数」，不是迭代轮数。
+ * 每轮迭代 = supervisor 节点 + agent 节点 = 2 步，
+ * 留 25% 余量，避免 recursionLimit 比 MAX_ITERATIONS 先触顶。
+ */
+export const RECURSION_LIMIT = MAX_ITERATIONS * 2 + 50;
 
 /** Supervisor LLM（仅用于路由决策，不绑定 Tool） */
 function createSupervisorLLM(config?: AgentConfig) {
@@ -476,7 +486,7 @@ export async function runSupervisorGraph(
     activeAgent: null,
     routerDecision: null,
     iterationCount: 0,
-    maxIterations: 50,
+    maxIterations: MAX_ITERATIONS,
     agentEvents: [],
     shouldEnd: false,
     finalResponse: "",
@@ -488,7 +498,7 @@ export async function runSupervisorGraph(
     configurable: {
       thread_id: sessionId,
     },
-    recursionLimit: 50,
+    recursionLimit: RECURSION_LIMIT,
     signal,
   });
 

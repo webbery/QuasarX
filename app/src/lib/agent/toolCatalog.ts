@@ -52,7 +52,7 @@ const TOOL_ALIASES: Record<string, string[]> = {
  *
  * - skill：能力检索已由 agent 层的 search 工具统一承担，而 skill 自带的 search 是
  *   整串 includes 匹配（多词短语搜不到），留着只会误导；它的 Tool 定义仍保留，
- *   legacy 的 ChatApi 路径还在用 getAllTools()。
+ *   供 getAllTools() 直接取用。
  * - ui：常驻工具，每个 Agent 都已绑定，不需要检索/启用。
  */
 const EXCLUDED_TOOLS = new Set(["skill", "ui"])
