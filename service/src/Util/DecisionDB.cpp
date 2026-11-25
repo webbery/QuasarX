@@ -2,9 +2,11 @@
 #include "Util/datetime.h"
 #include "Util/system.h"
 #include "Util/log.h"
+#include "Util/string_algorithm.h"
 // TradeAction 的完整定义（decision_to_action 返回该枚举，此处需与 TradeAction::BUY 比较）
 #include "DataContext.h"
 #include <cstring>
+#include <algorithm>
 
 DecisionDB& DecisionDB::instance() {
     static DecisionDB inst;
@@ -85,18 +87,11 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
 
     // 策略名直接拼进 SQL 字面量：转义单引号。名字里带引号时整条 INSERT 会失败，
     // 决策就静默丢了（面板看不到 → 没法下单）。
-    std::string strategySql;
-    strategySql.reserve(record._strategy.size() * 2);
-    for (char c : record._strategy) {
-        if (c == '\'') strategySql.push_back('\'');
-        strategySql.push_back(c);
-    }
-
     std::string sql = fmt::format(
         "INSERT OR REPLACE INTO decisions (id, strategy, symbol, action, is_open, quantity, price, epoch, timestamp, executed, exec_qty, exec_price, closed) "
         "VALUES ({}, '{}', {}, {}, {}, {}, {:.6f}, {}, TIMESTAMP '{}', {}, {}, {:.6f}, {})",
         record._id,
-        strategySql,
+        escapeSqlLiteral(record._strategy),
         sym_encoded,
         static_cast<int>(record._action),
         record._is_open ? 1 : 0,
@@ -135,7 +130,7 @@ std::vector<DecisionRecord> DecisionDB::queryByDate(const std::string& date) {
         "SELECT id, strategy, symbol, action, is_open, quantity, price, epoch, epoch(timestamp) as ts, "
         "executed, exec_qty, exec_price, closed FROM decisions "
         "WHERE CAST(timestamp AS DATE) = '{}' ORDER BY id",
-        date
+        escapeSqlLiteral(date)
     );
 
     query(sql, [&](duckdb_result& result) -> bool {
@@ -258,7 +253,7 @@ int DecisionDB::clearByDate(const std::string& date) {
 
     // 先查数量
     auto selectSql = fmt::format(
-        "SELECT COUNT(*) FROM decisions WHERE CAST(timestamp AS DATE) = '{}'", date
+        "SELECT COUNT(*) FROM decisions WHERE CAST(timestamp AS DATE) = '{}'", escapeSqlLiteral(date)
     );
     int count = 0;
     query(selectSql, [&count](duckdb_result& result) {
@@ -274,7 +269,7 @@ int DecisionDB::clearByDate(const std::string& date) {
 
     if (count > 0) {
         auto deleteSql = fmt::format(
-            "DELETE FROM decisions WHERE CAST(timestamp AS DATE) = '{}'", date
+            "DELETE FROM decisions WHERE CAST(timestamp AS DATE) = '{}'", escapeSqlLiteral(date)
         );
         exec(deleteSql);
     }
@@ -286,24 +281,62 @@ int DecisionDB::clearByDate(const std::string& date) {
 // ═══════════════════════════════════════════════════════════
 
 void DecisionDB::insertDailyPosition(const DailyPositionRecord& record) {
+    insertDailyPositions({record});
+}
+
+void DecisionDB::insertDailyPositions(const std::vector<DailyPositionRecord>& records) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
-    if (!isInitialized()) return;
+    if (!isInitialized() || records.empty()) return;
 
-    int64_t sym_encoded = encodeSymbol(record.symbol);
-    int64_t date_ts = static_cast<int64_t>(record.date);
+    // 单条多行 INSERT + 分块 500 行，两个约束都是踩过坑换来的：
+    // 1) 逐行 INSERT 每行一次 duckdb_query，几十行就要几百毫秒（实测 63 行 ≈ 0.69s），
+    //    而这段延迟卡在日终回调里，"决策可见到持仓落库"之间凭空多出这段时间。
+    // 2) 单条 INSERT 不能超过 ~500 行：再多 DuckDB 的 ART 索引会在 ON CONFLICT
+    //    upsert 下损坏（Corrupted ART index），且损坏后不可修复、只能删库重建。
+    static constexpr size_t CHUNK_SIZE = 500;
 
-    // UPSERT：同日同标的覆盖
-    std::string sql = fmt::format(
-        "INSERT INTO daily_positions (strategy, symbol, date, position, close_price) "
-        "VALUES ('{}', {}, {}, {}, {:.6f}) "
-        "ON CONFLICT (strategy, symbol, date) DO UPDATE SET position = {}, close_price = {:.6f}",
-        record.strategy, sym_encoded, date_ts, record.position, record.close_price,
-        record.position, record.close_price
-    );
+    std::string begin_err = execWithError("BEGIN TRANSACTION");
+    if (!begin_err.empty()) {
+        WARN("[DecisionDB] insertDailyPositions: BEGIN TRANSACTION failed: {}", begin_err);
+        return;
+    }
 
-    if (!exec(sql)) {
-        WARN("[DecisionDB] insertDailyPosition failed: strategy={}, symbol={}, date={}",
-             record.strategy, get_symbol(record.symbol), date_ts);
+    for (size_t start = 0; start < records.size(); start += CHUNK_SIZE) {
+        const size_t end = std::min(start + CHUNK_SIZE, records.size());
+
+        std::string sql;
+        sql.reserve((end - start) * 96 + 256);
+        sql += "INSERT INTO daily_positions (strategy, symbol, date, position, close_price) VALUES ";
+        for (size_t i = start; i < end; ++i) {
+            const auto& rec = records[i];
+            if (i > start) sql += ", ";
+            sql += fmt::format("('{}', {}, {}, {}, {:.6f})",
+                               escapeSqlLiteral(rec.strategy),
+                               encodeSymbol(rec.symbol),
+                               static_cast<int64_t>(rec.date),
+                               rec.position,
+                               rec.close_price);
+        }
+        // UPSERT：同日同标的覆盖
+        sql += " ON CONFLICT (strategy, symbol, date) DO UPDATE SET "
+               "position=excluded.position, close_price=excluded.close_price";
+
+        std::string err = execWithError(sql);
+        if (!err.empty()) {
+            const auto& bad = records[start];
+            WARN("[DecisionDB] insertDailyPositions failed: strategy={}, symbol={}, date={}, "
+                 "rows={}/{}, err={}",
+                 bad.strategy, get_symbol(bad.symbol), static_cast<int64_t>(bad.date),
+                 end - start, records.size(), err);
+            exec_unsafe("ROLLBACK");
+            return;
+        }
+    }
+
+    std::string commit_err = execWithError("COMMIT");
+    if (!commit_err.empty()) {
+        WARN("[DecisionDB] insertDailyPositions: COMMIT failed: {}", commit_err);
+        exec_unsafe("ROLLBACK");
     }
 }
 
@@ -315,7 +348,7 @@ std::vector<DailyPositionRecord> DecisionDB::queryDailyPositions(
 
     std::string sql = fmt::format(
         "SELECT strategy, symbol, date, position, close_price FROM daily_positions "
-        "WHERE strategy = '{}'", strategy);
+        "WHERE strategy = '{}'", escapeSqlLiteral(strategy));
 
     if (startDate > 0)
         sql += fmt::format(" AND date >= {}", static_cast<int64_t>(startDate));
@@ -355,7 +388,7 @@ bool DecisionDB::deleteDailyPosition(const std::string& strategy, symbol_t symbo
 
     std::string sql = fmt::format(
         "DELETE FROM daily_positions WHERE strategy = '{}' AND symbol = {} AND date = {}",
-        strategy, sym_encoded, date_ts
+        escapeSqlLiteral(strategy), sym_encoded, date_ts
     );
 
     if (!exec(sql)) {
@@ -410,7 +443,7 @@ List<TradeInfo> DecisionDB::queryExecutedFills(const std::string& strategy) {
         "SELECT symbol, action, exec_qty, exec_price, epoch(timestamp) AS ts FROM decisions "
         "WHERE strategy = '{}' AND executed = true AND closed = false AND exec_qty > 0 "
         "ORDER BY symbol ASC, ts ASC, id ASC",
-        strategy);
+        escapeSqlLiteral(strategy));
 
     query(sql, [&](duckdb_result& result) -> bool {
         int64_t row_count = duckdb_row_count(&result);
@@ -494,7 +527,7 @@ int DecisionDB::deleteByStrategy(const std::string& strategy) {
     // 删除 decisions 表中该策略的记录
     {
         auto countSql = fmt::format(
-            "SELECT COUNT(*) FROM decisions WHERE strategy = '{}'", strategy);
+            "SELECT COUNT(*) FROM decisions WHERE strategy = '{}'", escapeSqlLiteral(strategy));
         int count = 0;
         query(countSql, [&count](duckdb_result& result) {
             if (duckdb_row_count(&result) > 0) {
@@ -509,7 +542,7 @@ int DecisionDB::deleteByStrategy(const std::string& strategy) {
 
         if (count > 0) {
             auto deleteSql = fmt::format(
-                "DELETE FROM decisions WHERE strategy = '{}'", strategy);
+                "DELETE FROM decisions WHERE strategy = '{}'", escapeSqlLiteral(strategy));
             exec(deleteSql);
             totalDeleted += count;
         }
@@ -518,7 +551,7 @@ int DecisionDB::deleteByStrategy(const std::string& strategy) {
     // 删除 daily_positions 表中该策略的记录
     {
         auto countSql = fmt::format(
-            "SELECT COUNT(*) FROM daily_positions WHERE strategy = '{}'", strategy);
+            "SELECT COUNT(*) FROM daily_positions WHERE strategy = '{}'", escapeSqlLiteral(strategy));
         int count = 0;
         query(countSql, [&count](duckdb_result& result) {
             if (duckdb_row_count(&result) > 0) {
@@ -533,7 +566,7 @@ int DecisionDB::deleteByStrategy(const std::string& strategy) {
 
         if (count > 0) {
             auto deleteSql = fmt::format(
-                "DELETE FROM daily_positions WHERE strategy = '{}'", strategy);
+                "DELETE FROM daily_positions WHERE strategy = '{}'", escapeSqlLiteral(strategy));
             exec(deleteSql);
             totalDeleted += count;
         }

@@ -39,6 +39,10 @@ public:
 
     // 日终持仓快照
     void insertDailyPosition(const DailyPositionRecord& record);
+    // 批量写入：一次事务 + 分块多行 INSERT。
+    // 日终回放一轮要落几十条快照，逐行 INSERT 每行一次执行（实测 63 行 ≈ 0.69s），
+    // 这段延迟正好卡在"决策可见到持仓落库"之间。
+    void insertDailyPositions(const std::vector<DailyPositionRecord>& records);
     std::vector<DailyPositionRecord> queryDailyPositions(const std::string& strategy,
                                                          time_t startDate = 0,
                                                          time_t endDate = 0);

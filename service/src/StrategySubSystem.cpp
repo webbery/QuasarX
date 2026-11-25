@@ -953,7 +953,7 @@ void StrategySubSystem::recordDailyPositions(
     const DecisionSet& set,
     time_t date) {
 
-    int written = 0;
+    std::vector<DailyPositionRecord> records;
 
     if (!set._positionSnapshots.empty()) {
         // 逐 bar 快照：daily_positions 要的是连续的持仓序列。
@@ -968,8 +968,7 @@ void StrategySubSystem::recordDailyPositions(
             rec.date = snap._date;
             rec.position = snap._position;
             rec.close_price = snap._closePrice;
-            DecisionDB::instance().insertDailyPosition(rec);
-            ++written;
+            records.push_back(rec);
         }
     } else {
         // 回退：没有快照序列时按最终决策写一条（保持旧行为）
@@ -997,11 +996,16 @@ void StrategySubSystem::recordDailyPositions(
                 // 下游 StrategyTradeHandler / StrategyRiskHandler 拿它当市价用，
                 // 整套风险指标和交易流水 API 建立在"计划目标价"之上。
                 rec.close_price = it._closePrice > 0 ? it._closePrice : it._price;
-                DecisionDB::instance().insertDailyPosition(rec);
-                ++written;
+                records.push_back(rec);
             }
         }
     }
+
+    // 批量写入：一次事务 + 分块多行 INSERT。
+    // 日终回放一轮要落几十条快照，逐行 INSERT 每行一次执行（实测 63 行 ≈ 0.69s），
+    // 这段延迟正好卡在"决策可见到持仓落库"之间。
+    DecisionDB::instance().insertDailyPositions(records);
+    int written = static_cast<int>(records.size());
 
     // 落库日期来自每根 bar（snap._date），不是 date 参数（归属日）。
     // 两者只在回放窗口正确时一致；不一致就说明回放跑的是旧数据，

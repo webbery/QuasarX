@@ -4,6 +4,7 @@
 #include "Util/system.h"
 #include "Util/log.h"
 #include "Util/datetime.h"
+#include "Util/string_algorithm.h"
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -1058,7 +1059,7 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
             "SELECT CAST(CAST(ex_dividend_date AS DATE) AS VARCHAR) FROM dividend "
             "WHERE symbol = {} AND ex_dividend_date >= CAST('{}' AS DATE) "
             "AND ex_dividend_date < CAST('{}' AS DATE) + INTERVAL 1 DAY",
-            sym_encoded, min_ex, max_ex);
+            sym_encoded, escapeSqlLiteral(min_ex), escapeSqlLiteral(max_ex));
         if (duckdb_query(conn(), sql.c_str(), &sel) != DuckDBSuccess) {
             const char* err = duckdb_result_error(&sel);
             SPDLOG_ERROR("[FinanceDB] select existing ex_date failed: {}", err ? err : "unknown");
@@ -1648,7 +1649,7 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<Dividend
 
             String sql = fmt::format(
                 "SELECT close FROM stock_1d WHERE symbol = {} AND (ext & 1) = 0 "
-                "AND datetime < '{}' ORDER BY datetime DESC LIMIT 1", sym, timebuf);
+                "AND datetime < '{}' ORDER BY datetime DESC LIMIT 1", sym, escapeSqlLiteral(timebuf));
             duckdb_result res;
             if (duckdb_query(qdb.conn(), sql.c_str(), &res) != DuckDBSuccess) {
                 SPDLOG_ERROR("[FinanceDB] recalc: prev_close query failed: {}",
@@ -1830,7 +1831,7 @@ int FinanceDB::importMacroJson(const String& country,
             "INSERT OR REPLACE INTO macro_data "
             "(country, indicator, stat_date, value, updated_at) "
             "VALUES ('{}', '{}', '{}', {}, CURRENT_TIMESTAMP)",
-            country, indicator, date, value
+            escapeSqlLiteral(country), escapeSqlLiteral(indicator), escapeSqlLiteral(date), value
         );
         exec_unsafe(sql);
         count++;
@@ -1859,9 +1860,9 @@ nlohmann::json FinanceDB::queryMacro(const String& country,
     String sql = fmt::format(
         "SELECT CAST(stat_date AS VARCHAR), value FROM macro_data "
         "WHERE country = '{}' AND indicator = '{}'",
-        country, indicator
+        escapeSqlLiteral(country), escapeSqlLiteral(indicator)
     );
-    
+
     if (!start_date.empty()) {
         sql += fmt::format(" AND stat_date >= '{}'", start_date);
     }
@@ -1948,7 +1949,7 @@ bool FinanceDB::deleteMacroData(const String& country, const String& indicator) 
     
     String sql = fmt::format(
         "DELETE FROM macro_data WHERE country = '{}' AND indicator = '{}'",
-        country, indicator
+        escapeSqlLiteral(country), escapeSqlLiteral(indicator)
     );
     
     bool success = exec(sql);
@@ -1971,9 +1972,9 @@ nlohmann::json FinanceDB::queryMacroMetadata(const String& country, const String
     String sql = fmt::format(
         "SELECT MAX(CAST(updated_at AS VARCHAR)) as latest_update FROM macro_data "
         "WHERE country = '{}' AND indicator = '{}'",
-        country, indicator
+        escapeSqlLiteral(country), escapeSqlLiteral(indicator)
     );
-    
+
     duckdb_result res;
     if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
         duckdb_destroy_result(&res);
@@ -2056,7 +2057,7 @@ int FinanceDB::importMarginStocks(const nlohmann::json& data) {
         String sql = fmt::format(
             "INSERT INTO margin_stock (symbol, exchange, updated_at) "
             "VALUES ({}, '{}', CURRENT_TIMESTAMP)",
-            sym_encoded, exchange
+            sym_encoded, escapeSqlLiteral(exchange)
         );
         exec_unsafe(sql);
         count++;

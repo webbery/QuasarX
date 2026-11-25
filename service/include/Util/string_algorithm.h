@@ -110,6 +110,11 @@ String trim(const String& str);
  */
 Vector<String> split_list(const String& str, char delim = ',');
 
+/**
+ * @brief 转义 SQL 字符串字面量：单引号翻倍（' → ''）
+ */
+String escapeSqlLiteral(const String& str);
+
 String to_dot_string(double v, char dot = ',');
 
 String format_symbol(const String& symbol);

@@ -66,6 +66,16 @@ Vector<String> split_list(const String& str, char delim) {
   return result;
 }
 
+std::string escapeSqlLiteral(const String& str) {
+  std::string out;
+  out.reserve(str.size() * 2);
+  for (char c : str) {
+    if (c == '\'') out.push_back('\'');
+    out.push_back(c);
+  }
+  return out;
+}
+
 std::string to_dot_string(double v, char dot) {
   auto str = std::to_string(v);
   auto index = str.find_first_of('.');

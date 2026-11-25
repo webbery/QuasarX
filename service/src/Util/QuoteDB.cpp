@@ -2,6 +2,7 @@
 #include "Util/system.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
+#include "Util/string_algorithm.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -311,7 +312,7 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
         duckdb_result sel;
         std::string sql = fmt::format(
             "SELECT CAST(datetime AS VARCHAR) FROM {} WHERE symbol = {} AND datetime BETWEEN '{}' AND '{}'",
-            table, sym_encoded, min_dt, max_dt);
+            table, sym_encoded, escapeSqlLiteral(min_dt), escapeSqlLiteral(max_dt));
         if (duckdb_query(conn(), sql.c_str(), &sel) != DuckDBSuccess) {
             const char* err = duckdb_result_error(&sel);
             reportDuckDbError(fmt::format("select existing datetime ({}/{})", table, symbol_str),
@@ -780,7 +781,7 @@ int QuoteDB::updateAdjPrices(const std::string& table, int64_t encoded_symbol,
             "UPDATE {} SET adj_open={:.6f}, adj_close={:.6f}, adj_high={:.6f}, adj_low={:.6f} "
             "WHERE symbol={} AND datetime='{}'",
             table, u.adj_open, u.adj_close, u.adj_high, u.adj_low,
-            encoded_symbol, u.datetime);
+            encoded_symbol, escapeSqlLiteral(u.datetime));
         std::string err = execWithError(sql);
         if (err.empty()) {
             ++updated;
