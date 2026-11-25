@@ -272,9 +272,11 @@ _defaultPortfolio(1), _timer(nullptr)
         FATAL("SSLServer initialization failed. Check your certificate and key files.");
         return ;
     }
+    InitMailQueue();
 }
 
 Server::~Server() {
+    ShutdownMailQueue();
     // 先让数据线程池收尾：刷新任务会写 DuckDB，必须在库关闭之前结束
     if (_dataPool) {
         _dataPool->shutdown();
@@ -2270,6 +2272,55 @@ static String StripQuotes(const String& s) {
     return s;
 }
 
+void Server::InitMailQueue() {
+    _mailShutdown = false;
+    _mailWorker = new std::thread([this]() {
+        SetCurrentThreadName("MailQueue");
+        INFO("[MailQueue] Worker thread started");
+        while (true) {
+            MailTask task;
+            {
+                std::unique_lock<std::mutex> lock(_mailMtx);
+                _mailCv.wait(lock, [this]() {
+                    return _mailShutdown || !_mailQueue.empty();
+                });
+                if (_mailShutdown && _mailQueue.empty()) {
+                    break;
+                }
+                task = std::move(_mailQueue.front());
+                _mailQueue.pop();
+            }
+            int seq = _mailSeq.fetch_add(1);
+            INFO("[MailQueue] Sending mail seq={}, subject={}, attachments={}",
+                 seq, task._subject, task._attachments.size());
+            bool ok = SendMailInternal(task._body, task._isHtml, task._subject, task._attachments);
+            INFO("[MailQueue] Mail seq={} {}", seq, ok ? "sent" : "failed");
+        }
+        INFO("[MailQueue] Worker thread exiting");
+    });
+}
+
+void Server::ShutdownMailQueue() {
+    if (_mailWorker) {
+        {
+            std::lock_guard<std::mutex> lock(_mailMtx);
+            _mailShutdown = true;
+        }
+        _mailCv.notify_one();
+        _mailWorker->join();
+        delete _mailWorker;
+        _mailWorker = nullptr;
+    }
+}
+
+void Server::EnqueueMail(const String& body, bool isHtml,
+                         const String& subject,
+                         const Vector<String>& attachments) {
+    std::lock_guard<std::mutex> lock(_mailMtx);
+    _mailQueue.push({body, isHtml, subject, attachments});
+    _mailCv.notify_one();
+}
+
 // Shell 转义：对 argv 做单引号转义（RunCommand 走 system()，路径可能含空格）
 static String ShellQuote(const String& s) {
     String result = "'";
@@ -2288,8 +2339,12 @@ static String ShellQuote(const String& s) {
 bool Server::SendMailInternal(const String& body, bool isHtml,
                               const String& subject,
                               const Vector<String>& attachments) {
+    // 使用 pid + 时间戳生成唯一文件名，避免并发写入冲突
     String ext = isHtml ? "html" : "txt";
-    String tmpPath = (std::filesystem::temp_directory_path() / ("qx_mail_body." + ext)).string();
+    String tmpPath = (std::filesystem::temp_directory_path() /
+                      fmt::format("qx_mail_body_{}_{}.{}", getpid(),
+                                  std::chrono::steady_clock::now().time_since_epoch().count(),
+                                  ext)).string();
     {
         std::ofstream ofs(tmpPath);
         if (!ofs) {
@@ -2359,25 +2414,30 @@ bool Server::SendMailInternal(const String& body, bool isHtml,
 }
 
 bool Server::SendEmail(const String& content) {
-    return SendMailInternal(content, false, "", {});
+    EnqueueMail(content, false, "", {});
+    return true;  // 入队成功
 }
 
 bool Server::SendHtmlEmail(const String& htmlContent) {
-    return SendMailInternal(htmlContent, true, "", {});
+    EnqueueMail(htmlContent, true, "", {});
+    return true;
 }
 
 bool Server::SendEmail(const String& content, const String& subject) {
-    return SendMailInternal(content, false, subject, {});
+    EnqueueMail(content, false, subject, {});
+    return true;
 }
 
 bool Server::SendHtmlEmail(const String& htmlContent, const String& subject) {
-    return SendMailInternal(htmlContent, true, subject, {});
+    EnqueueMail(htmlContent, true, subject, {});
+    return true;
 }
 
 bool Server::SendMailWithAttachments(const String& body, bool isHtml,
                                      const Vector<String>& attachments,
                                      const String& subject) {
-    return SendMailInternal(body, isHtml, subject, attachments);
+    EnqueueMail(body, isHtml, subject, attachments);
+    return true;
 }
 
 bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) {

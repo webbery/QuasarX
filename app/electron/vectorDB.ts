@@ -794,7 +794,7 @@ export async function shutdownVectorDB(): Promise<void> {
 
 /**
  * 模型缓存路径（在 knowledge 目录下）
- * Transformers.js 默认缓存结构：cacheDir/<model-id-with-underscores>/onnx/
+ * Transformers.js 默认缓存结构：cacheDir/<model-id 原样>/onnx/
  */
 function getModelCacheDir(knowledgeDir: string): string {
   return join(knowledgeDir, '.model-cache');
@@ -805,9 +805,10 @@ function getModelCacheDir(knowledgeDir: string): string {
  * 检查关键文件 onnx/model_quantized.onnx 或 onnx/model.onnx 是否存在
  */
 function isModelCached(cacheDir: string): boolean {
-  // 从 EMBEDDING_MODEL 提取模型目录名（如 'iic/gte_xxx' → 'iic_gte_xxx' 或 'Xenova/xxx' → 'Xenova_xxx'）
-  const modelFolder = EMBEDDING_MODEL.replace('/', '_');
-  const modelDir = join(cacheDir, modelFolder, 'onnx');
+  // ⚠️ transformers.js v2 的缓存布局里，模型 id 中的 '/' 是真实的目录分隔符
+  // （<cacheDir>/Xenova/distiluse-base-multilingual-cased-v2/onnx/...），
+  // 替换成 '_' 会永远找不到缓存，导致每次启动都误判为「未缓存」。
+  const modelDir = join(cacheDir, EMBEDDING_MODEL, 'onnx');
   // 量化模型优先检查 model_quantized.onnx
   return existsSync(join(modelDir, 'model_quantized.onnx')) || existsSync(join(modelDir, 'model.onnx'));
 }

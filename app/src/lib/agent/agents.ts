@@ -30,8 +30,9 @@ import { INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { isToolArtifactResult, type ArtifactEnvelope } from "./artifacts";
 import { getToolCatalog, type ToolCatalog } from "./toolCatalog";
 import { createSearchTool } from "./searchTool";
-import { capabilityOwner, renderCapabilityMap } from "./capabilityMap";
+import { capabilityOwner, renderCapabilityIndex } from "./capabilityMap";
 import { createGapTool, formatGap } from "./gapTool";
+import { budgetToolResult, type BudgetState } from "./contextBudget";
 import { uiTool } from "../tools/ui";
 
 /** 从 LangChain 响应中提取 token 用量（无用量信息时返回 undefined） */
@@ -228,6 +229,7 @@ async function runAgentLoop(
 
   let currentMessages = [...messages];
   let toolCallCount = 0;
+  const contextBudget: BudgetState = { usedTokens: 0 };
 
   while (toolCallCount < maxToolCalls) {
     // 已被用户中止：抛出而非返回空串，否则会话层会误显示「Agent 未返回回复」
@@ -388,6 +390,20 @@ async function runAgentLoop(
           timestamp: Date.now(),
         });
 
+        // 上下文预算：进入 ToolMessage 前统一限流
+        const budgeted = budgetToolResult(resultStr, contextBudget);
+        resultStr = budgeted.text;
+        if (budgeted.truncated) {
+          onEvent?.({
+            agent: agentType,
+            content: budgeted.exhausted
+              ? `工具 ${tc.name} 结果因上下文预算耗尽未注入（${budgeted.originalChars} 字符）`
+              : `工具 ${tc.name} 结果过大，已按上下文预算截断（${budgeted.originalChars} → ${resultStr.length} 字符）`,
+            eventType: "thought",
+            timestamp: Date.now(),
+          });
+        }
+
         // 预取契约时把要点一并回灌：模型第一次调这个工具，很可能参数名猜错了
         const hint = contractHints.get(tc.id ?? tc.name);
         if (hint) {
@@ -411,7 +427,8 @@ async function runAgentLoop(
           }),
         );
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const rawError = err instanceof Error ? err.message : String(err);
+        const errorMsg = budgetToolResult(rawError, contextBudget).text;
         onEvent?.({
           agent: agentType,
           content: `工具 ${tc.name} 错误: ${errorMsg}`,
@@ -471,9 +488,9 @@ export function createAgentNode(
     const allowedTools = AGENT_TOOL_CONFIG[agentType] ?? [];
     const residentTools = getResidentToolsForAgent(agentType, internalTools);
 
-    // system prompt = 行为约束 + 能力地图
-    // 能力地图只给域的场景与限制，不给工具 JSON Schema（完整契约按需加载）
-    const capabilityMap = renderCapabilityMap(agentType, new Set(allowedTools));
+    // system prompt = 行为约束 + 能力域索引
+    // 索引只给域 id / 场景 / 工具个数；域详情与工具契约由 search 按需返回
+    const capabilityMap = renderCapabilityIndex(agentType, new Set(allowedTools));
     const systemPrompt = capabilityMap
       ? `${AGENT_SYSTEM_PROMPTS[agentType]}\n\n${capabilityMap}`
       : AGENT_SYSTEM_PROMPTS[agentType];

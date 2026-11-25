@@ -128,7 +128,7 @@ export {
   AGENT_DOMAINS,
   getDomain,
   domainsForAgent,
-  renderCapabilityMap,
+  renderCapabilityIndex,
   checkCapabilityMap,
   verifyCapabilityMap,
   type CapabilityDomain,

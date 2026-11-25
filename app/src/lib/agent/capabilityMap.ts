@@ -301,37 +301,41 @@ export function capabilityOwner(toolName: string): {
   return { domains }
 }
 
+/** Tier 1 索引里 scenarios 的截断长度 */
+const INDEX_SCENARIO_CHARS = 28
+
+/** 单行截断 */
+function clip(text: string, max: number): string {
+  const t = (text ?? "").trim()
+  return t.length <= max ? t : `${t.slice(0, max)}…`
+}
+
 /**
- * 渲染能力地图（注入 Agent 的 system prompt）
+ * 渲染能力域索引（Tier 1，注入 Agent 的 system prompt）
  *
- * 只给「域 id / 场景 / 限制 / 工具名」，**不给 JSON Schema** ——
- * 完整契约按需加载，避免前期上下文污染。
+ * 只输出认域所需信息：域 id、标题、一行场景、工具个数。
+ * 限制/前置/动作清单/不覆盖由 search(action="domain") 按需返回；
+ * 单个工具的完整契约由 search(action="contract") 按需返回。
  */
-export function renderCapabilityMap(agent: AgentType, allowed: Set<string>): string {
+export function renderCapabilityIndex(agent: AgentType, allowed: Set<string>): string {
   const domains = domainsForAgent(agent).filter(
     (d) => effectiveTools(agent, d, allowed).length > 0,
   )
   if (domains.length === 0) return ""
 
   const lines: string[] = [
-    "【能力地图】你当前可用的能力域。先认域，再取域内工具：",
+    "【能力地图】你的能力按域组织。先认域，再取域内详情：",
   ]
 
   for (const d of domains) {
-    lines.push(`- ${d.id} · ${d.title}`)
-    lines.push(`  适用：${d.scenarios}`)
-    if (d.limits.length) lines.push(`  限制：${d.limits.join("；")}`)
-    if (d.requires?.length) lines.push(`  前置：${d.requires.join("；")}`)
-    const tools = effectiveTools(agent, d, allowed)
-    lines.push(`  工具：${tools.join(", ")}`)
-    const gaps = (d.notCovered ?? []).filter((nc) => !nc.routeTo)
-    if (gaps.length) {
-      lines.push(`  不覆盖：${gaps.map((g) => g.topic).join("；")}（这类需求用 report_gap 登记，别用相近工具硬凑）`)
-    }
+    const count = effectiveTools(agent, d, allowed).length
+    lines.push(`- ${d.id} · ${d.title} —— ${clip(d.scenarios, INDEX_SCENARIO_CHARS)}（${count} 个工具）`)
   }
 
   lines.push("")
-  lines.push("取工具的顺序：search(action=\"domain\", keyword=\"<域 id>\") 看域内动作 → search(action=\"contract\", keyword=\"<工具名>\") 加载契约 → 下一轮即可调用。")
+  lines.push("带副作用的动作（删除数据 / 部署 / 启动策略 / 写策略图）不会由你直接执行，产出动作由用户点击确认。")
+  lines.push('域内详情（限制 / 前置 / 动作清单 / 不覆盖）：search(action="domain", keyword="<域 id>")')
+  lines.push('单个工具的完整契约：search(action="contract", keyword="<工具名>")，加载后下一轮即可调用')
   lines.push("地图里没有的能力不要硬凑：用 report_gap 登记缺口，说明哪一步做不到、原因和替代方案。")
 
   return lines.join("\n")

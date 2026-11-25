@@ -21,6 +21,9 @@ import { DuckDBInstance, DuckDBConnection, DuckDBAppender } from '@duckdb/node-a
 import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags, storeChunkSummaries, getChunkSummariesByDocId, getChunksByDocId } from './vectorDB';
 import { agentRouter } from './agent/AgentRouter';
 import { IndexAgent } from './agent/IndexAgent';
+import { LanceMemoryStore } from './memory/store';
+import { createMemoryHandlers } from './memory/handlers';
+import { registerMemoryIpcHandlers } from './memory/ipc';
 import type { AgentConfig } from '../src/lib/agent';
 
 /**
@@ -146,6 +149,20 @@ app.whenReady().then(async () => {
         await initVectorDB(getKnowledgeDir());
     } catch (e) {
         console.error('[VectorDB] init failed:', e);
+    }
+
+    // Initialize MemoryDB
+    try {
+        const knowledgeDir = getKnowledgeDir();
+        const memoryStore = new LanceMemoryStore({
+            dir: join(knowledgeDir, 'memory-db'),
+            cacheDir: join(knowledgeDir, '.model-cache'),
+        });
+        await memoryStore.init();
+        registerMemoryIpcHandlers(createMemoryHandlers(memoryStore));
+        console.log('[MemoryDB] initialized:', join(knowledgeDir, 'memory-db'));
+    } catch (e) {
+        console.error('[MemoryDB] init failed:', e);
     }
 
     // Initialize AgentRouter

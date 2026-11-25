@@ -9,6 +9,8 @@
 #include <atomic>
 #include <ctime>
 #include <mutex>
+#include <queue>
+#include <condition_variable>
 #include <nng/nng.h>
 #include <nng/supplemental/http/http.h>
 #include "nng/nng.h"
@@ -374,6 +376,13 @@ private:
                           const String& subject,
                           const Vector<String>& attachments);
 
+    // 邮件队列：后台线程异步发送，避免阻塞关键路径
+    void InitMailQueue();
+    void ShutdownMailQueue();
+    void EnqueueMail(const String& body, bool isHtml,
+                     const String& subject,
+                     const Vector<String>& attachments);
+
     void InitStocks(const String& path);
     void InitStocks();
     void InitFutures(const String& path);
@@ -441,4 +450,18 @@ private:
         Set<symbol_t> _symbols;
     };
     Map<String, DataInflightEntry> _dataInflight;
+
+    // ── 邮件队列 ──
+    struct MailTask {
+        String _body;
+        bool _isHtml;
+        String _subject;
+        Vector<String> _attachments;
+    };
+    std::queue<MailTask> _mailQueue;
+    std::mutex _mailMtx;
+    std::condition_variable _mailCv;
+    std::thread* _mailWorker = nullptr;
+    std::atomic<int> _mailSeq{0};
+    bool _mailShutdown = false;
 };

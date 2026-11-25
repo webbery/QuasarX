@@ -52,7 +52,6 @@
     "@langchain/langgraph": "^1.3.0",
     "@langchain/openai": "^1.4.5",
     "@microsoft/fetch-event-source": "^2.0.1",
-    "@vectorize-io/hindsight-all": "^1.2.3",
     "@vue-flow/controls": "^1.1.3",
     "@vue-flow/core": "^1.46.0",
     "@vue-flow/minimap": "^1.5.4",
