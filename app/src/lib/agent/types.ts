@@ -1,6 +1,23 @@
 import { Annotation } from "@langchain/langgraph";
 import { BaseMessage } from "@langchain/core/messages";
 import type { ArtifactEnvelope } from "./artifacts";
+import type { MemoryStore } from "../memory/types";
+
+/**
+ * 记忆运行时：由渲染进程构造后传给图，agent 层只消费不创建。
+ *
+ * - context：注入到 system prompt 之后的记忆上下文，null 表示不注入
+ * - store：记忆存储，缺省时不注册 memory 工具
+ * - bankId：当前作用域
+ */
+export interface MemoryRuntime {
+  /** 记忆上下文 */
+  context: string | null;
+  /** 记忆存储 */
+  store?: MemoryStore;
+  /** 当前 bank 作用域 */
+  bankId?: string;
+}
 
 /** Agent 类型标识 */
 export type AgentType = "supervisor" | "chat" | "strategy" | "risk" | "portfolio" | "analysis";
@@ -92,6 +109,12 @@ export const GraphState = Annotation.Root({
   userInput: Annotation<string>({
     reducer: (_state, update) => update,
     default: () => "",
+  }),
+
+  /** 记忆上下文；null 表示本轮不注入记忆 */
+  memoryContext: Annotation<string | null>({
+    reducer: (_state, update) => update,
+    default: () => null,
   }),
 });
 

@@ -82,14 +82,19 @@ export const dataTool = tool(
 
         case "list_tables": {
           const res = await axios.get(`${BASE_URL}/quote`)
-          const tables = res.data?.tables
-          if (!tables || tables.length === 0) return "当前无行情数据表。使用 download_quote 下载数据。"
+          // 服务端返回数组：[{ table, symbol_count, symbols: [{ symbol, start_time, end_time, count }] }]
+          const tables: any[] = Array.isArray(res.data) ? res.data : (res.data?.tables ?? [])
+          if (tables.length === 0) return "当前无行情数据表。使用 download_quote 下载数据。"
 
           const lines = ["**行情数据表**："]
           for (const t of tables) {
-            const symbols = t.symbols?.length ?? 0
-            const range = t.time_range ? ` (${t.time_range[0]} ~ ${t.time_range[1]})` : ""
-            lines.push(`  - **${t.name}**: ${symbols} 个标的${range}`)
+            const name = t.table ?? t.name ?? "未知"
+            const symbols: any[] = Array.isArray(t.symbols) ? t.symbols : []
+            const count = typeof t.symbol_count === "number" ? t.symbol_count : symbols.length
+            const start = symbols[0]?.start_time
+            const end = symbols[symbols.length - 1]?.end_time
+            const range = start && end ? ` (${start} ~ ${end})` : ""
+            lines.push(`  - **${name}**: ${count} 个标的${range}`)
           }
           return lines.join("\n")
         }
@@ -139,8 +144,8 @@ export const dataTool = tool(
           }
           lines.push(
             Number.isFinite(jobId) && jobId > 0
-              ? "\n进度在对话里的进度卡上实时更新；也可以事后用 list_tables 核对结果。"
-              : "\n数据在后台异步下载（服务端未返回 job_id，无法订阅进度），可用 list_tables 查看。",
+              ? "\n进度在对话里的进度卡上轮询更新（每 3 秒一次）；也可以事后用 list_tables 核对结果。"
+              : "\n数据在后台异步下载（服务端未返回 job_id，无法跟踪进度），可用 list_tables 查看。",
           )
           lines.push(
             "\n下载是异步的：数据落库前 query_quote 会查不到，这是正常现象。" +
@@ -166,15 +171,12 @@ export const dataTool = tool(
               step: 0,
             },
             binding: {
-              kind: "sse",
-              event: "quote_download",
-              match: { job_id: jobId },
-              stopOn: { field: "status", values: ["done", "failed"] },
-              // 服务端逐标的汇报进度，正常情况下几十秒就有一次事件。
-              // 超时没动静就自己判失败 —— 事件永远不来时卡片不能一直转圈。
+              kind: "poll",
+              // 定时轮询服务端的任务状态
+              url: `${BASE_URL}/quote?job_id=${jobId}`,
+              intervalMs: 3000,
+              // 超时没拿到终态就判失败 —— 卡片不能一直转圈
               timeoutMs: 300_000,
-              // 推送漏了（客户端没连上、后端重启）时的兜底：问服务端这任务成没成
-              statusUrl: `${BASE_URL}/quote?job_id=${jobId}`,
             },
           }
 
@@ -493,47 +495,86 @@ export const dataTool = tool(
   {
     name: "data_manager",
     description: [
-      "数据管理工具。管理行情和财务数据的查询、下载、删除，以及股票/指数/期货基础信息查询。",
-      "action='list_tables' 列出所有行情数据表；",
-      "action='query_quote' 查询指定标的K线数据（table+symbol）；",
-      "action='download_quote' 触发行情数据下载（symbols=逗号分隔代码，freq=daily/5m/15m/30m/60m）；",
-      "action='delete_quote' 删除行情数据；",
-      "action='import_quote' 导入CSV行数据到行情表；",
-      "action='export_quote' 导出行情数据为CSV/JSON；",
-      "action='list_finance' 列出所有财务数据表；",
-      "action='query_finance' 查询财务明细（category=profit/operation/growth/balance/cashflow/dupont，code=标的代码）；",
-      "action='download_finance' 触发财务数据下载（code=标的代码）；",
-      "action='delete_finance' 删除财务数据；",
-      "action='query_stock_info' 获取所有股票列表；",
-      "action='query_stock_detail' 获取股票实时价格/成交量；",
-      "action='query_stock_verbose' 获取股票详细信息（行业/主营/PE/PB等）；",
-      "action='query_index' 获取指数行情；",
-      "action='query_future' 获取期货合约列表；",
-      "action='query_option_simple' 获取所有期权合约列表；",
-      "action='query_option_history' 查询期权历史行情（code=合约代码）；",
-      "action='query_option_data' 查询期权合约详情数据（code=合约代码）",
-    ].join(""),
+      '数据管理工具：行情/财务数据的查询、下载、删除、导出，以及股票/指数/期货/期权基础信息查询。',
+      '本工具只负责“取数与管理数”，不做任何统计检验。',
+      '',
+      '## WHEN TO USE',
+      '- 取数、查数、下载、导入、导出、删除数据',
+      '- 列数据表、查标的列表/快照/详情',
+      '- 为下游分析工具准备本地数据',
+      '',
+      '## WHEN NOT TO USE',
+      '- 用户要求 ADF/KPSS/协整/Granger 等统计检验 → 用“时间序列计量分析工具”',
+      '- 用户只问概念、不涉及具体数据 → 不调用',
+      '- 无法确定 action 或关键槽位（table/symbol/category）→ 先向用户澄清，禁止猜测',
+      '',
+      '## 写操作前置规则（delete_* / import_*）',
+      '必须同时满足：(1) 用户明确下达删除/导入指令；(2) 已通过 list_* 确认目标表存在。',
+      '缺一即先澄清。执行前回显目标表名与影响范围。',
+      '',
+      '## ACTION 分组与互斥边界',
+      '',
+      '### A. 元数据/列表（只读，无前置）',
+      '- list_tables：列行情表。query_quote 前 table 未知时先调此 action',
+      '- list_finance：列财务表',
+      '- query_stock_info：股票列表',
+      '- query_future：期货合约列表',
+      '- query_option_simple：期权合约列表',
+      '',
+      '### B. 行情查询（只读，同一请求只选一个）',
+      '- query_quote：历史K线，需 table+symbol（频率由 table 名决定，如 stock_1d）。用户说“走势/历史K线”用这个',
+      '- query_stock_detail：单只股票实时快照（价格/成交量）。用户说“现在多少钱/实时”用这个，不要用 query_quote',
+      '- query_index：指数行情',
+      '- query_option_history：期权历史行情（code=合约代码）',
+      '- query_option_data：期权合约详情（非行情）',
+      '判据：“实时”→detail；“历史K线/走势”→quote；“指数”→index；“期权历史”→option_history；“期权合约信息”→option_data',
+      '',
+      '### C. 财务查询（只读）',
+      '- query_finance：需 category+code。category 不确定时先澄清，不要默认 profit',
+      '',
+      '### D. 下载/导入（写，异步触发）',
+      '- download_quote：触发下载（symbols 逗号分隔多标的 + freq）。下载≠查询，不要用它代替 query_quote',
+      '- download_finance：触发财务下载（code）',
+      '- import_quote：CSV 导入行情表',
+      '',
+      '### E. 导出/删除（写）',
+      '- export_quote：导出 CSV/JSON',
+      '- delete_quote / delete_finance：删除。必须走写操作前置规则',
+      '',
+      '## 参数一致性',
+      '- 单标的用 symbol（query_quote）；多标的用 symbols（download_quote）；不可混用',
+      '- freq 仅对 download_quote 有效，取值 daily/5m/15m/30m/60m',
+      '- query_quote 的频率由 table 名决定（stock_1d / etf_5m），不要传 freq',
+      '',
+      '## EXAMPLES',
+      '- “查茅台最近K线” → list_tables（table 未知时）→ query_quote(table=..., symbol=sh.600519)',
+      '- “茅台现在多少钱” → query_stock_detail(symbol=sh.600519)',
+      '- “下载沪深300成分股日线” → download_quote(symbols="...", freq=daily)',
+      '- “把行情表导出” → 先确认 table → export_quote',
+      '- “检验茅台收益率平稳性” → NOT this tool → 时间序列计量分析工具',
+    ].join('\n'),
     schema: z.object({
       action: z.enum([
-        "list_tables", "query_quote", "download_quote", "delete_quote",
-        "import_quote", "export_quote",
-        "list_finance", "query_finance", "download_finance", "delete_finance",
-        "query_stock_info", "query_stock_detail", "query_stock_verbose",
-        "query_index", "query_future",
-        "query_option_simple", "query_option_history", "query_option_data",
+        "list_tables","query_quote","download_quote","delete_quote","import_quote","export_quote",
+        "list_finance","query_finance","download_finance","delete_finance",
+        "query_stock_info","query_stock_detail","query_stock_verbose",
+        "query_index","query_future","query_option_simple","query_option_history","query_option_data",
       ]).describe("操作类型"),
-      table: z.string().optional().describe("行情表名，如 stock_1d, etf_5m, stock_5m"),
-      symbol: z.string().optional().describe("标的代码，如 sh.600000（行情）或 SH000001（指数）"),
-      symbols: z.string().optional().describe("标的代码列表，逗号分隔（download_quote 时使用）"),
+      table: z.string().optional().describe("行情表名，如 stock_1d / etf_5m；未知时先调 list_tables"),
+      symbol: z.string().optional().describe("单标的代码，如 sh.600000（行情）或 SH000001（指数）"),
+      symbols: z.string().optional().describe("多标的代码，逗号分隔（仅 download_quote 使用）"),
       start: z.string().optional().describe("起始日期 YYYY-MM-DD"),
       end: z.string().optional().describe("结束日期 YYYY-MM-DD"),
-      freq: z.string().optional().describe("数据频率: daily/5m/15m/30m/60m（默认 daily）"),
-      category: z.string().optional().describe("财务类别: profit/operation/growth/balance/cashflow/dupont/all"),
-      code: z.string().optional().describe("代码: 财务标的代码（如 600519.SH）或期权合约代码（如 10004487.SH）"),
-      format: z.string().optional().describe("导出格式: csv/json（默认 csv）"),
-      adj: z.string().optional().describe("复权类型: hfq/none（默认 hfq）"),
-      data: z.array(z.string()).optional().describe("CSV 行数据（import_quote 时使用）"),
-      limit: z.number().optional().describe("返回条数上限"),
+      freq: z.enum(["daily","5m","15m","30m","60m"]).optional()
+        .describe("数据频率（仅 download_quote 有效；query_quote 的频率由 table 名决定，不传 freq）"),
+      category: z.enum(["all","profit","operation","growth","balance","cashflow","dupont"]).optional()
+        .describe("财务类别：query_finance 需明确指定；download_finance 缺省为 all"),
+      code: z.string().optional()
+        .describe("代码：财务标的代码（如 600519.SH）或期权合约代码（如 10004487.SH）"),
+      format: z.enum(["csv","json"]).optional().describe("导出格式（仅 export_quote，默认 csv）"),
+      adj: z.enum(["hfq","none"]).optional().describe("复权类型（仅 import_quote，默认 hfq）"),
+      data: z.array(z.string()).optional().describe("CSV 行数据（仅 import_quote 使用）"),
+      limit: z.number().optional().describe("返回条数上限（query_quote / query_finance）"),
     }),
   }
 )

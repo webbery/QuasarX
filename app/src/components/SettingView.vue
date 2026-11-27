@@ -192,6 +192,72 @@
                 </div>
             </div>
 
+            <!-- 记忆设置 -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('memory')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(155, 89, 182, 0.1); color: #9b59b6;">
+                            <span>🧠</span>
+                        </div>
+                        <span>记忆设置</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.memory }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.memory }">
+                    <div class="form-group">
+                        <label>启用记忆</label>
+                        <div class="api-source-toggle">
+                            <input type="checkbox" v-model="memoryEnabled" @change="onMemoryToggle">
+                            <span class="api-hint">{{ memoryStore.enabled ? '已开启：每轮开始注入记忆上下文' : '已关闭：对话不接触记忆存储' }}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>记忆更新阈值</label>
+                        <input type="number" class="form-control" v-model.number="memoryThreshold" min="1" step="1000" placeholder="1000000">
+                    </div>
+                    <p class="hint">
+                        未固化对话的正文 token 超过该值时触发一次记忆更新（抽取并写库）；未超过时这段对话原文直接随上下文发送。默认 1000000。
+                    </p>
+                    <div class="form-group">
+                        <label>运行指标</label>
+                        <div class="memory-metrics">
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">抽取调用次数</span>
+                                <span class="memory-metric-value">{{ memoryMetrics.extractCalls }}</span>
+                            </div>
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">抽取失败次数</span>
+                                <span class="memory-metric-value" :title="memoryFailureBreakdown">{{ memoryExtractFailures }}</span>
+                            </div>
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">写入记忆条数</span>
+                                <span class="memory-metric-value">{{ memoryMetrics.retainedUnits }}</span>
+                            </div>
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">注入 token 累计</span>
+                                <span class="memory-metric-value">{{ memoryMetrics.injectTokens }}</span>
+                            </div>
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">召回 P50</span>
+                                <span class="memory-metric-value">{{ memoryMetrics.recallP50 }} ms</span>
+                            </div>
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">召回 P95</span>
+                                <span class="memory-metric-value">{{ memoryMetrics.recallP95 }} ms</span>
+                            </div>
+                            <div class="memory-metric">
+                                <span class="memory-metric-label">熔断状态</span>
+                                <span class="memory-metric-value">{{ memoryMetrics.breakerState }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" @click="saveMemorySettings">保存配置</button>
+                        <button class="btn btn-secondary" @click="refreshMemoryMetrics">刷新指标</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 股票设置 -->
             <div class="settings-section">
                 <div class="section-header" @click="toggleSection('stock')">
@@ -343,6 +409,7 @@ const expandedSections = ref({
     tickflow: false,  // TickFlow 配置
     agent: false,     // Agent 模型配置
     tavily: false,    // Tavily 搜索配置
+    memory: false,    // 记忆设置
 });
 
 // 远程服务器数据
@@ -410,6 +477,7 @@ import {
   isBaseReady,
 } from '@/lib/agent/modelBases';
 import { useAgentModelStore } from '@/stores/agentModel';
+import { useMemoryStatsStore } from '@/stores/memoryStats';
 
 const agentStore = useAgentModelStore();
 const agentPresets = MODEL_BASE_PRESETS;
@@ -454,6 +522,44 @@ const tavilyApiKey = ref(localStorage.getItem('tavily_api_key') || '');
 const showTavilyKey = ref(false);  // 密码显示/隐藏切换
 const testingTavilyConnection = ref(false);
 const tavilyTestResult = ref(null);
+
+// 记忆设置
+const memoryStore = useMemoryStatsStore();
+const memoryEnabled = ref(memoryStore.enabled);
+const memoryThreshold = ref(memoryStore.threshold);
+const memoryMetrics = computed(() => memoryStore.metrics);
+
+// 抽取失败次数合计（按分类累计）
+const memoryExtractFailures = computed(() =>
+    Object.values(memoryStore.metrics.extractFailures || {}).reduce((sum, n) => sum + (n || 0), 0)
+);
+
+// 抽取失败分类明细
+const memoryFailureBreakdown = computed(() => {
+    const entries = Object.entries(memoryStore.metrics.extractFailures || {});
+    return entries.length ? entries.map(([kind, count]) => `${kind}: ${count}`).join('，') : '无';
+});
+
+// 记忆开关：勾选后立即生效
+const onMemoryToggle = () => {
+    memoryStore.setEnabled(memoryEnabled.value);
+    memoryEnabled.value = memoryStore.enabled;
+};
+
+// 记忆配置保存
+const saveMemorySettings = () => {
+    memoryStore.setEnabled(memoryEnabled.value);
+    memoryStore.setThreshold(Number(memoryThreshold.value));
+    // 非法阈值会被 store 拒绝，这里回读一次保证界面与实际值一致
+    memoryEnabled.value = memoryStore.enabled;
+    memoryThreshold.value = memoryStore.threshold;
+    message.success('记忆配置已保存');
+};
+
+// 刷新记忆模块的运行指标
+const refreshMemoryMetrics = () => {
+    memoryStore.reload();
+};
 
 // Tavily 配置保存
 const saveTavilyConfig = () => {
@@ -530,6 +636,10 @@ const allExpanded = computed(() => {
 // 方法
 const toggleSection = (section) => {
     expandedSections.value[section] = !expandedSections.value[section];
+    // 记忆指标是纯内存计数，展开时刷新一次
+    if (section === 'memory' && expandedSections.value.memory) {
+        memoryStore.reload();
+    }
 };
 
 const toggleAllSections = () => {
@@ -740,6 +850,11 @@ onMounted(async () => {
     if (savedTavilyKey) {
         tavilyApiKey.value = savedTavilyKey;
     }
+
+    // 加载记忆设置与运行指标
+    memoryStore.reload()
+    memoryEnabled.value = memoryStore.enabled
+    memoryThreshold.value = memoryStore.threshold
 })
 </script>
 <style scoped>
@@ -1145,5 +1260,34 @@ textarea.form-control {
     .section-content.expanded {
         padding: 0 20px 20px;
     }
+}
+
+/* 记忆指标 */
+.memory-metrics {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.memory-metric {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--darker-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.memory-metric-label {
+    color: var(--text-secondary);
+}
+
+.memory-metric-value {
+    color: var(--text);
+    font-weight: 500;
 }
 </style>

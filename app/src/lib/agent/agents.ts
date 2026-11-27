@@ -25,7 +25,7 @@ import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/
 import { StructuredToolInterface } from "@langchain/core/tools";
 import { createLLM, getAgentConfig, AgentConfig } from ".";
 
-import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent, UsageReporter } from "./types";
+import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent, UsageReporter, MemoryRuntime } from "./types";
 import { INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { isToolArtifactResult, type ArtifactEnvelope } from "./artifacts";
 import { getToolCatalog, type ToolCatalog } from "./toolCatalog";
@@ -33,6 +33,7 @@ import { createSearchTool } from "./searchTool";
 import { capabilityOwner, renderCapabilityIndex } from "./capabilityMap";
 import { createGapTool, formatGap } from "./gapTool";
 import { budgetToolResult, type BudgetState } from "./contextBudget";
+import { createMemoryTool } from "../memory/memoryTool";
 import { uiTool } from "../tools/ui";
 
 /** 从 LangChain 响应中提取 token 用量（无用量信息时返回 undefined） */
@@ -147,6 +148,7 @@ async function runAgentLoop(
   signal?: AbortSignal,
   maxToolCalls = 500,
   config?: AgentConfig,
+  memory?: MemoryRuntime,
 ): Promise<AgentRunResult> {
   let rawLlm: any;
   try {
@@ -215,6 +217,20 @@ async function runAgentLoop(
   }
   // ui 是跨领域的展示入口（出图 / 进度 / 交互），每个 Agent 都要能展示结果，故常驻
   currentTools.push(uiTool, ...residentTools);
+  // 记忆工具常驻：读写记忆不需要先加载契约，和 ui 同级
+  if (memory?.store) {
+    currentTools.push(
+      createMemoryTool({
+        store: memory.store,
+        bankId: memory.bankId ?? "",
+        enabled: true,
+      }),
+    );
+    console.log(`[LangGraph] ${agentType} 已注册记忆工具:`, {
+      bankId: memory.bankId ?? "",
+      toolCount: currentTools.length,
+    });
+  }
   // report_gap 是越界出口：能力不足时有一条正式的路可走，而不是硬凑
   currentTools.push(
     createGapTool((gap) => {
@@ -472,6 +488,9 @@ async function runAgentLoop(
 
 /**
  * 创建 Agent 节点函数（供 LangGraph StateGraph 使用）
+ *
+ * @param catalogOverride 工具目录覆盖项：传了就用它，不传则走模块级单例 getToolCatalog()
+ * @param memory 记忆运行时：提供记忆工具；记忆上下文的注入走图状态里的 memoryContext
  */
 export function createAgentNode(
   agentType: Exclude<AgentType, "supervisor">,
@@ -480,6 +499,8 @@ export function createAgentNode(
   onUsage?: UsageReporter,
   signal?: AbortSignal,
   config?: AgentConfig,
+  catalogOverride?: ToolCatalog,
+  memory?: MemoryRuntime,
 ) {
   return async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
     const { messages, userInput } = state;
@@ -498,7 +519,7 @@ export function createAgentNode(
     // 工具目录是单例，插件只加载一次；失败时降级为「只有转交工具」
     let catalog: ToolCatalog | null = null;
     try {
-      catalog = await getToolCatalog();
+      catalog = catalogOverride ?? (await getToolCatalog());
     } catch (err) {
       console.error(`[LangGraph] ${agentType} 工具目录加载失败:`, err);
       onEvent?.({
@@ -509,8 +530,19 @@ export function createAgentNode(
       });
     }
 
+    // 记忆上下文：由渲染进程注入，null 或空白表示本轮不注入
+    const memoryContext = state.memoryContext;
+    const memoryEnabled = !!memoryContext && !!memoryContext.trim();
+    console.log(`[LangGraph] ${agentType} 记忆上下文:`, {
+      enabled: memoryEnabled,
+      length: memoryContext?.length ?? 0,
+      preview: memoryContext ? memoryContext.substring(0, 300) : null,
+    });
+
     const agentMessages: Array<SystemMessage | HumanMessage | AIMessage | ToolMessage> = [
       new SystemMessage(systemPrompt),
+      // 记忆上下文紧跟 system prompt，排在历史之前 —— 不会被历史截断吃掉
+      ...(memoryContext && memoryContext.trim() ? [new SystemMessage(memoryContext)] : []),
       ...messages
         .filter((m) => m instanceof HumanMessage || m instanceof AIMessage || m instanceof ToolMessage)
         .map((m) => {
@@ -532,6 +564,12 @@ export function createAgentNode(
       agentMessages.push(new HumanMessage(userInput));
     }
 
+    console.log(`[LangGraph] ${agentType} 本次请求消息构成:`, {
+      total: agentMessages.length,
+      hasMemory: memoryEnabled,
+      hasUserInput: !!userInput,
+    });
+
     const { content, delegation } = await runAgentLoop(
       agentType,
       agentMessages,
@@ -543,6 +581,7 @@ export function createAgentNode(
       signal,
       undefined,
       config,
+      memory,
     );
 
     // 内部 Tool 转交：不结束图，把带 tool_calls 的 AIMessage 交回 Supervisor 路由到目标 Agent

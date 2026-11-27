@@ -18,6 +18,7 @@ import { useQuoteStore } from './quoteStore'
 import { useAccountStore } from './account'
 import { fetchSectorQuotes, calculateTotalAdvanceDecline } from '@/lib/sectorApi'
 import { ArtifactKind, type ArtifactEnvelope } from '@/lib/agent/artifacts'
+import { purgeSessionMemories } from '@/lib/memory/sessionCleanup'
 import {
   META_KEYS,
   deleteArtifacts,
@@ -486,6 +487,8 @@ export const useChatStore = defineStore('chat', () => {
     // 会话没了，产物也就没人引用了 —— 让 GC 回收
     dirtySessions.delete(id)
     void dbDeleteSession(id).catch((e) => console.warn('[Chat] 删除会话失败', id, e))
+    // 会话没了，该会话的记忆也一并清掉
+    void purgeSessionMemories(id)
     scheduleArtifactGC()
   }
 
@@ -558,6 +561,8 @@ export const useChatStore = defineStore('chat', () => {
       } catch (e) {
         console.warn('[Chat] 清理超限归档会话失败', s.id, e)
       }
+      // 会话被硬删，该会话的记忆也一并清掉
+      void purgeSessionMemories(s.id)
     }
 
     if (activeExcess > 0 || archivedExcess > 0) scheduleArtifactGC()
@@ -762,7 +767,7 @@ export const useChatStore = defineStore('chat', () => {
   /* ---------- 产物 ---------- */
 
   /**
-   * UI 产物的去重键：同一个 SSE 绑定的产物只留一张卡。
+   * UI 产物的去重键：同一个绑定的产物只留一张卡。
    *
    * 服务端对重复提交复用同一个 job_id，绑定字段因此完全相同 —— 不去重的话
    * 一次下载会叠出两张一模一样的进度卡。
@@ -771,10 +776,13 @@ export const useChatStore = defineStore('chat', () => {
     if (artifact.kind !== ArtifactKind.Ui) return null
     const binding = (
       artifact.payload as {
-        binding?: { kind?: string; event?: string; match?: Record<string, string> }
+        binding?: { kind?: string; event?: string; match?: Record<string, string>; url?: string }
       }
     )?.binding
-    if (!binding || binding.kind !== 'sse' || !binding.event) return null
+    if (!binding) return null
+    // 轮询绑定：url 里带 job_id，同一个任务就是同一张卡
+    if (binding.kind === 'poll') return binding.url ? `poll|${binding.url}` : null
+    if (binding.kind !== 'sse' || !binding.event) return null
     const match = Object.entries(binding.match ?? {})
       .sort()
       .map(([k, v]) => `${k}=${v}`)

@@ -104,8 +104,8 @@
 import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getUiType, mergeParams } from '@/lib/charts/registry'
 import sseService from '@/ts/SSEService'
-import { isTerminalEvent, matchesBinding } from '@/lib/ui/protocol'
-import type { UiBinding } from '@/lib/ui/protocol'
+import { isTerminalEvent, matchesBinding, normalizeStatusPayload } from '@/lib/ui/protocol'
+import type { UiBinding, UiReducer } from '@/lib/ui/protocol'
 import { applyAuthHeader } from '@/lib/tools/common/auth'
 import { getResolver } from '@/lib/charts/resolvers'
 import { exportCsv, exportPng } from '@/lib/charts/export'
@@ -195,6 +195,10 @@ let unsubscribeBinding: (() => void) | null = null
 let bindingTimer: ReturnType<typeof setTimeout> | null = null
 /** 回放阶段就命中终态时置位，避免回放后还去订阅（订阅了也没人再退订） */
 let bindingStopped = false
+/** 轮询定时器 */
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+/** 轮询批次号：换了产物后旧请求回来就丢弃 */
+let pollGeneration = 0
 
 function stopBinding() {
   bindingStopped = true
@@ -203,6 +207,10 @@ function stopBinding() {
   if (bindingTimer) {
     clearTimeout(bindingTimer)
     bindingTimer = null
+  }
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
   }
 }
 
@@ -219,7 +227,13 @@ function startBinding() {
 
   const binding = props.spec.binding
   const reducer = typeDef.value?.reducer
-  if (!binding || binding.kind !== 'sse' || !reducer) return
+  if (!binding || !reducer) return
+
+  if (binding.kind === 'poll') {
+    void startPolling(binding, reducer)
+    return
+  }
+  if (binding.kind !== 'sse') return
 
   const apply = (payload: unknown) => {
     if (!payload || typeof payload !== 'object') return
@@ -243,6 +257,70 @@ function startBinding() {
 
   const timeoutMs = binding.timeoutMs
   if (timeoutMs && timeoutMs > 0) armWatchdog(timeoutMs, binding, apply)
+}
+
+/* ---------- 轮询绑定（poll） ---------- */
+
+const POLL_DEFAULT_INTERVAL = 3000
+const POLL_REQUEST_TIMEOUT = 10_000
+
+/** 轮询服务端状态接口；载荷归一后走同一个 reducer */
+async function startPolling(
+  binding: Extract<UiBinding, { kind: 'poll' }>,
+  reducer: UiReducer,
+): Promise<void> {
+  const intervalMs = Math.max(1000, binding.intervalMs ?? POLL_DEFAULT_INTERVAL)
+  const deadline = Date.now() + binding.timeoutMs
+  const generation = ++pollGeneration
+
+  const apply = (payload: Record<string, unknown>) => {
+    data.value = reducer(data.value, payload)
+    persistData()
+    const status = (data.value as { status?: unknown }).status
+    // 后端终态有三种：done / failed / error
+    if (status === 'done' || status === 'failed' || status === 'error') stopBinding()
+  }
+
+  const tick = async () => {
+    if (bindingStopped || generation !== pollGeneration) return
+    try {
+      const axios = (await import('axios')).default
+      applyAuthHeader(axios)
+      const res = await axios.get(binding.url, { timeout: POLL_REQUEST_TIMEOUT })
+      if (bindingStopped || generation !== pollGeneration) return
+      apply(normalizeStatusPayload((res.data ?? {}) as Record<string, unknown>))
+    } catch (e: any) {
+      // 404：服务端没有这个任务了，再问也没用
+      if (e?.response?.status === 404) {
+        data.value = {
+          ...data.value,
+          status: 'failed',
+          detail: '服务端已找不到该任务（可能已过期或被丢弃）',
+        }
+        persistData()
+        stopBinding()
+        return
+      }
+      // 其它错误（网络抖动、服务重启）继续轮询，交给总超时兜底
+      console.warn('[UI Poll] 轮询失败:', e)
+    }
+    if (bindingStopped || generation !== pollGeneration) return
+    if (Date.now() >= deadline) {
+      data.value = {
+        ...data.value,
+        status: 'failed',
+        detail: `轮询超时（${Math.round(binding.timeoutMs / 1000)} 秒）仍未拿到终态`,
+      }
+      persistData()
+      stopBinding()
+      return
+    }
+    pollTimer = setTimeout(() => {
+      void tick()
+    }, intervalMs)
+  }
+
+  await tick()
 }
 
 /**

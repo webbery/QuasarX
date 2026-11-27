@@ -11,15 +11,14 @@
  * max_iterations: 200 / recursion_limit: 450
  */
 
-import { StateGraph } from "@langchain/langgraph";
+import { StateGraph, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { createLLM, getAgentConfig, type AgentConfig } from ".";
 
-import { GraphState, GraphStateType, AgentType, RouterDecision, AGENT_SYSTEM_PROMPTS, UsageReporter } from "./types";
+import { GraphState, GraphStateType, AgentType, RouterDecision, AGENT_SYSTEM_PROMPTS, UsageReporter, MemoryRuntime } from "./types";
 import { createAgentNode } from "./agents";
 import { internalTools, INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { AgentEvent } from "./types";
-import { IndexedDBSaver } from "./checkpointer";
 
 /** Supervisor ↔ Agent 往返的最大轮数 */
 export const MAX_ITERATIONS = 200;
@@ -118,10 +117,26 @@ async function supervisorNode(
     (m) => m instanceof HumanMessage || m instanceof AIMessage,
   );
 
+  // 记忆上下文：由渲染进程注入，null 或空白表示本轮不注入
+  const memoryContext = state.memoryContext;
+  const memoryEnabled = !!memoryContext && !!memoryContext.trim();
+  console.log('[Supervisor] 记忆上下文:', {
+    enabled: memoryEnabled,
+    length: memoryContext?.length ?? 0,
+    preview: memoryContext ? memoryContext.substring(0, 300) : null,
+  });
+
   const supervisorMessages: Array<SystemMessage | HumanMessage | AIMessage> = [
     new SystemMessage(systemPrompt),
+    // 记忆上下文紧跟 system prompt，排在历史之前 —— 不会被历史截断吃掉
+    ...(memoryContext && memoryContext.trim() ? [new SystemMessage(memoryContext)] : []),
     ...historyMessages.slice(-20), // 只保留最近 20 条历史
   ];
+  console.log('[Supervisor] 本次请求消息构成:', {
+    total: supervisorMessages.length,
+    hasMemory: memoryEnabled,
+    historyCount: historyMessages.slice(-20).length,
+  });
 
   // 如果有新的用户输入
   if (userInput && iterationCount === 0) {
@@ -303,14 +318,16 @@ function checkInternalToolRouting(state: GraphStateType): string {
  * @param emitEvent 事件回调，用于向 UI 推送 Agent 工作流事件
  * @param checkpointer Checkpoint 持久化器（用于多轮对话上下文恢复）
  * @param signal AbortSignal，透传给各节点的 LLM 调用以便中止
+ * @param memory 记忆运行时：提供记忆上下文与记忆工具，缺省时各节点不注入记忆
  * @returns 编译后的图
  */
 export function buildSupervisorGraph(
   emitEvent?: (event: AgentEvent) => void,
-  checkpointer?: IndexedDBSaver,
+  checkpointer?: BaseCheckpointSaver,
   onUsage?: UsageReporter,
   signal?: AbortSignal,
   config?: AgentConfig,
+  memory?: MemoryRuntime,
 ) {
   const workflow = new StateGraph(GraphState);
 
@@ -323,31 +340,31 @@ export function buildSupervisorGraph(
 
   // Chat Agent Node
   workflow.addNode("chatAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("chat", emitEvent, internalTools, onUsage, signal, config);
+    const node = createAgentNode("chat", emitEvent, internalTools, onUsage, signal, config, undefined, memory);
     return node(state);
   });
 
   // Strategy Agent Node
   workflow.addNode("strategyAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage, signal, config);
+    const node = createAgentNode("strategy", emitEvent, internalTools, onUsage, signal, config, undefined, memory);
     return node(state);
   });
 
   // Risk Agent Node
   workflow.addNode("riskAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("risk", emitEvent, internalTools, onUsage, signal, config);
+    const node = createAgentNode("risk", emitEvent, internalTools, onUsage, signal, config, undefined, memory);
     return node(state);
   });
 
   // Portfolio Agent Node
   workflow.addNode("portfolioAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage, signal, config);
+    const node = createAgentNode("portfolio", emitEvent, internalTools, onUsage, signal, config, undefined, memory);
     return node(state);
   });
 
   // Analysis Agent Node
   workflow.addNode("analysisAgent", async (state: GraphStateType) => {
-    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage, signal, config);
+    const node = createAgentNode("analysis", emitEvent, internalTools, onUsage, signal, config, undefined, memory);
     return node(state);
   });
 
@@ -437,19 +454,21 @@ export function buildSupervisorGraph(
  * @param emitEvent 事件回调
  * @param historyMessages 手动注入的历史消息历史（优先级高于 checkpoint 恢复）
  * @param signal AbortSignal 用于中止请求
+ * @param memory 记忆运行时：记忆上下文写入图状态，各节点据此注入；缺省时不注入
  * @returns 最终状态
  */
 export async function runSupervisorGraph(
   userInput: string,
   sessionId: string,
-  checkpointer?: IndexedDBSaver,
+  checkpointer?: BaseCheckpointSaver,
   emitEvent?: (event: AgentEvent) => void,
   historyMessages?: Array<HumanMessage | AIMessage>,
   onUsage?: UsageReporter,
   signal?: AbortSignal,
   config?: AgentConfig,
+  memory?: MemoryRuntime,
 ) {
-  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage, signal, config);
+  const graph = buildSupervisorGraph(emitEvent, checkpointer, onUsage, signal, config, memory);
 
   // 调试：尝试从 checkpoint 恢复历史
   if (checkpointer) {
@@ -479,6 +498,9 @@ export async function runSupervisorGraph(
     messagesLength: initialMessages.length,
     userInput: userInput?.substring(0, 50),
     sessionId,
+    memoryContextLength: memory?.context?.length ?? 0,
+    memoryBankId: memory?.bankId ?? null,
+    hasMemoryStore: !!memory?.store,
   });
 
   const initialState: GraphStateType = {
@@ -492,6 +514,7 @@ export async function runSupervisorGraph(
     finalResponse: "",
     sessionId,
     userInput,
+    memoryContext: memory?.context ?? null,
   };
 
   const result = await graph.invoke(initialState, {

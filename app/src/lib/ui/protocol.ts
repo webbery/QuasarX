@@ -140,6 +140,32 @@ export type UiBinding =
        */
       statusUrl?: string
     }
+  /** 定时轮询服务端状态接口；轮询到的快照用同一个 reducer 合并 */
+  | {
+      kind: 'poll'
+      /** 状态查询地址（GET），返回 JSON 快照 */
+      url: string
+      /** 轮询间隔（毫秒），默认 3000 */
+      intervalMs?: number
+      /** 多久没拿到终态就判失败（毫秒），必填 */
+      timeoutMs: number
+    }
+
+/**
+ * 状态快照 → 事件载荷。
+ *
+ * 快照把最近一次进度事件放在 progress 子对象里（{ status, progress: {...} }），
+ * reducer 吃的是扁平载荷，这里把 progress 摊平到顶层。
+ */
+export function normalizeStatusPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const progress = payload.progress
+  if (progress && typeof progress === 'object') {
+    return { ...payload, ...(progress as Record<string, unknown>) }
+  }
+  return payload
+}
 
 /** 判断事件载荷是否属于某个绑定 */
 export function matchesBinding(binding: UiBinding, event: Record<string, unknown>): boolean {

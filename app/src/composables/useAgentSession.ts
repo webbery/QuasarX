@@ -5,18 +5,34 @@
  *   1. 从消息树取当前路径，构造注入 LLM 的历史
  *   2. 调用 LangGraph Supervisor（线程按 session + branch 隔离）
  *   3. 把事件推给 UI，产物挂到消息上
+ *   4. 记忆：回合开始注入记忆上下文，回合结束按阈值排队一次记忆更新
  *
  * 关键点：
  * - 历史 = 当前分支路径（不是全部消息），所以切换分支上下文自动跟着变
  * - 不传 checkpointer：历史由消息树手动注入，是唯一事实来源，
  *   避免 LangGraph 把已存 checkpoint 与注入历史 concat 造成重复
+ * - 记忆开关关闭时，本回合完全不接触记忆存储
  */
 
 import { computed, ref } from 'vue'
 import { AIMessage, HumanMessage } from '@langchain/core/messages'
 import { useChatStore, type ChatMessage } from '@/stores/chatStore'
-import { getAgentConfig, runSupervisorGraph } from '@/lib/agent'
-import type { AgentEvent, AgentType, UsageReporter } from '@/lib/agent/types'
+import { useMemoryStatsStore } from '@/stores/memoryStats'
+import { createLLM, getAgentConfig, runSupervisorGraph, type AgentConfig } from '@/lib/agent'
+import type { AgentEvent, AgentType, MemoryRuntime, UsageReporter } from '@/lib/agent/types'
+import { bankIdFromSession } from '@/lib/memory/bank'
+import { buildMemoryContext } from '@/lib/memory/autoInject'
+import { recordInjection } from '@/lib/memory/memoryMetrics'
+import {
+  pendingInterval,
+  renderIntervalText,
+  shouldUpdateMemory,
+  type ConversationTurn,
+} from '@/lib/memory/memorySession'
+import { createRetainQueue, type RetainQueue } from '@/lib/memory/retainQueue'
+import { getMemoryStore } from '@/lib/memory/storeProvider'
+import type { MemoryStore } from '@/lib/memory/types'
+import { estimateTokens } from '@/lib/tokens'
 
 export interface RunTurnOptions {
   /** 本轮对应的 user 消息 id（用于切片历史，避免 userInput 与历史重复） */
@@ -43,8 +59,46 @@ function classifyError(message: string): ErrorType {
   return 'unknown'
 }
 
+/** 记忆更新队列：模块级单例，整个应用共用一条 */
+let retainQueue: RetainQueue | null = null
+
+/** 抽取用的模型配置快照；每轮开始时更新 */
+let retainConfig: AgentConfig | null = null
+
+/**
+ * 取（或懒创建）记忆更新队列
+ *
+ * 队列串行执行，同一时刻只有一个抽取在跑。
+ */
+function getRetainQueue(store: MemoryStore): RetainQueue {
+  if (!retainQueue) {
+    retainQueue = createRetainQueue({
+      store,
+      resolveLlm: () => {
+        const cfg = retainConfig
+        if (!cfg) return undefined
+        // 抽取在后台跑，重试 0 次：默认重试在 429 时会退避十几分钟
+        return createLLM(cfg, 0)
+      },
+    })
+  }
+  return retainQueue
+}
+
+/** 当前分支的消息 → 记忆模块的对话轮次 */
+function toConversationTurns(messages: ChatMessage[]): ConversationTurn[] {
+  const turns: ConversationTurn[] = []
+  for (const m of messages) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue
+    if (!m.content || !m.content.trim()) continue
+    turns.push({ id: m.id, role: m.role, content: m.content })
+  }
+  return turns
+}
+
 export function useAgentSession() {
   const chatStore = useChatStore()
+  const memoryStore = useMemoryStatsStore()
 
   const events = ref<AgentEvent[]>([])
   const loading = ref(false)
@@ -119,6 +173,72 @@ export function useAgentSession() {
     return finalAnswer
   }
 
+  /**
+   * 回合开始：构造本轮的记忆运行时
+   *
+   * 记忆关闭时直接返回 —— 本轮完全不碰记忆存储。
+   * 存储不可用或上下文构造失败时也退化成「本轮不注入记忆」，对话照常继续。
+   */
+  async function prepareMemory(
+    userText: string,
+  ): Promise<{ runtime?: MemoryRuntime; store?: MemoryStore }> {
+    if (!memoryStore.enabled) return {}
+
+    let store: MemoryStore
+    try {
+      store = getMemoryStore()
+    } catch (e) {
+      console.warn('[Memory] 记忆存储不可用，本轮不启用记忆：', e)
+      return {}
+    }
+
+    const sessionId = chatStore.currentSession?.id ?? 'default'
+    const bankId = bankIdFromSession(sessionId)
+
+    try {
+      const result = await buildMemoryContext({
+        store,
+        bankId,
+        userInput: userText,
+        sessionId,
+        path: toConversationTurns(chatStore.messages),
+        threshold: memoryStore.threshold,
+      })
+      if (result.context) recordInjection(estimateTokens(result.context))
+      return { runtime: { context: result.context, store, bankId }, store }
+    } catch (e) {
+      console.warn('[Memory] 构造记忆上下文失败，本轮不注入记忆：', e)
+      return { store }
+    }
+  }
+
+  /**
+   * 回合结束：未固化区间超过阈值时排队一次记忆更新
+   *
+   * 排队不 await：记忆写入在后台串行跑，不阻塞本轮回复。
+   * 用户中断本轮对话不会影响已经排队的记忆写入。
+   */
+  function scheduleMemoryUpdate(store?: MemoryStore) {
+    if (!memoryStore.enabled || !store) return
+
+    const sessionId = chatStore.currentSession?.id ?? 'default'
+    const bankId = bankIdFromSession(sessionId)
+    const pending = pendingInterval(sessionId, toConversationTurns(chatStore.messages))
+    if (!shouldUpdateMemory(pending.tokens, memoryStore.threshold)) return
+    if (!pending.lastTurnId) return
+
+    try {
+      getRetainQueue(store).enqueue({
+        bankId,
+        sessionId,
+        transcript: renderIntervalText(pending.turns),
+        cursorTurnId: pending.lastTurnId,
+      })
+    } catch (e) {
+      console.warn('[Memory] 排队记忆更新失败：', e)
+    }
+  }
+
   /** 执行一个对话回合 */
   async function runTurn(userText: string, opts: RunTurnOptions): Promise<void> {
     const { anchorUserMessageId, assistantMessageId } = opts
@@ -140,6 +260,9 @@ export function useAgentSession() {
       chatStore.updateMessage(assistantMessageId, { content: '', error: undefined })
       return
     }
+
+    // 抽取用的模型配置快照：回合中途换模型不影响已入队的记忆更新
+    retainConfig = config
 
     // 创建 AbortController 用于中止请求
     const controller = new AbortController()
@@ -176,6 +299,9 @@ export function useAgentSession() {
       }
     }
 
+    // 回合开始：召回记忆 + 未固化对话，注入到本轮上下文
+    const memory = await prepareMemory(userText)
+
     try {
       const history = buildHistory(anchorUserMessageId)
       const threadId = threadIdFor()
@@ -189,6 +315,7 @@ export function useAgentSession() {
         onUsage,
         controller.signal,
         config,
+        memory.runtime,
       )
 
       const finalAnswer = extractFinalAnswer(result) || 'Agent 未返回回复'
@@ -205,6 +332,9 @@ export function useAgentSession() {
         tokenUsage: tokenUsage.value,
         error: undefined,
       })
+
+      // 回合结束：未固化区间超过阈值时排队一次记忆更新
+      scheduleMemoryUpdate(memory.store)
     } catch (error) {
       // 以「本回合的 controller 是否被 abort」为准，底层 SDK 抛的错名各不相同
       const aborted = controller.signal.aborted

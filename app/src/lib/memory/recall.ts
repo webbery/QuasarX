@@ -79,6 +79,34 @@ function nativeScores(channels: ChannelHits[]): Map<string, number> {
 }
 
 /**
+ * 通道内重排：按「原生分 × 时间衰减」降序
+ *
+ * 衰减是排序问题、融合是融合问题 —— 衰减在通道内生效，跨通道再按名次融合。
+ * 若把衰减乘在 RRF 秩分上，秩分是无量纲的（跨度被压到 2x 左右），
+ * 而衰减因子跨度可达 5x 以上 → 衰减会淹没检索信号，排序由新旧决定而非相关性。
+ */
+function reorderByDecay(
+  ch: ChannelHits,
+  unitById: Map<string, MemoryUnit>,
+  now: number,
+  halfLifeMs: number,
+): ChannelHits {
+  if (!halfLifeMs || !ch.scores) return ch
+  const ranked = ch.ids.map((id, idx) => {
+    const unit = unitById.get(id)
+    const native = ch.scores?.[idx] ?? 0
+    const decayed = unit ? native * decayFactor(recencyAnchor(unit), now, halfLifeMs) : native
+    return { id, decayed, idx }
+  })
+  ranked.sort((a, b) => b.decayed - a.decayed || a.idx - b.idx)
+  return {
+    channel: ch.channel,
+    ids: ranked.map((r) => r.id),
+    scores: ranked.map((r) => r.decayed),
+  }
+}
+
+/**
  * 召回
  *
  * @param store 存储适配器
@@ -86,7 +114,7 @@ function nativeScores(channels: ChannelHits[]): Map<string, number> {
  */
 export async function recall(store: MemoryStore, opts: RecallOptions): Promise<RecallResult> {
   const limit = opts.limit ?? 20
-  const channels = opts.channels ?? ['vector']
+  const channels = opts.channels ?? ['vector', 'fts']
   const now = opts.now ?? Date.now()
   const halfLifeMs = opts.halfLifeMs ?? DEFAULT_HALF_LIFE_MS
 
@@ -114,16 +142,15 @@ export async function recall(store: MemoryStore, opts: RecallOptions): Promise<R
   const units = await store.getByIds(candidateIds)
   const unitById = new Map(units.map((u) => [u.id, u]))
 
-  const useRrf = opts.fusion === 'rrf' || (opts.fusion !== 'native' && hits.length > 1)
-  const base = useRrf ? rrfFuse(hits) : nativeScores(hits)
+  // 衰减在通道内生效，跨通道再按名次融合
+  const decayedChannels = hits.map((ch) => reorderByDecay(ch, unitById, now, halfLifeMs))
 
-  // 最终得分 = 基础分 × 时间衰减
+  const useRrf = opts.fusion === 'rrf' || (opts.fusion !== 'native' && decayedChannels.length > 1)
+  const base = useRrf ? rrfFuse(decayedChannels) : nativeScores(decayedChannels)
+
   const scores = new Map<string, number>()
   for (const id of candidateIds) {
-    const unit = unitById.get(id)
-    if (!unit) continue
-    const b = base.get(id) ?? 0
-    scores.set(id, b * decayFactor(recencyAnchor(unit), now, halfLifeMs))
+    scores.set(id, base.get(id) ?? 0)
   }
 
   // 按得分降序
