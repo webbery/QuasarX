@@ -13,6 +13,7 @@
         :step="ctrl.step ?? 1"
         :value="numericValue(ctrl)"
         @input="emitValue(ctrl, ($event.target as HTMLInputElement).valueAsNumber)"
+        @change="emitValue(ctrl, ($event.target as HTMLInputElement).valueAsNumber)"
       />
       <span v-if="ctrl.kind === 'slider'" class="ctrl-value">
         {{ formatNumeric(numericValue(ctrl)) }}{{ ctrl.suffix ?? '' }}

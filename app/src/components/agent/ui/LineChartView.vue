@@ -1,6 +1,7 @@
 <template>
   <div class="ui-view">
     <div ref="chartRef" class="ui-view__canvas" :style="{ height: height + 'px' }"></div>
+    <slot></slot>
   </div>
 </template>
 
@@ -8,12 +9,9 @@
 import { computed, nextTick, onMounted, watch } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts } from '@/components/report/composables/useECharts'
-import {
-  buildMonteCarloOption,
-  type MonteCarloMode,
-} from '@/lib/charts/options/monteCarlo'
-import type { McPathDetail } from '@/stores/history'
+import type { EChartsOption } from 'echarts'
 import type { ArtifactDensity } from '@/lib/agent/artifacts'
+import { buildTimeseriesOption } from '@/lib/charts/options/timeseries'
 
 const props = withDefaults(
   defineProps<{
@@ -27,21 +25,16 @@ const props = withDefaults(
 
 const { chartRef, initChart, updateChart } = useECharts(false)
 
-const mode = computed<MonteCarloMode>(
-  () => ((props.params?.mode as MonteCarloMode) ?? 'worst'),
-)
-
-const option = computed(() =>
-  buildMonteCarloOption({
-    mode: mode.value,
-    worstPaths: (props.data?.worst as McPathDetail[]) ?? [],
-    bestPaths: (props.data?.best as McPathDetail[]) ?? [],
-    medianPath: (props.data?.median as McPathDetail) ?? null,
-    p10Path: (props.data?.p10 as McPathDetail) ?? null,
-    p90Path: (props.data?.p90 as McPathDetail) ?? null,
-    barCount: props.data?.bar_count as number | undefined,
-  }),
-)
+const option = computed<EChartsOption>(() => {
+  const params = props.params ?? {}
+  return buildTimeseriesOption(props.data as any, {
+    chartType: (params.chart_type as any) ?? 'line',
+    smooth: params.smooth as boolean | undefined,
+    secondaryAxisIndex: params.secondary_axis as number | undefined,
+    secondaryAxisLabel: params.secondary_axis_label as string | undefined,
+    legend: params.legend as boolean | undefined,
+  })
+})
 
 function render() {
   if (!chartRef.value) return

@@ -10,10 +10,7 @@
 
 import { registerUiType } from '@/lib/charts/registry'
 import { UI_TYPE_DEFS } from '@/lib/charts/uiTypes'
-import TimeSeriesView from './TimeSeriesView.vue'
-import PerformanceView from './PerformanceView.vue'
-import PriceTrendView from './PriceTrendView.vue'
-import MonteCarloView from './MonteCarloView.vue'
+import LineChartView from './LineChartView.vue'
 import HistogramView from './HistogramView.vue'
 import MatrixView from './MatrixView.vue'
 import TableView from './TableView.vue'
@@ -24,10 +21,7 @@ let registered = false
 
 /** id → 渲染组件 */
 const COMPONENTS: Record<string, unknown> = {
-  timeseries: TimeSeriesView,
-  performance: PerformanceView,
-  price: PriceTrendView,
-  mc_paths: MonteCarloView,
+  timeseries: LineChartView,
   histogram: HistogramView,
   matrix: MatrixView,
   table: TableView,

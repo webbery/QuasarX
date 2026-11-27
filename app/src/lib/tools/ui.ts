@@ -9,8 +9,7 @@
  *   「要不要展示界面」是每一轮都可能出现的判断，不该多一次检索。
  *   常驻 schema 只有 action/builder/input 三个字段，builder 的输入形状按需取。
  *
- * 三类 builder 的 input 语义不同（builders 的输出里会写明）：
- *   - 系统取数（performance / price / mc_paths）：input 是查询参数，数据由 resolver 取
+ * 两类 builder 的 input 语义不同（builders 的输出里会写明）：
  *   - 你给数据（timeseries / histogram / matrix / table / metric）：input 就是数据
  *   - 内部流式（progress）：hidden，只能由工具/动作产生，模型不能构建
  */
